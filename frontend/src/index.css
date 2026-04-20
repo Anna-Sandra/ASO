@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+  body {
+    @apply min-h-screen bg-slate-100 text-slate-900 antialiased transition-colors duration-300;
+  }
+  html.dark body {
+    @apply bg-night-950 text-slate-100 bg-mesh-dark;
+  }
+}
+
+@keyframes fadeInBackdrop {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes notice-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.animate-fade-in-backdrop {
+  animation: fadeInBackdrop 0.2s ease-out forwards;
+}
+.animate-notice-pop {
+  animation: notice-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@layer utilities {
+  .glass {
+    @apply border border-white/20 bg-white/40 shadow-glass backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/40;
+  }
+  .glass-strong {
+    @apply border border-white/25 bg-white/55 shadow-glass backdrop-blur-2xl dark:border-sky-400/10 dark:bg-night-850/70;
+  }
+  .tap-target {
+    @apply min-h-[44px] min-w-[44px] touch-manipulation;
+  }
+}
+
+/* Focus rings */
+*:focus-visible {
+  @apply outline-none ring-2 ring-sky-500/70 ring-offset-2 ring-offset-transparent dark:ring-sky-400/60;
+}
