@@ -1,6 +1,21 @@
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/$/, "");
+const ADMIN_API_KEY = (process.env.REACT_APP_ADMIN_API_KEY || "").trim();
 const TOKEN_KEY = "brewmart_access_token";
 let refreshPromise = null;
+
+/**
+ * When `REACT_APP_ADMIN_API_KEY` matches the API `ADMIN_ACCESS_SECRET`, admin routes can be called
+ * (defense in depth; role is still enforced on the server).
+ * @param {string} path
+ * @param {Headers} headers
+ */
+function mergeAdminHeaders(path, headers) {
+  if (!ADMIN_API_KEY) return;
+  if (!path.includes("/api/admin")) return;
+  if (!headers.has("X-Admin-Secret")) {
+    headers.set("X-Admin-Secret", ADMIN_API_KEY);
+  }
+}
 
 if (process.env.NODE_ENV === "development" && typeof window !== "undefined" && !API_BASE) {
   console.warn(
@@ -105,6 +120,7 @@ export async function apiFetch(path, opts = {}) {
   const retried = Boolean(opts._retriedAfterRefresh);
   const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
   const headers = new Headers(opts.headers || {});
+  mergeAdminHeaders(path, headers);
   if (opts.json !== undefined) {
     headers.set("Content-Type", "application/json");
   }
@@ -142,6 +158,7 @@ export async function apiFetch(path, opts = {}) {
     if (nextToken) {
       const nextHeaders = new Headers(opts.headers || {});
       nextHeaders.set("Authorization", `Bearer ${nextToken}`);
+      mergeAdminHeaders(path, nextHeaders);
       return apiFetch(path, { ...opts, headers: nextHeaders, _retriedAfterRefresh: true });
     }
   }
@@ -172,6 +189,38 @@ export async function apiUploadProductImages(files, accessToken) {
     fd.append("images", f);
   }
   const url = `${API_BASE}/api/uploads/product-images`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: fd,
+    credentials: "include"
+  });
+  const data = await parseResponse(res);
+  if (!res.ok) {
+    const msg =
+      data && data.error && data.error.message
+        ? data.error.message
+        : `Upload failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+/**
+ * Upload profile/avatar (multipart field `image`). Any authenticated role.
+ * @param {File} file
+ * @param {string} accessToken
+ */
+export async function apiUploadProfileImage(file, accessToken) {
+  if (!API_BASE) {
+    throw new Error("REACT_APP_API_URL is not set. Add it in frontend/.env (e.g. http://localhost:4000).");
+  }
+  const fd = new FormData();
+  fd.append("image", file);
+  const url = `${API_BASE}/api/uploads/profile-image`;
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}` },

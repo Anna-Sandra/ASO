@@ -1,28 +1,50 @@
 import bcrypt from "bcrypt";
 import type { Request, Response } from "express";
-import mongoose from "mongoose";
-import { env } from "../../config/env";
+import mongoose, { type HydratedDocument } from "mongoose";
+import { env, isEmailTransportConfigured } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { sendEmail } from "../../utils/mailer";
-import { sendSms } from "../../utils/sms";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { Order } from "../orders/order.model";
 import { Product } from "../products/product.model";
 import { Review } from "../reviews/review.model";
 import { VendorAnalyticsEvent } from "../vendor/vendorAnalyticsEvent.model";
 import { Token } from "./token.model";
-import { User, normalizeUserRole } from "./user.model";
+import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type UserRole } from "./user.model";
 import { createOpaqueToken, sha256, signAccessToken } from "./jwt";
+
+type LeanUser = {
+  _id: mongoose.Types.ObjectId;
+  email?: string;
+  role: unknown;
+  displayName?: string;
+  phone?: string;
+  profileImageUrl?: string;
+  emailVerifiedAt?: Date | null;
+  accountStatus?: string;
+  sellerVerified?: boolean;
+  bankName?: string;
+  bankAccountNumber?: string;
+  bankAccountName?: string;
+};
+
+function pickProfileFromUser(
+  u: LeanUser
+): { profileImageUrl: string; emailVerifiedAt?: Date | null; accountStatus: string; sellerVerified: boolean } {
+  return {
+    profileImageUrl: typeof u.profileImageUrl === "string" && u.profileImageUrl.trim() ? u.profileImageUrl.trim() : "",
+    emailVerifiedAt: u.emailVerifiedAt,
+    accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
+    sellerVerified: Boolean((u as { sellerVerified?: boolean }).sellerVerified)
+  };
+}
 
 const SALT_ROUNDS = 12;
 const PASSWORD_OTP_TTL_MS = 10 * 60 * 1000;
+const EMAIL_VERIFY_OTP_TTL_MS = 10 * 60 * 1000;
+const LOGIN_OTP_TTL_MS = 10 * 60 * 1000;
 const ACTIVE_ORDER_STATUSES = ["pending_payment", "awaiting_vendor_payment", "paid", "processing", "delivered"] as const;
-const canSendEmail = !!env.SMTP_HOST && !!env.SMTP_USER && !!env.SMTP_PASS;
-const canSendSms =
-  env.SMS_PROVIDER === "twilio" &&
-  !!env.TWILIO_ACCOUNT_SID &&
-  !!env.TWILIO_AUTH_TOKEN &&
-  !!env.TWILIO_FROM_NUMBER;
+const canSendEmail = isEmailTransportConfigured();
 
 function sixDigitOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
@@ -53,112 +75,165 @@ async function issueRefreshToken(userId: mongoose.Types.ObjectId) {
   return { refreshToken, expiresAt };
 }
 
+async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, extra?: Record<string, unknown>) {
+  const role = normalizeUserRole(user.role);
+  const accessToken = signAccessToken({ sub: user._id.toString(), role });
+  const { refreshToken } = await issueRefreshToken(user._id);
+
+  res.cookie("refreshToken", refreshToken, refreshCookieOptions());
+  const p = pickProfileFromUser(user as LeanUser);
+  res.json({
+    accessToken,
+    user: {
+      id: user._id.toString(),
+      email: user.email ?? "",
+      role,
+      displayName: user.displayName ?? "",
+      phone: publicPhoneForPaymentRole(role, user.phone),
+      profileImageUrl: p.profileImageUrl,
+      bankName: user.bankName ?? "",
+      bankAccountNumber: user.bankAccountNumber ?? "",
+      bankAccountName: user.bankAccountName ?? ""
+    },
+    ...extra
+  });
+}
+
+function loginOtpEmailHtml(otp: string) {
+  return `<p>Your Campus Market sign-in code:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes. If you did not try to sign in, you can ignore this email.</p>`;
+}
+
+function emailVerifyOtpHtml(otp: string) {
+  return `<p>Your Campus Market email verification code:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes.</p>`;
+}
+
+async function issueLoginOtpAndRespond(user: HydratedDocument<UserDoc>, res: Response) {
+  const otp = sixDigitOtp();
+  await Token.updateMany(
+    { userId: user._id, purpose: "login_otp", usedAt: null, revokedAt: null },
+    { $set: { revokedAt: new Date() } }
+  );
+  await Token.create({
+    userId: user._id,
+    purpose: "login_otp",
+    tokenHash: sha256(otp),
+    expiresAt: new Date(Date.now() + LOGIN_OTP_TTL_MS)
+  });
+
+  const addr = user.email?.trim() || "";
+  await sendEmail(addr, "Your sign-in code", loginOtpEmailHtml(otp));
+
+  res.json({
+    needsOtp: true,
+    email: addr || undefined
+  });
+}
+
 export const register = asyncHandler(async (req: Request, res: Response) => {
-  const { email, phone, password, role, displayName, username } = req.body as {
-    email?: string;
-    phone?: string;
+  const { email, password, role, displayName, username } = req.body as {
+    email: string;
     password: string;
     role: "buyer" | "seller";
     displayName?: string;
     username?: string;
   };
-  const cleanEmail = email?.trim().toLowerCase();
-  const cleanPhone = phone?.trim();
-  if (!cleanEmail && !cleanPhone) throw new HttpError(400, "Provide either an email address or a phone number.");
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) throw new HttpError(400, "A valid email address is required.");
 
   const cleanDisplayNameRaw =
     typeof displayName === "string" ? displayName.trim().slice(0, 120) : typeof username === "string" ? username.trim().slice(0, 120) : "";
   const cleanDisplayName = cleanDisplayNameRaw;
 
-  const or: Record<string, string>[] = [];
-  if (cleanEmail) or.push({ email: cleanEmail });
-  if (cleanPhone) or.push({ phone: cleanPhone });
-  const existing = await User.findOne({ $or: or }).lean();
+  const existing = await User.findOne({ email: cleanEmail }).lean();
   if (existing) {
-    throw new HttpError(
-      409,
-      "An account with this email or phone number already exists. Sign in instead, or use Forgot password."
-    );
+    throw new HttpError(409, "An account with this email already exists. Sign in instead, or use Forgot password.");
   }
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-  const shouldEmailVerify = !!cleanEmail && !env.AUTH_SKIP_EMAIL_VERIFICATION;
+  const shouldEmailVerify = !env.AUTH_SKIP_EMAIL_VERIFICATION;
   const verifiedNow = shouldEmailVerify ? null : new Date();
   const user = await User.create({
     email: cleanEmail,
-    phone: cleanPhone,
     passwordHash,
     role,
     emailVerifiedAt: verifiedNow,
     ...(cleanDisplayName ? { displayName: cleanDisplayName } : {})
   });
 
-  let devVerificationToken = "";
+  let devOtp = "";
   if (shouldEmailVerify) {
-    const raw = createOpaqueToken();
-    devVerificationToken = raw;
+    const otp = sixDigitOtp();
+    devOtp = otp;
+    await Token.updateMany(
+      { userId: user._id, purpose: "email_verify", usedAt: null, revokedAt: null },
+      { $set: { revokedAt: new Date() } }
+    );
     await Token.create({
       userId: user._id,
       purpose: "email_verify",
-      tokenHash: sha256(raw),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      tokenHash: sha256(otp),
+      expiresAt: new Date(Date.now() + EMAIL_VERIFY_OTP_TTL_MS)
     });
 
-    const html = `<p>Verify your Campus Market account:</p><p><b>Token:</b> ${raw}</p><p>This token expires in 10 minutes.</p>`;
-    await sendEmail(cleanEmail!, "Verify your email", html);
+    await sendEmail(cleanEmail, "Verify your email", emailVerifyOtpHtml(otp));
   }
 
   res.status(201).json({
     user: {
       id: user._id.toString(),
       email: user.email ?? "",
-      phone: user.phone ?? "",
+      phone: publicPhoneForPaymentRole(user.role as UserRole, user.phone),
       role: user.role,
       displayName: user.displayName ?? ""
     },
     message: shouldEmailVerify ? "Verification email sent" : "Account created",
-    ...(!canSendEmail && shouldEmailVerify && env.NODE_ENV !== "production"
-      ? { devVerificationToken }
-      : {})
+    requiresEmailVerification: shouldEmailVerify,
+    ...(!canSendEmail && shouldEmailVerify && env.NODE_ENV !== "production" ? { devOtp } : {})
   });
 });
 
 export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
-  const { token } = req.body as { token: string };
-  const tokenHash = sha256(token);
+  const { email, otp } = req.body as { email: string; otp: string };
+  const addr = email.trim().toLowerCase();
+  const user = await User.findOne({ email: addr });
+  if (!user) {
+    throw new HttpError(400, "That code is incorrect or has expired. Request a new code from the sign-in page.");
+  }
+  const tokenHash = sha256(otp);
 
   const doc = await Token.findOne({
+    userId: user._id,
     purpose: "email_verify",
     tokenHash,
     usedAt: null,
     revokedAt: null,
     expiresAt: { $gt: new Date() }
   }).select("+tokenHash");
-  if (!doc) throw new HttpError(400, "This verification link is invalid or has expired. Request a new email from the sign-in page.");
+  if (!doc) {
+    throw new HttpError(400, "That code is incorrect or has expired. Request a new code from the sign-in page.");
+  }
 
   await Token.updateOne({ _id: doc._id }, { $set: { usedAt: new Date() } });
   await User.updateOne({ _id: doc.userId }, { $set: { emailVerifiedAt: new Date() } });
 
-  res.json({ message: "Email verified" });
+  const userDoc = await User.findById(doc.userId);
+  if (!userDoc) {
+    throw new HttpError(500, "We verified your email but could not start your session. Please sign in.");
+  }
+  await sendLoginSuccess(res, userDoc, { message: "Email verified" });
 });
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { identifier, password } = req.body as { identifier: string; password: string };
-  const normalized = identifier.trim();
-  const lower = normalized.toLowerCase();
-  const user = await User.findOne({
-    $or: [{ email: lower }, { phone: normalized }]
-  }).select("+passwordHash");
+  const lower = identifier.trim().toLowerCase();
+  const user = await User.findOne({ email: lower }).select("+passwordHash");
   if (!user) {
-    throw new HttpError(
-      401,
-      "No account found with this email or phone. Check for typos, or create an account."
-    );
+    throw new HttpError(401, "No account found with this email. Check for typos, or create an account.");
   }
   if (!env.AUTH_SKIP_EMAIL_VERIFICATION && user.email && !user.emailVerifiedAt) {
     throw new HttpError(
       403,
-      "Please verify your email before signing in. Check your inbox for the link we sent when you registered."
+      "Please verify your email before signing in. Check your inbox for the code we sent when you registered."
     );
   }
 
@@ -170,38 +245,141 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     );
   }
 
-  const role = normalizeUserRole(user.role);
-  const accessToken = signAccessToken({ sub: user._id.toString(), role });
-  const { refreshToken } = await issueRefreshToken(user._id);
+  const acc = (user as { accountStatus?: string }).accountStatus;
+  if (acc && acc === "banned") {
+    throw new HttpError(403, "This account has been banned.");
+  }
+  if (acc && acc === "suspended") {
+    throw new HttpError(403, "This account is suspended. Contact support if you think this is a mistake.");
+  }
 
-  res.cookie("refreshToken", refreshToken, refreshCookieOptions());
-  res.json({
-    accessToken,
-    user: {
-      id: user._id.toString(),
-      email: user.email ?? "",
-      role,
-      displayName: user.displayName ?? "",
-      phone: user.phone ?? "",
-      bankName: user.bankName ?? "",
-      bankAccountNumber: user.bankAccountNumber ?? "",
-      bankAccountName: user.bankAccountName ?? ""
-    }
+  const useLoginOtp = canSendEmail && !env.AUTH_SKIP_EMAIL_VERIFICATION;
+  if (useLoginOtp) {
+    await issueLoginOtpAndRespond(user, res);
+    return;
+  }
+
+  await sendLoginSuccess(res, user);
+});
+
+export const verifyLoginOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { email, otp } = req.body as { email: string; otp: string };
+  const addr = email.trim().toLowerCase();
+  const user = await User.findOne({ email: addr });
+  if (!user) {
+    throw new HttpError(400, "That code is incorrect or has expired. Try again or sign in again.");
+  }
+  const tokenHash = sha256(otp);
+
+  const doc = await Token.findOne({
+    userId: user._id,
+    purpose: "login_otp",
+    tokenHash,
+    usedAt: null,
+    revokedAt: null,
+    expiresAt: { $gt: new Date() }
+  }).select("+tokenHash");
+  if (!doc) {
+    throw new HttpError(400, "That code is incorrect or has expired. Try again or sign in again.");
+  }
+
+  await Token.updateOne({ _id: doc._id }, { $set: { usedAt: new Date() } });
+  await sendLoginSuccess(res, user);
+});
+
+export const resendVerificationOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { email } = req.body as { email: string };
+  const addr = email.trim().toLowerCase();
+  const generic = "If this account still needs verification, a new code was sent.";
+  const user = await User.findOne({ email: addr });
+  if (!user || user.emailVerifiedAt) {
+    res.json({ message: generic });
+    return;
+  }
+
+  const otp = sixDigitOtp();
+  await Token.updateMany(
+    { userId: user._id, purpose: "email_verify", usedAt: null, revokedAt: null },
+    { $set: { revokedAt: new Date() } }
+  );
+  await Token.create({
+    userId: user._id,
+    purpose: "email_verify",
+    tokenHash: sha256(otp),
+    expiresAt: new Date(Date.now() + EMAIL_VERIFY_OTP_TTL_MS)
   });
+
+  await sendEmail(addr, "Your verification code", emailVerifyOtpHtml(otp));
+  res.json({
+    message: generic,
+    ...(!canSendEmail && env.NODE_ENV !== "production" ? { devOtp: otp } : {})
+  });
+});
+
+export const resendLoginOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { identifier, password } = req.body as { identifier: string; password: string };
+  const lower = identifier.trim().toLowerCase();
+  const user = await User.findOne({ email: lower }).select("+passwordHash");
+  if (!user) {
+    throw new HttpError(401, "No account found with this email. Check for typos, or create an account.");
+  }
+  if (!env.AUTH_SKIP_EMAIL_VERIFICATION && user.email && !user.emailVerifiedAt) {
+    throw new HttpError(
+      403,
+      "Please verify your email before signing in. Check your inbox for the code we sent when you registered."
+    );
+  }
+
+  const ok = await bcrypt.compare(password, user.passwordHash);
+  if (!ok) {
+    throw new HttpError(401, "Incorrect password. Try again, or use Forgot password to reset it.");
+  }
+
+  const acc = (user as { accountStatus?: string }).accountStatus;
+  if (acc && acc === "banned") {
+    throw new HttpError(403, "This account has been banned.");
+  }
+  if (acc && acc === "suspended") {
+    throw new HttpError(403, "This account is suspended. Contact support if you think this is a mistake.");
+  }
+
+  if (!canSendEmail || env.AUTH_SKIP_EMAIL_VERIFICATION) {
+    throw new HttpError(400, "Email sign-in codes are not enabled on this server.");
+  }
+
+  const otp = sixDigitOtp();
+  await Token.updateMany(
+    { userId: user._id, purpose: "login_otp", usedAt: null, revokedAt: null },
+    { $set: { revokedAt: new Date() } }
+  );
+  await Token.create({
+    userId: user._id,
+    purpose: "login_otp",
+    tokenHash: sha256(otp),
+    expiresAt: new Date(Date.now() + LOGIN_OTP_TTL_MS)
+  });
+
+  const addr = user.email?.trim() || lower;
+  await sendEmail(addr, "Your sign-in code", loginOtpEmailHtml(otp));
+  res.json({ message: "A new sign-in code was sent." });
 });
 
 export const getMe = asyncHandler(async (req: Request, res: Response) => {
   const user = await User.findById(req.user!.id).lean();
   if (!user) throw new HttpError(404, "We couldn't find your account. Please sign in again.");
   const role = normalizeUserRole(user.role);
+  const p = pickProfileFromUser(user as LeanUser);
   res.json({
     user: {
       id: user._id.toString(),
       email: user.email ?? "",
       role,
       displayName: user.displayName ?? "",
-      phone: user.phone ?? "",
-      emailVerifiedAt: user.emailVerifiedAt,
+      phone: publicPhoneForPaymentRole(role, user.phone),
+      profileImageUrl: p.profileImageUrl,
+      emailVerifiedAt: p.emailVerifiedAt,
+      accountStatus: p.accountStatus,
+      sellerVerified: p.sellerVerified,
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
       bankAccountName: user.bankAccountName ?? ""
@@ -216,22 +394,32 @@ export const updateProfile = asyncHandler(async (req: Request, res: Response) =>
     bankName?: string;
     bankAccountNumber?: string;
     bankAccountName?: string;
+    clearProfileImage?: boolean;
   };
+  const roleBefore = normalizeUserRole((await User.findById(req.user!.id).select("role").lean())?.role);
+  if (body.phone !== undefined && roleBefore !== "seller") {
+    throw new HttpError(400, "Phone is only for seller payment contact (Mobile Money).");
+  }
+
   const patch: Record<string, string> = {};
   if (body.displayName !== undefined) patch.displayName = body.displayName;
   if (body.phone !== undefined) patch.phone = body.phone;
   if (body.bankName !== undefined) patch.bankName = body.bankName;
   if (body.bankAccountNumber !== undefined) patch.bankAccountNumber = body.bankAccountNumber;
   if (body.bankAccountName !== undefined) patch.bankAccountName = body.bankAccountName;
+  if (body.clearProfileImage) patch.profileImageUrl = "";
   const user = await User.findByIdAndUpdate(req.user!.id, { $set: patch }, { new: true }).lean();
   if (!user) throw new HttpError(404, "We couldn't update your profile. Please sign in again.");
+  const p = pickProfileFromUser(user as LeanUser);
+  const role = normalizeUserRole(user.role);
   res.json({
     user: {
       id: user._id.toString(),
       email: user.email ?? "",
-      role: normalizeUserRole(user.role),
+      role,
       displayName: user.displayName ?? "",
-      phone: user.phone ?? "",
+      phone: publicPhoneForPaymentRole(role, user.phone),
+      profileImageUrl: p.profileImageUrl,
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
       bankAccountName: user.bankAccountName ?? ""
@@ -335,17 +523,16 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const forgotPassword = asyncHandler(async (req: Request, res: Response) => {
-  const { channel, identifier } = req.body as { channel: "email" | "phone"; identifier: string };
-  const normalized = identifier.trim();
-  const email = normalized.toLowerCase();
-  const user = await User.findOne(channel === "email" ? { email } : { phone: normalized });
+  const { email } = req.body as { email: string };
+  const addr = email.trim().toLowerCase();
+  const user = await User.findOne({ email: addr });
   const generic = "If that account exists, a 6-digit OTP was sent.";
   const devOtpEnabled = env.NODE_ENV !== "production";
 
   if (!user) {
     if (devOtpEnabled) {
       // eslint-disable-next-line no-console
-      console.log("[forgot-password:dev] account_not_found", { channel, identifier: normalized });
+      console.log("[forgot-password:dev] account_not_found", { email: addr });
     }
     return res.json({
       message: generic,
@@ -364,35 +551,23 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
 
   if (devOtpEnabled) {
     // eslint-disable-next-line no-console
-    console.log("[forgot-password:dev] otp_generated", { channel, identifier: normalized, otp });
+    console.log("[forgot-password:dev] otp_generated", { email: addr, otp });
   }
-  if (channel === "email") {
-    const html = `<p>Password reset requested.</p><p><b>OTP:</b> ${otp}</p><p>This code expires in 10 minutes.</p>`;
-    await sendEmail(user.email || email, "Your password reset OTP", html);
-  } else {
-    await sendSms(user.phone || normalized, `Your Campus Mart password reset OTP is ${otp}. It expires in 10 minutes.`);
-  }
+  const html = `<p>Password reset requested.</p><p><b>OTP:</b> ${otp}</p><p>This code expires in 10 minutes.</p>`;
+  await sendEmail(user.email || addr, "Your password reset OTP", html);
 
   res.json({
     message: generic,
-    ...(devOtpEnabled && ((channel === "email" && !canSendEmail) || (channel === "phone" && !canSendSms))
-      ? { devOtp: otp }
-      : {})
+    ...(devOtpEnabled && !canSendEmail ? { devOtp: otp } : {})
   });
 });
 
 export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
-  const { channel, identifier, otp, newPassword } = req.body as {
-    channel: "email" | "phone";
-    identifier: string;
-    otp: string;
-    newPassword: string;
-  };
-  const normalized = identifier.trim();
-  const email = normalized.toLowerCase();
-  const user = await User.findOne(channel === "email" ? { email } : { phone: normalized });
+  const { email, otp, newPassword } = req.body as { email: string; otp: string; newPassword: string };
+  const addr = email.trim().toLowerCase();
+  const user = await User.findOne({ email: addr });
   if (!user) {
-    throw new HttpError(400, "No account found for this email or phone. Check what you entered or create an account.");
+    throw new HttpError(400, "No account found for this email. Check what you entered or create an account.");
   }
   const tokenHash = sha256(otp);
 

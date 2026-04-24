@@ -8,6 +8,14 @@ export function normalizeUserRole(role: unknown): UserRole {
   return "buyer";
 }
 
+/** Expose phone only for sellers (MoMo / buyer payment contact). Hidden for buyers and admins. */
+export function publicPhoneForPaymentRole(role: UserRole, phone?: string | null): string {
+  if (role !== "seller") return "";
+  return typeof phone === "string" ? phone.trim() : "";
+}
+
+export type AccountStatus = "active" | "suspended" | "banned";
+
 export interface UserDoc {
   _id: mongoose.Types.ObjectId;
   email?: string;
@@ -16,9 +24,15 @@ export interface UserDoc {
   emailVerifiedAt?: Date | null;
   displayName?: string;
   phone?: string;
+  /** Shop moderation: blocked accounts cannot use protected APIs. */
+  accountStatus?: AccountStatus;
+  /** Admin/trust: visible on seller profile when set. */
+  sellerVerified?: boolean;
   bankName?: string;
   bankAccountNumber?: string;
   bankAccountName?: string;
+  /** Public URL to profile picture (e.g. `/uploads/avatars/…`). */
+  profileImageUrl?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,10 +44,17 @@ const userSchema = new Schema<UserDoc>(
     role: { type: String, required: true, enum: ["buyer", "seller", "admin"], default: "buyer" },
     emailVerifiedAt: { type: Date, default: null },
     displayName: { type: String, default: "" },
+    accountStatus: {
+      type: String,
+      enum: ["active", "suspended", "banned"],
+      default: "active"
+    },
+    sellerVerified: { type: Boolean, default: false },
     phone: { type: String, required: false, unique: true, sparse: true, trim: true },
     bankName: { type: String, default: "", trim: true },
     bankAccountNumber: { type: String, default: "", trim: true },
-    bankAccountName: { type: String, default: "", trim: true }
+    bankAccountName: { type: String, default: "", trim: true },
+    profileImageUrl: { type: String, default: "", trim: true }
   },
   { timestamps: true }
 );

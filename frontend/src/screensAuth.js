@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
 import { useAuth } from "./AuthContext";
@@ -6,7 +6,7 @@ import { useNotice } from "./NoticeContext";
 import { useTheme } from "./ThemeContext";
 import { h, f } from "./h";
 import { apiFetch } from "./api";
-import { Button, Field, GlassPanel, InlineNotice, LogoMark, RefImage, TextInput, ThemeToggleButton } from "./ui";
+import { Button, Field, GlassPanel, InlineNotice, LogoMark, OtpCodeInput, RefImage, TextInput, ThemeToggleButton } from "./ui";
 
 /** Prefer server message from `apiFetch` errors; avoid empty or generic fallbacks. */
 function apiErrorMessage(ex, fallback) {
@@ -20,7 +20,7 @@ function apiErrorMessage(ex, fallback) {
 function postBuyerAuthRedirectPath(state) {
   const from = state && typeof state.from === "string" ? state.from : null;
   if (!from || !from.startsWith("/")) return "/";
-  if (from.startsWith("/login") || from.startsWith("/register")) return "/";
+  if (from.startsWith("/login") || from.startsWith("/login-otp") || from.startsWith("/register")) return "/";
   if (from.startsWith("/vendor")) return "/";
   if (from.startsWith("/orders")) return "/";
   if (from === "/shop" || from.startsWith("/shop?")) return "/";
@@ -32,7 +32,6 @@ function buyerWelcomeLabel(user, identifierFallback) {
   if (d) return d;
   const em = user?.email && String(user.email).split("@")[0];
   if (em) return em;
-  if (user?.phone) return String(user.phone).replace(/\s+/g, "").slice(-10) || String(user.phone);
   const id = identifierFallback && String(identifierFallback).trim();
   if (id) {
     if (id.includes("@")) return id.split("@")[0];
@@ -56,11 +55,6 @@ function userAvatarLetter(user) {
     const ch = local.charAt(0);
     if (/[a-zA-Z0-9]/.test(ch)) return ch.toUpperCase();
   }
-  const raw = String(user.phone || "").trim();
-  if (raw.length) {
-    const digits = raw.replace(/\D/g, "");
-    if (digits.length) return digits.charAt(0);
-  }
   return "?";
 }
 
@@ -70,12 +64,28 @@ function buyerDisplayHandle(user, identifierFallback) {
   return `(${L}) ${label}`;
 }
 
+/** Shared redirect after a session exists (password login, email verify, or login OTP). */
+function routeAfterSession(data, { identifierFallback, redirectState, nav, toast, toastText }) {
+  const role = data?.user?.role;
+  const who = buyerDisplayHandle(data?.user, identifierFallback);
+  const t = typeof toastText === "string" && toastText.length ? toastText : `Welcome, ${who}!`;
+  if (role === "admin") {
+    toast(t, { variant: "success" });
+    nav("/admin", { replace: true });
+  } else if (role === "seller") {
+    if (typeof toastText === "string" && toastText.length) toast(t, { variant: "success" });
+    nav("/vendor/dashboard", { replace: true });
+  } else {
+    toast(t, { variant: "success" });
+    nav(postBuyerAuthRedirectPath(redirectState), { replace: true });
+  }
+}
+
 export function LoginPage() {
   const nav = useNavigate();
   const location = useLocation();
   const { login } = useAuth();
   const { toast } = useNotice();
-  const [loginMode, setLoginMode] = useState("email");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
@@ -88,23 +98,30 @@ export function LoginPage() {
     setLoading(true);
     try {
       const data = await login(identifier.trim(), password);
-      const role = data?.user?.role;
-      if (role === "seller") {
-        nav("/vendor/dashboard", { replace: true });
-      } else {
-        const who = buyerDisplayHandle(data?.user, identifier);
-        toast(`Welcome, ${who}!`, { variant: "success" });
-        nav(postBuyerAuthRedirectPath(location.state), { replace: true });
+      if (data?.needsOtp) {
+        nav("/login-otp", {
+          replace: true,
+          state: { email: data.email || identifier.trim().toLowerCase(), from: location.state }
+        });
+        return;
       }
+      routeAfterSession(data, {
+        identifierFallback: identifier,
+        redirectState: location.state,
+        nav,
+        toast
+      });
     } catch (ex) {
       const msg = apiErrorMessage(
         ex,
-        "We couldn't sign you in. Check your email or phone and password, then try again."
+        "We couldn't sign you in. Check your email and password, then try again."
       );
       if (ex.status === 403 && /verify/i.test(msg)) {
-        setErr(
-          `${msg} If you're testing locally, your admin can set AUTH_SKIP_EMAIL_VERIFICATION in the server environment.`
-        );
+        nav("/verify-email", {
+          replace: true,
+          state: { email: identifier.trim().toLowerCase(), from: location.state }
+        });
+        return;
       } else {
         setErr(msg);
       }
@@ -146,44 +163,14 @@ export function LoginPage() {
             "form",
             { key: "frm", className: "mt-6 space-y-4", onSubmit },
             [
-              h(Field, { key: "f-id", label: loginMode === "email" ? "Email" : "Phone number" }, h(TextInput, {
-                type: loginMode === "email" ? "email" : "tel",
+              h(Field, { key: "f-id", label: "Email" }, h(TextInput, {
+                type: "email",
                 autoComplete: "username",
                 value: identifier,
                 onChange: (e) => setIdentifier(e.target.value),
-                placeholder: loginMode === "email" ? "you@email.com" : "+233...",
+                placeholder: "you@email.com",
                 required: true
               })),
-              h("div", { key: "mode", className: "grid grid-cols-2 gap-2" }, [
-                h(
-                  Button,
-                  {
-                    key: "email",
-                    type: "button",
-                    variant: loginMode === "email" ? "primary" : "ghost",
-                    className: "!min-h-[28px] !px-2.5 !py-1 !text-[11px]",
-                    onClick: () => {
-                      setLoginMode("email");
-                      setIdentifier("");
-                    }
-                  },
-                  "Email"
-                ),
-                h(
-                  Button,
-                  {
-                    key: "phone",
-                    type: "button",
-                    variant: loginMode === "phone" ? "primary" : "ghost",
-                    className: "!min-h-[28px] !px-2.5 !py-1 !text-[11px]",
-                    onClick: () => {
-                      setLoginMode("phone");
-                      setIdentifier("");
-                    }
-                  },
-                  "Phone"
-                )
-              ]),
               h(Field, { key: "f-pass", label: "Password" }, h("div", { key: "pw-wrap", className: "relative" }, [
                 h(TextInput, {
                   key: "pw",
@@ -227,12 +214,164 @@ export function LoginPage() {
   ]);
 }
 
+export function LoginOtpPage() {
+  const nav = useNavigate();
+  const location = useLocation();
+  const { verifyLoginOtp } = useAuth();
+  const { toast } = useNotice();
+  const email = String(location.state?.email || "").trim().toLowerCase();
+  const [otp, setOtp] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendMsg, setResendMsg] = useState("");
+
+  useEffect(() => {
+    if (!email) nav("/login", { replace: true });
+  }, [email, nav]);
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setErr("");
+    setResendMsg("");
+    if (otp.length !== 6) {
+      setErr("Enter the full 6-digit code.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await verifyLoginOtp(email, otp);
+      routeAfterSession(data, { identifierFallback: email, redirectState: location.state?.from, nav, toast });
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "That code did not work. Try again or request a new code."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onResend = async (e) => {
+    e.preventDefault();
+    setErr("");
+    setResendMsg("");
+    if (!password) {
+      setErr("Enter your password to send a new code.");
+      return;
+    }
+    setResendLoading(true);
+    try {
+      await apiFetch("/api/auth/resend-login-otp", {
+        method: "POST",
+        json: { identifier: email, password }
+      });
+      setResendMsg("A new code was sent to your email.");
+      setOtp("");
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "Could not resend. Check your password and try again."));
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  if (!email) return null;
+
+  return h("div", { className: "relative min-h-screen overflow-hidden" }, [
+    h(RefImage, {
+      key: "bg",
+      n: 17,
+      alt: "",
+      className: "pointer-events-none absolute inset-0 h-full w-full object-cover opacity-40 dark:opacity-25"
+    }),
+    h("div", {
+      key: "overlay",
+      className:
+        "absolute inset-0 bg-gradient-to-b from-slate-100/90 via-slate-100/80 to-slate-200/90 dark:from-night-950/95 dark:via-night-950/90 dark:to-slate-950/95"
+    }),
+    h(
+      "div",
+      { key: "content", className: "relative z-10 mx-auto flex min-h-screen max-w-lg flex-col px-4 py-8 sm:px-6" },
+      [
+        h("div", { key: "topbar", className: "mb-6 flex items-center justify-between" }, [
+          h(Link, { key: "home", to: "/", className: "flex items-center gap-2" }, [
+            h(LogoMark, { key: "lm" }),
+            h(
+              "span",
+              { key: "nm", className: "font-display text-xl font-semibold text-slate-900 dark:text-white" },
+              "Campus Mart"
+            )
+          ])
+        ]),
+        h(GlassPanel, { key: "panel", className: "mx-auto w-full max-w-md" }, [
+          h("h1", { key: "t1", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Check your email"),
+          h(
+            "p",
+            { key: "sub", className: "mt-1 text-sm text-slate-600 dark:text-slate-400" },
+            `We sent a 6-digit code to ${email}. Enter it below to finish signing in.`
+          ),
+          h(
+            "form",
+            { key: "frm", className: "mt-6 space-y-4", onSubmit },
+            [
+              h(
+                Field,
+                { key: "otp", label: "Sign-in code" },
+                h(OtpCodeInput, {
+                  value: otp,
+                  onChange: setOtp,
+                  autoFocus: true,
+                  "aria-invalid": err && otp.length < 6 ? true : undefined
+                })
+              ),
+              err ? h(InlineNotice, { key: "err", variant: "error", onDismiss: () => setErr("") }, err) : null,
+              resendMsg
+                ? h(InlineNotice, { key: "ok", variant: "success", size: "sm", onDismiss: () => setResendMsg("") }, resendMsg)
+                : null,
+              h(Button, { key: "sub", type: "submit", className: "w-full", loading }, "Continue"),
+              h("div", { key: "resend", className: "rounded-2xl border border-slate-200/80 bg-white/25 p-4 dark:border-white/10 dark:bg-white/5" }, [
+                h("p", { key: "r1", className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Need a new code?"),
+                h("p", { key: "r2", className: "mt-1 text-xs text-slate-600 dark:text-slate-400" }, "Confirm your password — we will email another code."),
+                h(Field, { key: "pw", label: "Password" }, h("div", { className: "relative" }, [
+                  h(TextInput, {
+                    type: showPw ? "text" : "password",
+                    autoComplete: "current-password",
+                    value: password,
+                    onChange: (e) => setPassword(e.target.value),
+                    className: "pr-12",
+                    placeholder: "••••••••"
+                  }),
+                  h(
+                    "button",
+                    {
+                      key: "eye",
+                      type: "button",
+                      className:
+                        "tap-target absolute right-1 top-1/2 -translate-y-1/2 rounded-xl p-2 text-slate-500 hover:bg-white/40 dark:text-slate-400 dark:hover:bg-white/10",
+                      onClick: () => setShowPw((s) => !s)
+                    },
+                    showPw ? h(EyeOff, { className: "h-5 w-5" }) : h(Eye, { className: "h-5 w-5" })
+                  )
+                ])),
+                h(Button, { key: "rs", type: "button", variant: "subtle", className: "mt-3 w-full", loading: resendLoading, onClick: onResend }, "Resend code")
+              ]),
+              h(
+                Link,
+                { key: "back", to: "/login", className: "block text-center text-sm text-sky-600 hover:underline dark:text-sky-300" },
+                "← Back to sign in"
+              )
+            ].filter(Boolean)
+          )
+        ])
+      ]
+    )
+  ]);
+}
+
 export function RegisterPage() {
   const nav = useNavigate();
   const location = useLocation();
   const { register, login, setUser } = useAuth();
   const { toast } = useNotice();
-  const [registerMode, setRegisterMode] = useState("email");
   const [name, setName] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -252,7 +391,6 @@ export function RegisterPage() {
     setLoading(true);
     try {
       const id = identifier.trim();
-      const isEmail = registerMode === "email";
       const regData = await register({
         identifier: id,
         password,
@@ -260,8 +398,22 @@ export function RegisterPage() {
         displayName: trimmedName,
         username: trimmedName
       });
+      if (regData?.requiresEmailVerification) {
+        nav("/verify-email", {
+          replace: true,
+          state: { email: id.toLowerCase(), name: trimmedName, from: location.state }
+        });
+        return;
+      }
       try {
         const data = await login(id, password);
+        if (data?.needsOtp) {
+          nav("/login-otp", {
+            replace: true,
+            state: { email: data.email || id.toLowerCase(), from: location.state }
+          });
+          return;
+        }
         let loginUser = data?.user || null;
         const hasDisplayName = !!String(loginUser?.displayName || "").trim();
         if (!hasDisplayName && trimmedName && data?.accessToken) {
@@ -284,15 +436,25 @@ export function RegisterPage() {
           }
         }
         const nextRole = loginUser?.role || role;
-        if (nextRole === "seller") nav("/vendor/dashboard", { replace: true });
-        else {
+        if (nextRole === "seller") {
+          const who = buyerDisplayHandle(loginUser, id);
+          toast(`Welcome, ${who}! Your account is ready.`, { variant: "success" });
+          nav("/vendor/dashboard", { replace: true });
+        } else if (nextRole === "admin") {
+          const who = buyerDisplayHandle(loginUser, id);
+          toast(`Welcome, ${who}! Your account is ready.`, { variant: "success" });
+          nav("/admin", { replace: true });
+        } else {
           const who = buyerDisplayHandle(loginUser, id);
           toast(`Welcome, ${who}! Your account is ready.`, { variant: "success" });
           nav(postBuyerAuthRedirectPath(location.state), { replace: true });
         }
       } catch (lex) {
-        if (isEmail && lex.status === 403 && /verify/i.test(lex.message || "")) {
-          nav("/verify-email", { state: { email: id.toLowerCase(), name }, replace: true });
+        if (lex.status === 403 && /verify/i.test(lex.message || "")) {
+          nav("/verify-email", {
+            replace: true,
+            state: { email: id.toLowerCase(), name: trimmedName, from: location.state }
+          });
         } else {
           throw lex;
         }
@@ -361,48 +523,18 @@ export function RegisterPage() {
                   key: "f-email",
                   label: h("span", { className: "inline-flex items-center gap-1" }, [
                     h(Mail, { key: "i", className: "h-3.5 w-3.5" }),
-                    h("span", { key: "t" }, registerMode === "email" ? " Email" : " Phone")
+                    h("span", { key: "t" }, " Email")
                   ])
                 },
                 h(TextInput, {
-                  type: registerMode === "email" ? "email" : "tel",
+                  type: "email",
                   value: identifier,
                   onChange: (e) => setIdentifier(e.target.value),
-                  placeholder: registerMode === "email" ? "your@email.com" : "+233...",
+                  placeholder: "your@email.com",
                   required: true,
                   autoComplete: "username"
                 })
               ),
-              h("div", { key: "mode", className: "grid grid-cols-2 gap-2" }, [
-                h(
-                  Button,
-                  {
-                    key: "email",
-                    type: "button",
-                    variant: registerMode === "email" ? "primary" : "ghost",
-                    className: "!min-h-[28px] !px-2.5 !py-1 !text-[11px]",
-                    onClick: () => {
-                      setRegisterMode("email");
-                      setIdentifier("");
-                    }
-                  },
-                  "Email"
-                ),
-                h(
-                  Button,
-                  {
-                    key: "phone",
-                    type: "button",
-                    variant: registerMode === "phone" ? "primary" : "ghost",
-                    className: "!min-h-[28px] !px-2.5 !py-1 !text-[11px]",
-                    onClick: () => {
-                      setRegisterMode("phone");
-                      setIdentifier("");
-                    }
-                  },
-                  "Phone"
-                )
-              ]),
               h(Field, {
                 key: "f-pass",
                 label: h("span", { className: "inline-flex items-center gap-1" }, [
@@ -492,40 +624,113 @@ export function RegisterPage() {
 export function VerifyEmailPage() {
   const nav = useNavigate();
   const loc = useLocation();
-  const email = loc.state?.email || "";
-  const [token, setToken] = useState("");
+  const { setAccessToken, setUser } = useAuth();
+  const { toast } = useNotice();
+  const email = String(loc.state?.email || "").trim().toLowerCase();
+  const [otp, setOtp] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendMsg, setResendMsg] = useState("");
+
+  useEffect(() => {
+    if (!email) nav("/register", { replace: true });
+  }, [email, nav]);
 
   const onSubmit = async (e) => {
     e.preventDefault();
     setErr("");
+    setResendMsg("");
+    if (otp.length !== 6) {
+      setErr("Enter the full 6-digit code.");
+      return;
+    }
     setLoading(true);
     try {
-      await apiFetch("/api/auth/verify-email", { method: "POST", json: { token: token.trim() } });
-      nav("/login", { replace: true });
+      const data = await apiFetch("/api/auth/verify-email", { method: "POST", json: { email, otp } });
+      if (data?.accessToken) setAccessToken(data.accessToken);
+      if (data?.user) setUser(data.user);
+      const fromState = loc.state?.from;
+      if (data?.user) {
+        const who = buyerDisplayHandle(data.user, email);
+        const justRegistered = Boolean(loc.state?.name);
+        routeAfterSession(data, {
+          identifierFallback: email,
+          redirectState: fromState,
+          nav,
+          toast,
+          toastText: justRegistered ? `Welcome, ${who}! Your account is ready.` : `Welcome, ${who}!`
+        });
+        return;
+      }
+      nav("/login", { replace: true, state: fromState || undefined });
     } catch (ex) {
-      setErr(apiErrorMessage(ex, "Email verification failed. Check the token and try again."));
+      setErr(apiErrorMessage(ex, "Verification failed. Check the code and try again."));
     } finally {
       setLoading(false);
     }
   };
 
+  const onResend = async () => {
+    setErr("");
+    setResendMsg("");
+    setResendLoading(true);
+    try {
+      const data = await apiFetch("/api/auth/resend-verification-otp", {
+        method: "POST",
+        json: { email }
+      });
+      if (data?.devOtp) {
+        setResendMsg(`Dev mode: your code is ${data.devOtp} (email not configured on server).`);
+      } else {
+        setResendMsg(data?.message || "If this account still needs verification, a new code was sent.");
+      }
+      setOtp("");
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "Could not resend. Try again in a moment."));
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
   const { dark, toggle } = useTheme();
+  if (!email) return null;
+
   return h("div", { className: "mx-auto max-w-md px-4 py-16" }, [
     h("div", { key: "top", className: "mb-4 flex justify-end" }, h(ThemeToggleButton, { dark, onToggle: toggle })),
     h(GlassPanel, { key: "panel" }, [
       h("h1", { key: "title", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Verify email"),
-      h("p", { key: "sub", className: "mt-2 text-sm text-slate-600 dark:text-slate-400" }, `We sent a token to ${email || "your inbox"}. Paste it below.`),
+      h(
+        "p",
+        { key: "sub", className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
+        `We sent a 6-digit code to ${email}. Enter it below to verify your account.`
+      ),
       h(
         "form",
         { key: "form", className: "mt-6 space-y-4", onSubmit },
         [
-          h(Field, { key: "token", label: "Verification token" }, h(TextInput, { value: token, onChange: (e) => setToken(e.target.value), required: true })),
-          err
-            ? h(InlineNotice, { key: "err", variant: "error", onDismiss: () => setErr("") }, err)
+          h(
+            Field,
+            { key: "otp", label: "Verification code" },
+            h(OtpCodeInput, { value: otp, onChange: setOtp, autoFocus: true })
+          ),
+          err ? h(InlineNotice, { key: "err", variant: "error", onDismiss: () => setErr("") }, err) : null,
+          resendMsg
+            ? h(
+                InlineNotice,
+                { key: "rs", variant: "success", size: "sm", onDismiss: () => setResendMsg("") },
+                resendMsg
+              )
             : null,
           h(Button, { key: "submit", type: "submit", className: "w-full", loading }, "Verify"),
+          h(Button, {
+            key: "resend",
+            type: "button",
+            variant: "subtle",
+            className: "w-full",
+            loading: resendLoading,
+            onClick: onResend
+          }, "Resend code"),
           h(Link, { key: "back", to: "/login", className: "block text-center text-sm text-sky-600 hover:underline dark:text-sky-300" }, "Back to login")
         ].filter(Boolean)
       )
@@ -535,7 +740,6 @@ export function VerifyEmailPage() {
 
 export function ForgotPasswordPage() {
   const nav = useNavigate();
-  const [channel, setChannel] = useState("email");
   const [identifier, setIdentifier] = useState("");
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -550,20 +754,16 @@ export function ForgotPasswordPage() {
       const id = identifier.trim();
       const data = await apiFetch("/api/auth/forgot-password", {
         method: "POST",
-        json: {
-          channel,
-          identifier: id,
-          ...(channel === "email" ? { email: id } : {})
-        }
+        json: { email: id }
       });
       if (data?.devAccountFound === false) {
-        setErr("No account found for that email/phone yet. Register first, then request OTP.");
+        setErr("No account found for that email yet. Register first, then request an OTP.");
         return;
       }
       setMsg("If that account exists, a 6-digit OTP was sent.");
-      nav("/reset-password", { state: { channel, identifier: id } });
+      nav("/reset-password", { state: { email: id } });
     } catch (ex) {
-      setErr(apiErrorMessage(ex, "We couldn't send the code. Check your email or phone and try again."));
+      setErr(apiErrorMessage(ex, "We couldn't send the code. Check your email and try again."));
     } finally {
       setLoading(false);
     }
@@ -572,40 +772,16 @@ export function ForgotPasswordPage() {
   return h("div", { className: "mx-auto max-w-md px-4 py-16" }, [
     h(GlassPanel, { key: "panel" }, [
       h("h1", { key: "title", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Reset password"),
-      h("div", { key: "channels", className: "mt-3 grid grid-cols-2 gap-2" }, [
-        h(
-          Button,
-          {
-            key: "by-email",
-            type: "button",
-            variant: channel === "email" ? "primary" : "ghost",
-            className: "!min-h-[38px]",
-            onClick: () => setChannel("email")
-          },
-          "Email"
-        ),
-        h(
-          Button,
-          {
-            key: "by-phone",
-            type: "button",
-            variant: channel === "phone" ? "primary" : "ghost",
-            className: "!min-h-[38px]",
-            onClick: () => setChannel("phone")
-          },
-          "Phone"
-        )
-      ]),
       h("form", { key: "form", className: "mt-6 space-y-4", onSubmit }, [
         h(
           Field,
-          { key: "identifier", label: channel === "email" ? "Email" : "Phone number" },
+          { key: "identifier", label: "Email" },
           h(TextInput, {
-            type: channel === "email" ? "email" : "tel",
+            type: "email",
             value: identifier,
             onChange: (e) => setIdentifier(e.target.value),
             required: true,
-            placeholder: channel === "email" ? "you@email.com" : "+233000000000"
+            placeholder: "you@email.com"
           })
         ),
         msg && h("p", { key: "msg", className: "text-sm text-emerald-400" }, msg),
@@ -621,8 +797,7 @@ export function ForgotPasswordPage() {
 
 export function ResetPasswordPage() {
   const loc = useLocation();
-  const [channel, setChannel] = useState(loc.state?.channel === "phone" ? "phone" : "email");
-  const [identifier, setIdentifier] = useState(loc.state?.identifier || "");
+  const [email, setEmail] = useState(loc.state?.email || "");
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [err, setErr] = useState("");
@@ -636,7 +811,7 @@ export function ResetPasswordPage() {
     try {
       await apiFetch("/api/auth/reset-password", {
         method: "POST",
-        json: { channel, identifier: identifier.trim(), otp: otp.trim(), newPassword }
+        json: { email: email.trim(), otp: otp.trim(), newPassword }
       });
       nav("/login", { replace: true });
     } catch (ex) {
@@ -649,54 +824,18 @@ export function ResetPasswordPage() {
   return h("div", { className: "mx-auto max-w-md px-4 py-16" }, [
     h(GlassPanel, { key: "panel" }, [
       h("h1", { key: "title", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "New password"),
-      h("div", { key: "channels", className: "mt-3 grid grid-cols-2 gap-2" }, [
-        h(
-          Button,
-          {
-            key: "by-email",
-            type: "button",
-            variant: channel === "email" ? "primary" : "ghost",
-            className: "!min-h-[38px]",
-            onClick: () => setChannel("email")
-          },
-          "Email"
-        ),
-        h(
-          Button,
-          {
-            key: "by-phone",
-            type: "button",
-            variant: channel === "phone" ? "primary" : "ghost",
-            className: "!min-h-[38px]",
-            onClick: () => setChannel("phone")
-          },
-          "Phone"
-        )
-      ]),
       h("form", { key: "form", className: "mt-6 space-y-4", onSubmit }, [
         h(
           Field,
-          { key: "identifier", label: channel === "email" ? "Email" : "Phone number" },
+          { key: "identifier", label: "Email" },
           h(TextInput, {
-            type: channel === "email" ? "email" : "tel",
-            value: identifier,
-            onChange: (e) => setIdentifier(e.target.value),
+            type: "email",
+            value: email,
+            onChange: (e) => setEmail(e.target.value),
             required: true
           })
         ),
-        h(
-          Field,
-          { key: "otp", label: "OTP code" },
-          h(TextInput, {
-            value: otp,
-            onChange: (e) => setOtp(e.target.value),
-            required: true,
-            inputMode: "numeric",
-            pattern: "\\d{6}",
-            maxLength: 6,
-            placeholder: "6-digit code"
-          })
-        ),
+        h(Field, { key: "otp", label: "OTP code" }, h(OtpCodeInput, { value: otp, onChange: setOtp })),
         h(Field, { key: "newpw", label: "New password" }, h(TextInput, { type: "password", value: newPassword, onChange: (e) => setNewPassword(e.target.value), required: true, minLength: 8 })),
         err
           ? h(InlineNotice, { key: "err", variant: "error", onDismiss: () => setErr("") }, err)

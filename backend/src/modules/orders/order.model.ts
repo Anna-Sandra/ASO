@@ -53,6 +53,10 @@ export interface OrderDoc {
   /** Sellers who confirmed they received this order’s off-platform payment (MoMo/bank). When all unique line sellers are listed, order becomes `paid`. */
   confirmedSellerIds?: mongoose.Types.ObjectId[];
   messages: OrderMessage[];
+  /** Admin moderation: buyer/seller dispute flag. */
+  disputeOpen?: boolean;
+  adminNote?: string;
+  refundStatus?: "none" | "requested" | "refunded";
   createdAt: Date;
   updatedAt: Date;
 }
@@ -121,7 +125,10 @@ const orderSchema = new Schema<OrderDoc>(
         )
       ],
       default: []
-    }
+    },
+    disputeOpen: { type: Boolean, default: false, index: true },
+    adminNote: { type: String, default: "", maxlength: 4000 },
+    refundStatus: { type: String, enum: ["none", "requested", "refunded"], default: "none" }
   },
   { timestamps: true }
 );

@@ -2,10 +2,61 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
-import { env } from "../../config/env";
 import { User } from "../auth/user.model";
+import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
+import type { ProductDoc } from "./product.model";
 import { Product } from "./product.model";
 import { listProductsQuerySchema } from "./product.schemas";
+
+/** Public-facing fields; changes require re-approval if the listing was already live. */
+const SELLER_UPDATE_KEYS = [
+  "name",
+  "description",
+  "category",
+  "price",
+  "compareAtPrice",
+  "stock",
+  "tags",
+  "imageUrls"
+] as const;
+
+const MODERATION_REAPPROVE_KEYS = [
+  "name",
+  "description",
+  "category",
+  "price",
+  "compareAtPrice",
+  "tags",
+  "imageUrls"
+] as const;
+
+type SellerUpdateKey = (typeof SELLER_UPDATE_KEYS)[number];
+
+function fieldChanged(key: string, from: unknown, to: unknown): boolean {
+  if (key === "price" || key === "compareAtPrice") {
+    const na = from == null || from === "" ? null : Number(from);
+    const nb = to == null || to === "" ? null : Number(to);
+    if (na == null && nb == null) return false;
+    if (na == null || nb == null) return true;
+    return na !== nb;
+  }
+  if (key === "tags" || key === "imageUrls") {
+    return JSON.stringify(from ?? []) !== JSON.stringify(to ?? []);
+  }
+  return String(from ?? "") !== String(to ?? "");
+}
+
+function sellerModerationTouched(
+  before: ProductDoc,
+  body: Record<string, unknown>
+): boolean {
+  const prev = before as unknown as Record<string, unknown>;
+  for (const k of MODERATION_REAPPROVE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(body, k)) continue;
+    if (fieldChanged(k, prev[k], body[k])) return true;
+  }
+  return false;
+}
 
 function toPublicProduct(p: Record<string, unknown>) {
   return {
@@ -18,6 +69,7 @@ function toPublicProduct(p: Record<string, unknown>) {
     compareAtPrice: p.compareAtPrice,
     stock: p.stock,
     status: p.status,
+    rejectionReason: p.rejectionReason,
     tags: p.tags,
     imageUrls: p.imageUrls,
     createdAt: p.createdAt,
@@ -27,6 +79,7 @@ function toPublicProduct(p: Record<string, unknown>) {
 
 async function attachSellerPayments(products: Record<string, unknown>[]) {
   if (!products.length) return [];
+  const commissionPercent = await getEffectiveCommissionPercent();
   const sellerIds = [...new Set(products.map((p) => (p.sellerId as mongoose.Types.ObjectId).toString()))];
   const users = await User.find({
     _id: { $in: sellerIds.map((id) => new mongoose.Types.ObjectId(id)) }
@@ -41,7 +94,7 @@ async function attachSellerPayments(products: Record<string, unknown>[]) {
     return {
       ...base,
       /** Percent of each line total (price × qty) retained by the marketplace; remainder is the seller’s share. */
-      platformCommissionPercent: env.PLATFORM_COMMISSION_PERCENT,
+      platformCommissionPercent: commissionPercent,
       sellerPayment: {
         displayName: su.displayName ?? "",
         phone: su.phone ?? "",
@@ -82,7 +135,9 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid product id");
   const p = await Product.findById(id).lean();
   if (!p) throw new HttpError(404, "Product not found");
-  if (p.status !== "active" && p.sellerId.toString() !== req.user?.id) {
+  const isOwner = p.sellerId.toString() === req.user?.id;
+  const isAdmin = req.user?.role === "admin";
+  if (p.status !== "active" && !isOwner && !isAdmin) {
     throw new HttpError(404, "Product not found");
   }
   const [out] = await attachSellerPayments([p as unknown as Record<string, unknown>]);
@@ -101,7 +156,11 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   const body = { ...(req.body as Record<string, unknown>) };
   const existingTags = Array.isArray(body.tags) ? (body.tags as unknown[]).map((t) => String(t)) : [];
   body.tags = [...new Set(["new", ...existingTags])];
-  const p = await Product.create({ ...body, sellerId });
+  /** "Publish" from the app sends `active`; sellers can never go live without admin. */
+  const wantsPublish = body.status === "active";
+  const status: ProductDoc["status"] = wantsPublish ? "pending_approval" : "draft";
+  delete (body as { status?: unknown }).status;
+  const p = await Product.create({ ...body, status, sellerId });
   const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>]);
   res.status(201).json({ product: out });
 });
@@ -113,7 +172,30 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   if (!p) throw new HttpError(404, "Product not found");
   if (p.sellerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
 
-  Object.assign(p, req.body);
+  const beforeStatus = p.status;
+  const beforeDoc = p.toObject() as ProductDoc;
+  const body = req.body as Record<string, unknown>;
+  const modTouched = sellerModerationTouched(beforeDoc, body);
+
+  for (const key of SELLER_UPDATE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
+    (p as unknown as Record<string, unknown>)[key] = body[key as SellerUpdateKey];
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "status")) {
+    const st = body.status as string;
+    if (st === "draft") {
+      p.status = "draft";
+    } else if (st === "active") {
+      // Sellers cannot set "active" on their own: only "keep live" (no change) or (re)submit for review.
+      p.status = beforeStatus === "active" && !modTouched ? "active" : "pending_approval";
+    }
+  } else if (beforeStatus === "active" && modTouched) {
+    p.status = "pending_approval";
+  }
+  if (p.status !== "rejected" && p.rejectionReason) {
+    p.set("rejectionReason", null);
+  }
   await p.save();
   const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>]);
   res.json({ product: out });

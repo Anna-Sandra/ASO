@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect, authorize, optionalProtect } from "../../middleware/auth";
+import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import {
   createProduct,
@@ -19,13 +20,13 @@ const router = Router();
 const shopAccountRoles = ["buyer", "seller", "admin"] as const;
 
 router.get("/", listProducts);
-router.get("/mine", protect, authorize("seller"), listMyProducts);
-router.post("/", protect, authorize("seller"), validateBody(createProductSchema), createProduct);
+router.get("/mine", protect, requireActiveAccount, authorize("seller", "admin"), listMyProducts);
+router.post("/", protect, requireActiveAccount, authorize("seller", "admin"), validateBody(createProductSchema), createProduct);
 router.get("/:id/reviews", listProductReviews);
-router.get("/:id/review-status", protect, authorize(...shopAccountRoles), getReviewStatus);
-router.post("/:id/reviews", protect, authorize(...shopAccountRoles), validateBody(createReviewSchema), createReview);
+router.get("/:id/review-status", protect, requireActiveAccount, authorize(...shopAccountRoles), getReviewStatus);
+router.post("/:id/reviews", protect, requireActiveAccount, authorize(...shopAccountRoles), validateBody(createReviewSchema), createReview);
 router.get("/:id", optionalProtect, getProduct);
-router.patch("/:id", protect, authorize("seller"), validateBody(updateProductSchema), updateProduct);
-router.delete("/:id", protect, authorize("seller"), deleteProduct);
+router.patch("/:id", protect, requireActiveAccount, authorize("seller", "admin"), validateBody(updateProductSchema), updateProduct);
+router.delete("/:id", protect, requireActiveAccount, authorize("seller", "admin"), deleteProduct);
 
 export default router;

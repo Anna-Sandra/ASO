@@ -9,15 +9,11 @@ const passwordSchema = z
   .refine((v) => /\d/.test(v), "Password must include a number")
   .refine((v) => /[^A-Za-z0-9]/.test(v), "Password must include a special character");
 
-/**
- * Single shape so `displayName` is never dropped by union parsing.
- * Client may send `identifier` only (email or phone) plus `displayName`, or explicit email/phone fields.
- */
+/** Email-only registration (identifier or email field). */
 export const registerSchema = z
   .object({
     identifier: z.string().optional(),
     email: z.string().optional(),
-    phone: z.string().optional(),
     password: passwordSchema,
     role: z.enum(["buyer", "seller"]).default("buyer"),
     displayName: z.string().optional(),
@@ -26,50 +22,33 @@ export const registerSchema = z
   .transform((raw) => {
     const identifier = typeof raw.identifier === "string" ? raw.identifier.trim() : "";
     const emailIn = typeof raw.email === "string" ? raw.email.trim() : "";
-    const phoneIn = typeof raw.phone === "string" ? raw.phone.trim() : "";
     const displayTrim = typeof raw.displayName === "string" ? raw.displayName.trim().slice(0, 120) : "";
     const usernameTrim = typeof raw.username === "string" ? raw.username.trim().slice(0, 120) : "";
     const displayName = displayTrim.length > 0 ? displayTrim : usernameTrim.length > 0 ? usernameTrim : undefined;
 
-    let email = emailIn ? emailIn.toLowerCase() : undefined;
-    let phone = phoneIn || undefined;
-    if (!email && !phone && identifier.length >= 3) {
-      if (identifier.includes("@")) email = identifier.toLowerCase();
-      else phone = identifier;
-    }
+    const email = (emailIn || (identifier.includes("@") ? identifier : "")).toLowerCase();
 
     return {
       email: email || undefined,
-      phone: phone || undefined,
       password: raw.password,
       role: raw.role,
       ...(displayName ? { displayName } : {})
     };
   })
   .superRefine((out, ctx) => {
-    if (!out.email && !out.phone) {
+    if (!out.email) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Provide either an email address or a phone number (or a valid sign-in ID).",
-        path: ["identifier"]
+        message: "Provide a valid email address.",
+        path: ["email"]
       });
-    }
-    if (out.email && !z.string().email().safeParse(out.email).success) {
+    } else if (!z.string().email().safeParse(out.email).success) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid email format", path: ["email"] });
-    }
-    if (out.phone && out.phone.length < 7) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Phone must be at least 7 characters", path: ["phone"] });
-    }
-    if (out.phone && out.phone.length > 20) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Phone is too long", path: ["phone"] });
     }
   });
 
 export const loginSchema = z.object({
-  identifier: z
-    .string()
-    .trim()
-    .min(3, "Enter your email or phone (at least 3 characters)."),
+  identifier: z.string().trim().email("Enter a valid email address."),
   password: z.string().min(1, "Enter your password.")
 });
 
@@ -78,29 +57,25 @@ export const refreshSchema = z.object({
 });
 
 export const verifyEmailSchema = z.object({
-  token: z.string().min(1)
+  email: z.string().email().transform((s) => s.toLowerCase().trim()),
+  otp: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code from your email")
 });
 
-export const forgotPasswordSchema = z
-  .union([
-    z.object({
-      channel: z.enum(["email", "phone"]),
-      identifier: z.string().trim().min(3)
-    }),
-    z.object({
-      email: z.string().email().transform((s) => s.toLowerCase().trim())
-    })
-  ])
-  .transform((v) => {
-    if ("email" in v) {
-      return { channel: "email" as const, identifier: v.email };
-    }
-    return v;
-  });
+export const verifyLoginOtpSchema = z.object({
+  email: z.string().email().transform((s) => s.toLowerCase().trim()),
+  otp: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code from your email")
+});
+
+export const resendVerificationOtpSchema = z.object({
+  email: z.string().email().transform((s) => s.toLowerCase().trim())
+});
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().email().transform((s) => s.toLowerCase().trim())
+});
 
 export const resetPasswordSchema = z.object({
-  channel: z.enum(["email", "phone"]),
-  identifier: z.string().trim().min(3),
+  email: z.string().email().transform((s) => s.toLowerCase().trim()),
   otp: z.string().trim().regex(/^\d{6}$/, "OTP must be 6 digits"),
   newPassword: passwordSchema
 });
@@ -108,10 +83,13 @@ export const resetPasswordSchema = z.object({
 export const profileUpdateSchema = z
   .object({
     displayName: z.string().trim().max(120).optional(),
+    /** MoMo / payout number for sellers only; ignored for buyers and admins. */
     phone: z.string().trim().max(40).optional(),
     bankName: z.string().trim().max(80).optional(),
     bankAccountNumber: z.string().trim().max(40).optional(),
-    bankAccountName: z.string().trim().max(120).optional()
+    bankAccountName: z.string().trim().max(120).optional(),
+    /** Remove profile photo; use `POST /api/uploads/profile-image` to set a new one. */
+    clearProfileImage: z.boolean().optional()
   })
   .refine(
     (d) =>
@@ -119,7 +97,8 @@ export const profileUpdateSchema = z
       d.phone !== undefined ||
       d.bankName !== undefined ||
       d.bankAccountNumber !== undefined ||
-      d.bankAccountName !== undefined,
+      d.bankAccountName !== undefined ||
+      d.clearProfileImage === true,
     { message: "At least one field is required" }
   );
 

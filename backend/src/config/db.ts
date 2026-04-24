@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { ensureBootstrapAdmin } from "./bootstrapAdmin";
 import { env } from "./env";
 
 /** Map legacy shop categories to current PRODUCT_CATEGORIES (raw collection). */
@@ -67,5 +68,6 @@ export async function connectDb() {
   await migrateLegacyProductCategories();
   await backfillActiveZeroStockIfSmallCatalog();
   await ensureUserContactIndexes();
+  await ensureBootstrapAdmin();
 }
 

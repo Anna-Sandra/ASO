@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   BarChart3,
   Box,
+  Camera,
   LayoutDashboard,
   LineChart,
   LogOut,
@@ -21,7 +22,7 @@ import {
 import { useAuth } from "./AuthContext";
 import { useNotice } from "./NoticeContext";
 import { useTheme } from "./ThemeContext";
-import { apiFetch, apiUploadProductImages, deleteAuthenticatedAccount } from "./api";
+import { apiFetch, apiUploadProductImages, apiUploadProfileImage, deleteAuthenticatedAccount } from "./api";
 import { trackVendorAnalyticsEvent, VendorRevenueLineChart } from "./vendorCharts";
 import { CATEGORY_LABELS, PRODUCT_CATEGORY_VALUES, refFromId } from "./catalog";
 import { formatGhc } from "./money";
@@ -47,7 +48,7 @@ const MAX_PRODUCT_IMAGES = 500;
 const UPLOAD_IMAGES_CHUNK = 40;
 
 /**
- * Avatar letter: display name first, else email local-part, else first digit of phone (not "+" from +233…).
+ * Avatar letter: display name first, else email local-part.
  * @param {{ displayName?: string; email?: string; phone?: string } | null | undefined} u
  */
 function vendorAvatarInitial(u) {
@@ -64,12 +65,21 @@ function vendorAvatarInitial(u) {
     const ch = local.charAt(0);
     if (/[a-zA-Z0-9]/.test(ch)) return ch.toUpperCase();
   }
-  const raw = String(u.phone || "").trim();
-  if (raw.length) {
-    const digits = raw.replace(/\D/g, "");
-    if (digits.length) return digits.charAt(0);
-  }
   return "V";
+}
+
+function vendorUserAvatarNode(u, { sizeClass = "h-8 w-8", initialTextClass = "text-sm" } = {}) {
+  const src = u?.profileImageUrl && String(u.profileImageUrl).trim();
+  if (src) {
+    return h("img", { src, alt: "", className: `${sizeClass} shrink-0 rounded-full object-cover` });
+  }
+  return h(
+    "span",
+    {
+      className: `flex ${sizeClass} shrink-0 items-center justify-center rounded-full bg-sky-600 ${initialTextClass} font-bold text-white`
+    },
+    vendorAvatarInitial(u)
+  );
 }
 
 function VendorProductPhotos({ accessToken, imageList, setImageList, setErr }) {
@@ -153,9 +163,10 @@ function VendorProductPhotos({ accessToken, imageList, setImageList, setErr }) {
   ].filter(Boolean)));
 }
 
-function NavItem({ to, icon: Icon, children, badge }) {
+function NavItem({ to, icon: Icon, children, badge, end }) {
   return h(NavLink, {
     to,
+    end: Boolean(end),
     className: ({ isActive }) =>
       `flex items-center justify-between gap-2 rounded-2xl px-3 py-2.5 text-sm font-medium transition sm:px-4 sm:text-base ${
         isActive
@@ -251,7 +262,7 @@ export function VendorShell() {
       h("div", { key: "main-title", className: "mb-6 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400" }, "Main"),
       h("nav", { key: "main-nav", className: "space-y-1" }, [
         h(NavItem, { key: "n-dash", to: "/vendor/dashboard", icon: LayoutDashboard }, "Dashboard"),
-        h(NavItem, { key: "n-prod", to: "/vendor/products", icon: Box }, "My products"),
+        h(NavItem, { key: "n-prod", to: "/vendor/products", icon: Box, end: true }, "My products"),
         h(NavItem, { key: "n-add", to: "/vendor/products/new", icon: PlusCircle }, "Add product"),
         h(NavItem, { key: "n-orders", to: "/vendor/orders", icon: ShoppingCart, badge: orderBadge }, "Orders"),
         h(NavItem, { key: "n-msg", to: "/vendor/messages", icon: MessageSquare }, "Messages")
@@ -331,21 +342,14 @@ export function VendorShell() {
                   title: user?.displayName || user?.email || "Vendor"
                 },
                 [
-                  h(
-                    "span",
-                    {
-                      key: "avatar",
-                      className: "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-bold text-white"
-                    },
-                    vendorAvatarInitial(user)
-                  ),
+                  h("div", { key: "avatar", className: "shrink-0" }, vendorUserAvatarNode(user, { sizeClass: "h-8 w-8" })),
                   h(
                     "span",
                     {
                       key: "display",
                       className: "min-w-0 truncate text-xs font-medium text-slate-800 dark:text-slate-100 sm:text-sm"
                     },
-                    user?.displayName || user?.email || user?.phone || "Vendor"
+                    user?.displayName || user?.email || "Vendor"
                   )
                 ]
               ),
@@ -532,7 +536,17 @@ export function VendorDashboardPage() {
 function productStatusTone(st) {
   if (st === "active") return "success";
   if (st === "draft") return "warn";
+  if (st === "pending_approval") return "warn";
+  if (st === "rejected") return "danger";
   return "neutral";
+}
+
+function formatProductStatus(st) {
+  if (st === "pending_approval") return "Pending review";
+  if (st === "rejected") return "Rejected";
+  if (st === "active") return "Live";
+  if (st === "draft") return "Draft";
+  return st || "—";
 }
 
 export function VendorProductsPage() {
@@ -630,7 +644,7 @@ export function VendorProductsPage() {
             h("td", { key: "c-cat", className: "px-4 py-3 text-slate-600 dark:text-slate-300" }, CATEGORY_LABELS[row.category] || row.category),
             h("td", { key: "c-price", className: "px-4 py-3 font-semibold text-slate-900 dark:text-white" }, formatGhc(row.price)),
             h("td", { key: "c-stock", className: "px-4 py-3" }, String(row.stock ?? 0)),
-            h("td", { key: "c-st", className: "px-4 py-3" }, h(Badge, { tone: productStatusTone(row.status) }, row.status)),
+            h("td", { key: "c-st", className: "px-4 py-3" }, h(Badge, { tone: productStatusTone(row.status) }, formatProductStatus(row.status))),
             h("td", { key: "c-act", className: "px-4 py-3" }, h("div", { className: "flex flex-wrap gap-2" }, [
               h(
                 Button,
@@ -777,7 +791,12 @@ export function VendorAddProductPage() {
       ]),
       h("div", { key: "add-side", className: "space-y-6" }, [
         h(GlassPanel, { key: "add-publish" }, [
-          h("h2", { className: "mb-4 font-semibold text-slate-900 dark:text-white" }, "Publish"),
+          h("h2", { className: "mb-2 font-semibold text-slate-900 dark:text-white" }, "Publish"),
+          h(
+            "p",
+            { className: "text-xs text-slate-500 dark:text-slate-400" },
+            "Submits your listing for admin review. It only appears in the shop after approval (usually quick)."
+          ),
           h(
             Button,
             {
@@ -786,7 +805,7 @@ export function VendorAddProductPage() {
               type: "button",
               onClick: () => submit(false)
             },
-            "Publish (active)"
+            "Submit for review"
           ),
           h(
             Button,
@@ -810,6 +829,8 @@ export function VendorEditProductPage() {
   const [compareAtPrice, setCompareAtPrice] = useState("");
   const [stock, setStock] = useState("25");
   const [status, setStatus] = useState("draft");
+  const [serverStatus, setServerStatus] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState(null);
   const [tags, setTags] = useState("");
   const [imageList, setImageList] = useState([]);
   const [err, setErr] = useState("");
@@ -834,7 +855,13 @@ export function VendorEditProductPage() {
         setPrice(String(p.price ?? ""));
         setCompareAtPrice(p.compareAtPrice != null ? String(p.compareAtPrice) : "");
         setStock(String(p.stock ?? 0));
-        setStatus(p.status || "draft");
+        setServerStatus(p.status || "draft");
+        setRejectionReason(p.rejectionReason || null);
+        if (p.status === "active" || p.status === "pending_approval") {
+          setStatus("active");
+        } else {
+          setStatus("draft");
+        }
         setTags((p.tags || []).join(", "));
         setImageList(Array.isArray(p.imageUrls) ? [...p.imageUrls] : []);
       })
@@ -923,10 +950,36 @@ export function VendorEditProductPage() {
           ),
           h(Field, { label: "Stock" }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value) }))
         ]),
-        h(Field, { label: "Status" }, h(SelectInput, { value: status, onChange: (e) => setStatus(e.target.value) }, [
-          h("option", { value: "draft" }, "Draft"),
-          h("option", { value: "active" }, "Active")
-        ])),
+        rejectionReason && serverStatus === "rejected"
+          ? h(InlineNotice, { key: "rej", variant: "warning", className: "mb-2", size: "sm" }, [
+              h("strong", { key: "t" }, "Listing rejected. "),
+              h("span", { key: "r" }, String(rejectionReason))
+            ])
+          : null,
+        serverStatus === "pending_approval"
+          ? h(
+              "p",
+              { key: "pend", className: "mb-2 text-sm text-amber-800 dark:text-amber-200" },
+              "This listing is waiting for admin approval. You can save as draft to withdraw, or keep it submitted."
+            )
+          : null,
+        h(
+          Field,
+          { key: "fld-st", label: "Status" },
+          h(f, { key: "st" }, [
+            h(SelectInput, { value: status, onChange: (e) => setStatus(e.target.value) }, [
+              h("option", { value: "draft" }, "Draft (not in shop)"),
+              h("option", { value: "active" }, serverStatus === "active" ? "Live in shop" : "Submit / stay submitted for review")
+            ]),
+            h(
+              "p",
+              { key: "h", className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
+              serverStatus === "active"
+                ? "While live, changing the title, description, price, images, category, or tags will remove the item from the shop until an admin re-approves. Stock-only changes stay live."
+                : "“Submit for review” means the listing must be approved before buyers see it in the shop."
+            )
+          ])
+        ),
         h(Field, { label: "Tags" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value) })),
         h(VendorProductPhotos, { key: "photos", accessToken, imageList, setImageList, setErr }),
         h(Button, { type: "button", onClick: save, loading: saving }, "Save changes")
@@ -1181,7 +1234,7 @@ export function VendorMessagesPage() {
 
   const loadThreads = useCallback(() => {
     if (!accessToken) return Promise.resolve();
-    return apiFetch("/api/conversations", {
+    return apiFetch("/api/conversations?as=seller", {
       headers: { Authorization: `Bearer ${accessToken}` }
     }).then((d) => setThreads(Array.isArray(d?.threads) ? d.threads : []));
   }, [accessToken]);
@@ -1249,7 +1302,7 @@ export function VendorMessagesPage() {
     setErr("");
     setSending(pid);
     try {
-      await apiFetch(`/api/conversations/by-peer/${encodeURIComponent(pid)}/messages`, {
+      await apiFetch(`/api/conversations/by-peer/${encodeURIComponent(pid)}/messages?as=seller`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
         json: { text }
@@ -1622,12 +1675,15 @@ export function VendorSettingsPage() {
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const photoFileRef = useRef(null);
 
   useEffect(() => {
     if (!accessToken) return;
     apiFetch("/api/auth/me", { headers: { Authorization: `Bearer ${accessToken}` } })
       .then((d) => {
         if (!d.user) return;
+        setUser(d.user);
         setDisplayName(d.user.displayName || "");
         setPhone(d.user.phone || "");
         setEmail(d.user.email || "");
@@ -1636,7 +1692,49 @@ export function VendorSettingsPage() {
         setBankAccountName(d.user.bankAccountName || "");
       })
       .catch(() => {});
-  }, [accessToken]);
+  }, [accessToken, setUser]);
+
+  const onPickProfilePhoto = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f || !accessToken) return;
+    if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.type) || f.size > 5 * 1024 * 1024) {
+      setErr("Use a JPEG, PNG, WebP, or GIF under 5 MB.");
+      return;
+    }
+    setErr("");
+    setOk("");
+    setPhotoLoading(true);
+    try {
+      const data = await apiUploadProfileImage(f, accessToken);
+      if (data.user) setUser(data.user);
+      setOk("Profile photo updated.");
+    } catch (ex) {
+      setErr(ex.message || "Upload failed");
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
+
+  const clearProfilePhoto = async () => {
+    if (!accessToken) return;
+    setErr("");
+    setOk("");
+    setPhotoLoading(true);
+    try {
+      const data = await apiFetch("/api/auth/profile", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { clearProfileImage: true }
+      });
+      if (data.user) setUser(data.user);
+      setOk("Profile photo removed.");
+    } catch (ex) {
+      setErr(ex.message || "Could not remove photo");
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
 
   const save = async () => {
     setErr("");
@@ -1693,6 +1791,43 @@ export function VendorSettingsPage() {
   return h("div", { className: "grid grid-cols-1 gap-6 xl:grid-cols-3" }, [
     h("div", { className: "space-y-6 xl:col-span-2" }, [
       h(GlassPanel, {}, [
+        h("h2", { className: "mb-2 text-lg font-semibold text-slate-900 dark:text-white" }, "Profile photo"),
+        h("p", { className: "mb-4 text-sm text-slate-600 dark:text-slate-400" }, "Shown in the vendor bar and on your public profile. JPEG, PNG, WebP, or GIF, up to 5 MB."),
+        h("div", { className: "flex flex-col items-start gap-4 sm:flex-row sm:items-center" }, [
+          h(
+            "div",
+            { key: "av", className: "ring-4 ring-sky-500/25 rounded-full" },
+            vendorUserAvatarNode(user, { sizeClass: "h-20 w-20", initialTextClass: "text-xl" })
+          ),
+          h("div", { className: "flex flex-wrap gap-2" }, [
+            h("input", {
+              key: "file",
+              ref: photoFileRef,
+              type: "file",
+              accept: "image/jpeg,image/png,image/webp,image/gif",
+              className: "sr-only",
+              onChange: onPickProfilePhoto
+            }),
+            h(
+              Button,
+              {
+                key: "upl",
+                variant: "ghost",
+                type: "button",
+                disabled: photoLoading,
+                loading: photoLoading,
+                onClick: () => photoFileRef.current?.click()
+              },
+              [h(Camera, { key: "i", className: "h-4 w-4" }), h("span", { key: "t" }, "Upload photo")]
+            ),
+            (user?.profileImageUrl &&
+              String(user.profileImageUrl).trim() &&
+              h(Button, { key: "rm", variant: "subtle", type: "button", disabled: photoLoading, onClick: clearProfilePhoto }, "Remove")) ||
+              null
+          ])
+        ])
+      ]),
+      h(GlassPanel, {}, [
         h("h2", { className: "mb-4 flex items-center gap-2 font-semibold text-slate-900 dark:text-white" }, [
           h(Settings, { className: "h-5 w-5 text-sky-400" }),
           "Account & store contact"
@@ -1700,11 +1835,11 @@ export function VendorSettingsPage() {
         h(
           "p",
           { className: "mb-4 text-sm text-slate-600 dark:text-slate-400" },
-          "Phone and bank details can be shown to buyers on your listings so they can pay you directly."
+          "Your MoMo number and bank details can be shown to buyers on your listings so they can pay you directly."
         ),
         h(Field, { label: "Display name" }, h(TextInput, { value: displayName, onChange: (e) => setDisplayName(e.target.value) })),
         h(Field, { label: "Contact email" }, h(TextInput, { type: "email", value: email, disabled: true })),
-        h(Field, { label: "Phone (contact)" }, h(TextInput, { value: phone, onChange: (e) => setPhone(e.target.value) })),
+        h(Field, { label: "Mobile money number (for buyer payments)" }, h(TextInput, { value: phone, onChange: (e) => setPhone(e.target.value) })),
         h(Field, { label: "Bank name" }, h(TextInput, { value: bankName, onChange: (e) => setBankName(e.target.value) })),
         h(Field, { label: "Account name" }, h(TextInput, { value: bankAccountName, onChange: (e) => setBankAccountName(e.target.value) })),
         h(Field, { label: "Account number" }, h(TextInput, { value: bankAccountNumber, onChange: (e) => setBankAccountNumber(e.target.value) })),
@@ -1751,7 +1886,7 @@ export function VendorSettingsPage() {
     ]),
     h("div", { className: "space-y-6" }, [
       h(GlassCard, {}, [
-        h("div", { className: "mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-sky-600 text-2xl font-bold text-white" }, vendorAvatarInitial(user)),
+        h("div", { className: "mx-auto" }, vendorUserAvatarNode(user, { sizeClass: "h-24 w-24", initialTextClass: "text-2xl" })),
         h("p", { className: "mt-3 text-center font-semibold text-slate-900 dark:text-white" }, user?.displayName || "Vendor"),
         h("p", { className: "text-center text-sm text-slate-500 dark:text-slate-400" }, user?.email || "")
       ])
@@ -1760,25 +1895,37 @@ export function VendorSettingsPage() {
 }
 
 export function VendorProfilePage() {
-  const { accessToken, user } = useAuth();
+  const { accessToken, user, setUser } = useAuth();
   const [me, setMe] = useState(null);
 
   useEffect(() => {
     if (!accessToken) return;
     apiFetch("/api/auth/me", { headers: { Authorization: `Bearer ${accessToken}` } })
-      .then((d) => setMe(d.user))
+      .then((d) => {
+        if (d.user) {
+          setMe(d.user);
+          setUser(d.user);
+        }
+      })
       .catch(() => {});
-  }, [accessToken]);
+  }, [accessToken, setUser]);
 
   const u = me || user;
 
   return h(GlassPanel, {}, [
     h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Vendor profile"),
-    h("p", { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" }, "Synced from your account."),
+    h("div", { className: "mb-4 mt-4 flex flex-col items-center sm:flex-row sm:items-start sm:gap-6" }, [
+      h("div", { className: "shrink-0" }, vendorUserAvatarNode(u, { sizeClass: "h-28 w-28", initialTextClass: "text-3xl" })),
+      h("div", { className: "min-w-0 text-center sm:mt-2 sm:text-left" }, [
+        h("p", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, u?.displayName || "Vendor"),
+        h("p", { className: "mt-1 text-sm text-slate-500 dark:text-slate-400" }, u?.email || "")
+      ])
+    ]),
+    h("p", { className: "mb-4 text-sm text-slate-600 dark:text-slate-400" }, "Details below are synced from your account. Change your photo in Vendor settings."),
     h("dl", { className: "mt-6 space-y-3 text-sm" }, [
       h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Email"), h("dd", { className: "font-medium text-slate-900 dark:text-white" }, u?.email || "—")]),
       h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Display name"), h("dd", { className: "font-medium" }, u?.displayName || "—")]),
-      h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Phone"), h("dd", { className: "font-medium" }, u?.phone || "—")]),
+      h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "MoMo (payments)"), h("dd", { className: "font-mono font-medium" }, u?.phone || "—")]),
       h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Bank"), h("dd", { className: "font-medium" }, u?.bankName || "—")]),
       h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Account name"), h("dd", { className: "font-medium" }, u?.bankAccountName || "—")]),
       h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Account no."), h("dd", { className: "font-medium" }, u?.bankAccountNumber || "—")]),

@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { env } from "../../config/env";
+import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
 import { roundMoney, splitLineGross } from "../../utils/commission";
 import { User } from "../auth/user.model";
 import { Order } from "../orders/order.model";
@@ -14,24 +15,12 @@ import { VendorAnalyticsEvent } from "./vendorAnalyticsEvent.model";
 
 const PAID_ORDER_STATUSES = ["paid", "processing", "sent_for_delivery", "delivered"] as const;
 
-/** Join review → product so we can match the owning seller even when `review.sellerId` was never written (legacy rows). */
-function reviewMatchStagesForSeller(sid: mongoose.Types.ObjectId): mongoose.PipelineStage[] {
-  return [
-    {
-      $lookup: {
-        from: Product.collection.collectionName,
-        localField: "productId",
-        foreignField: "_id",
-        as: "_product"
-      }
-    },
-    { $unwind: { path: "$_product", preserveNullAndEmptyArrays: true } },
-    {
-      $match: {
-        $or: [{ sellerId: sid }, { "_product.sellerId": sid }]
-      }
-    }
-  ];
+/** Reviews tied to this seller via `sellerId` or via a product they currently own (covers legacy reviews missing `sellerId`). */
+async function reviewFilterForSeller(sid: mongoose.Types.ObjectId) {
+  const myProducts = await Product.find({ sellerId: sid }).select("_id").lean();
+  const pidIn = myProducts.map((p) => p._id);
+  if (!pidIn.length) return { sellerId: sid } as Record<string, unknown>;
+  return { $or: [{ sellerId: sid }, { productId: { $in: pidIn } }] } as Record<string, unknown>;
 }
 
 function chartDayRange(days: number): { dayKeys: string[]; startUtc: Date } {
@@ -186,6 +175,7 @@ export const vendorAnalytics = asyncHandler(async (req: Request, res: Response) 
   const sid = new mongoose.Types.ObjectId(req.user!.id);
   const daysRaw = typeof req.query.days === "string" ? Number.parseInt(req.query.days, 10) : 30;
   const { dayKeys, startUtc } = chartDayRange(Number.isFinite(daysRaw) ? daysRaw : 30);
+  const commissionPct = await getEffectiveCommissionPercent();
 
   const productCount = await Product.countDocuments({ sellerId: sid });
   const orders = await Order.find({
@@ -205,7 +195,7 @@ export const vendorAnalytics = asyncHandler(async (req: Request, res: Response) 
       const proceeds =
         typeof (it as { sellerProceeds?: number }).sellerProceeds === "number"
           ? (it as { sellerProceeds: number }).sellerProceeds
-          : splitLineGross(gross).sellerProceeds;
+          : splitLineGross(gross, commissionPct).sellerProceeds;
       revenue += proceeds;
       const pid = it.productId.toString();
       if (!productSales[pid]) productSales[pid] = { name: it.name, qty: 0, revenue: 0 };
@@ -219,8 +209,8 @@ export const vendorAnalytics = asyncHandler(async (req: Request, res: Response) 
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 10);
 
-  const reviewCountAgg = await Review.aggregate<{ n: number }>([...reviewMatchStagesForSeller(sid), { $count: "n" }]);
-  const reviewCount = reviewCountAgg[0]?.n ?? 0;
+  const reviewFilter = await reviewFilterForSeller(sid);
+  const reviewCount = await Review.countDocuments(reviewFilter);
 
   const dailyRows = dayKeys.map((date) => ({
     date,
@@ -249,7 +239,7 @@ export const vendorAnalytics = asyncHandler(async (req: Request, res: Response) 
       const proceeds =
         typeof (it as { sellerProceeds?: number }).sellerProceeds === "number"
           ? (it as { sellerProceeds: number }).sellerProceeds
-          : splitLineGross(gross).sellerProceeds;
+          : splitLineGross(gross, commissionPct).sellerProceeds;
       bucket.revenue += proceeds;
     }
     bucket.revenue = roundMoney(bucket.revenue);
@@ -288,7 +278,7 @@ export const vendorAnalytics = asyncHandler(async (req: Request, res: Response) 
     topProducts,
     reviewCount,
     /** Percent of each order line (buyer price × qty) retained by the marketplace; your revenue above is after this fee. */
-    platformCommissionPercent: env.PLATFORM_COMMISSION_PERCENT,
+    platformCommissionPercent: commissionPct,
     chart: {
       days: dayKeys.length,
       daily: dailyRows
@@ -298,32 +288,34 @@ export const vendorAnalytics = asyncHandler(async (req: Request, res: Response) 
 
 export const listVendorReviews = asyncHandler(async (req: Request, res: Response) => {
   const sid = new mongoose.Types.ObjectId(req.user!.id);
-  const rows = await Review.aggregate<{
-    _id: mongoose.Types.ObjectId;
-    productId: mongoose.Types.ObjectId;
-    buyerId: mongoose.Types.ObjectId;
-    rating: number;
-    comment: string;
-    createdAt: Date;
-    _product?: { name?: string };
-  }>([...reviewMatchStagesForSeller(sid), { $sort: { createdAt: -1 } }, { $limit: 100 }]);
+  const reviewFilter = await reviewFilterForSeller(sid);
+  const rows = await Review.find(reviewFilter).sort({ createdAt: -1 }).limit(100).lean();
 
   const bidSet = [...new Set(rows.map((r) => r.buyerId.toString()))];
-  const buyers = bidSet.length
-    ? await User.find({ _id: { $in: bidSet.map((x) => new mongoose.Types.ObjectId(x)) } })
-        .select("displayName")
-        .lean()
-    : [];
+  const pidSet = [...new Set(rows.map((r) => r.productId.toString()))];
+  const [buyers, products] = await Promise.all([
+    bidSet.length
+      ? User.find({ _id: { $in: bidSet.map((x) => new mongoose.Types.ObjectId(x)) } })
+          .select("displayName")
+          .lean()
+      : Promise.resolve([]),
+    pidSet.length
+      ? Product.find({ _id: { $in: pidSet.map((x) => new mongoose.Types.ObjectId(x)) } })
+          .select("name")
+          .lean()
+      : Promise.resolve([])
+  ]);
   const nameByBuyer = new Map(
     buyers.map((u) => [u._id.toString(), (u.displayName || "").trim() || "Buyer"])
   );
+  const nameByProduct = new Map(products.map((p) => [p._id.toString(), (p.name || "").trim() || "Product"]));
 
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({
     reviews: rows.map((r) => ({
       id: r._id.toString(),
       productId: r.productId.toString(),
-      productName: r._product?.name || "Product",
+      productName: nameByProduct.get(r.productId.toString()) || "Product",
       buyerId: r.buyerId.toString(),
       buyerDisplayName: nameByBuyer.get(r.buyerId.toString()) || "Buyer",
       rating: r.rating,

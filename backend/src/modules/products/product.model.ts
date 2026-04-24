@@ -10,7 +10,7 @@ export const PRODUCT_CATEGORIES = [
 ] as const;
 export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
 
-export type ProductStatus = "draft" | "active";
+export type ProductStatus = "draft" | "pending_approval" | "active" | "rejected";
 
 export interface ProductDoc {
   _id: mongoose.Types.ObjectId;
@@ -22,6 +22,10 @@ export interface ProductDoc {
   compareAtPrice?: number | null;
   stock: number;
   status: ProductStatus;
+  /** Set when a listing is rejected by an admin. */
+  rejectionReason?: string;
+  /** Admin moderation. */
+  flagged?: boolean;
   tags: string[];
   imageUrls: string[];
   createdAt: Date;
@@ -37,7 +41,9 @@ const productSchema = new Schema<ProductDoc>(
     price: { type: Number, required: true, min: 0 },
     compareAtPrice: { type: Number, min: 0, default: null },
     stock: { type: Number, required: true, min: 0, default: 25 },
-    status: { type: String, enum: ["draft", "active"], default: "draft" },
+    status: { type: String, enum: ["draft", "pending_approval", "active", "rejected"], default: "draft" },
+    rejectionReason: { type: String, default: null, maxlength: 2000 },
+    flagged: { type: Boolean, default: false, index: true },
     tags: { type: [String], default: [] },
     imageUrls: { type: [String], default: [] }
   },

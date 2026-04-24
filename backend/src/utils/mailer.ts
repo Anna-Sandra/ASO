@@ -1,19 +1,53 @@
 import nodemailer from "nodemailer";
-import { env } from "../config/env";
+import { env, isEmailTransportConfigured } from "../config/env";
 
-export async function sendEmail(to: string, subject: string, html: string) {
-  if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS) {
-    // eslint-disable-next-line no-console
-    console.log("[email:dev]", { to, subject, html });
-    return;
+type Transporter = ReturnType<typeof nodemailer.createTransport>;
+
+let cached: Transporter | null = null;
+
+function buildTransporter(): Transporter | null {
+  if (!isEmailTransportConfigured()) return null;
+
+  const hasSmtp = Boolean(env.SMTP_HOST?.trim() && env.SMTP_USER && env.SMTP_PASS);
+  if (hasSmtp) {
+    return nodemailer.createTransport({
+      host: env.SMTP_HOST,
+      port: env.SMTP_PORT,
+      secure: env.SMTP_PORT === 465,
+      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS }
+    });
   }
 
-  const transporter = nodemailer.createTransport({
-    host: env.SMTP_HOST,
-    port: env.SMTP_PORT,
-    secure: env.SMTP_PORT === 465,
-    auth: { user: env.SMTP_USER, pass: env.SMTP_PASS }
-  });
+  // Gmail: leave SMTP_HOST empty, set EMAIL_USER + EMAIL_PASS (Google App Password).
+  if (env.EMAIL_USER && env.EMAIL_PASS) {
+    const pass = env.EMAIL_PASS.replace(/\s/g, "");
+    return nodemailer.createTransport({
+      service: "gmail",
+      auth: { user: env.EMAIL_USER, pass }
+    });
+  }
+
+  return null;
+}
+
+function getTransporter(): Transporter | null {
+  if (cached) return cached;
+  cached = buildTransporter();
+  return cached;
+}
+
+/**
+ * Send HTML email. If mail is not configured, logs a dev line and no-ops.
+ * Uses either SMTP (SMTP_*) or Gmail (EMAIL_USER + EMAIL_PASS, SMTP_HOST empty).
+ * Set `EMAIL_FROM` to a sender Gmail accepts (usually the same as `EMAIL_USER` for App Password mode).
+ */
+export async function sendEmail(to: string, subject: string, html: string) {
+  const transporter = getTransporter();
+  if (!transporter) {
+    // eslint-disable-next-line no-console
+    console.log("[email:not-configured]", { to, subject, html: html.replace(/\s+/g, " ").slice(0, 200) });
+    return;
+  }
 
   await transporter.sendMail({
     from: env.EMAIL_FROM,
@@ -22,4 +56,3 @@ export async function sendEmail(to: string, subject: string, html: string) {
     html
   });
 }
-

@@ -6,6 +6,15 @@ import { User } from "../auth/user.model";
 import { Order } from "../orders/order.model";
 import { Conversation } from "./conversation.model";
 
+function resolveMsgInbox(
+  accountRole: "buyer" | "seller" | "admin",
+  as: unknown
+): "buyer" | "seller" {
+  if (accountRole === "buyer" || accountRole === "seller") return accountRole;
+  if (as === "seller" || as === "buyer") return as;
+  return "buyer";
+}
+
 type LeanItem = { sellerId: mongoose.Types.ObjectId; name: string };
 type LeanOrder = {
   _id: mongoose.Types.ObjectId;
@@ -69,10 +78,11 @@ function latestOrderSnippetForPair(orders: LeanOrder[], buyerId: string, sellerI
 
 /** One thread per (buyerId, sellerId): all orders between that pair share the same messages. */
 export const listConversations = asyncHandler(async (req: Request, res: Response) => {
-  const role = req.user!.role;
-  if (role !== "buyer" && role !== "seller") {
+  const accountRole = req.user!.role;
+  if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
     throw new HttpError(403, "Messages are only available for buyer or seller accounts");
   }
+  const role = resolveMsgInbox(accountRole, (req.query as { as?: unknown }).as);
   const uid = new mongoose.Types.ObjectId(req.user!.id);
 
   if (role === "buyer") {
@@ -166,10 +176,11 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
 export const addMessageByPeer = asyncHandler(async (req: Request, res: Response) => {
   const { peerUserId } = req.params;
   const { text } = req.body as { text: string };
-  const role = req.user!.role;
-  if (role !== "buyer" && role !== "seller") {
+  const accountRole = req.user!.role;
+  if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
     throw new HttpError(403, "Only buyers and sellers can send messages");
   }
+  const role = resolveMsgInbox(accountRole, (req.query as { as?: unknown }).as);
   if (!mongoose.isValidObjectId(peerUserId)) throw new HttpError(400, "Invalid peer user id");
   const peerOid = new mongoose.Types.ObjectId(peerUserId);
   const myOid = new mongoose.Types.ObjectId(req.user!.id);

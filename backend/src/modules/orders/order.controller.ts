@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
+import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
 import { roundMoney, splitLineGross } from "../../utils/commission";
 import { Order } from "./order.model";
 import { Product } from "../products/product.model";
@@ -23,6 +24,7 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     sellerProceeds: number;
   }> = [];
 
+  const commissionPct = await getEffectiveCommissionPercent();
   for (const row of items) {
     if (!mongoose.isValidObjectId(row.productId)) throw new HttpError(400, "Invalid product id");
     const p = await Product.findById(row.productId);
@@ -30,7 +32,7 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     if (p.stock < row.quantity) throw new HttpError(400, `Insufficient stock for ${p.name}`);
 
     const gross = roundMoney(p.price * row.quantity);
-    const { platformFee, sellerProceeds } = splitLineGross(gross);
+    const { platformFee, sellerProceeds } = splitLineGross(gross, commissionPct);
     lineItems.push({
       productId: p._id,
       sellerId: p.sellerId,

@@ -1,4 +1,4 @@
-import React, { useId, useState } from "react";
+import React, { useId, useRef, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
@@ -158,6 +158,97 @@ export function TextInput(props) {
     ...rest,
     className: `w-full min-h-[44px] rounded-2xl border border-slate-300/70 bg-white/60 px-4 py-2.5 text-slate-900 shadow-inner shadow-slate-900/5 placeholder:text-slate-400 focus:border-sky-400/60 dark:border-white/10 dark:bg-night-900/50 dark:text-slate-100 dark:placeholder:text-slate-500 ${className}`.trim()
   });
+}
+
+const otpBoxClass =
+  "tap-target w-10 h-11 sm:w-11 sm:h-12 min-w-0 shrink-0 rounded-xl border border-slate-300/70 bg-white/70 text-center text-base font-semibold tabular-nums text-slate-900 shadow-inner shadow-slate-900/5 focus:border-sky-400/70 focus:outline-none focus:ring-2 focus:ring-sky-400/30 dark:border-white/12 dark:bg-night-900/55 dark:text-slate-100 dark:focus:border-sky-400/50 dark:focus:ring-sky-400/20";
+
+/** Six single-digit boxes; paste and arrow keys supported. `value` is up to 6 digits. */
+export function OtpCodeInput({ value = "", onChange, disabled, className = "", "aria-invalid": ariaInvalid, autoFocus }) {
+  const clean = String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+  const refs = useRef([]);
+
+  const commit = (digits) => {
+    onChange(String(digits || "").replace(/\D/g, "").slice(0, 6));
+  };
+
+  const charsAt = () => {
+    const out = [];
+    for (let j = 0; j < 6; j++) out[j] = clean[j] || "";
+    return out;
+  };
+
+  const onChangeBox = (i) => (e) => {
+    const raw = e.target.value.replace(/\D/g, "");
+    const d = raw.length >= 1 ? raw.slice(-1) : "";
+    const chars = charsAt();
+    chars[i] = d;
+    commit(chars.join(""));
+    if (d && i < 5) refs.current[i + 1]?.focus?.();
+  };
+
+  const onKeyDown = (i) => (e) => {
+    if (e.key === "Backspace") {
+      const chars = charsAt();
+      if (chars[i]) {
+        chars[i] = "";
+        commit(chars.join(""));
+        e.preventDefault();
+      } else if (i > 0) {
+        chars[i - 1] = "";
+        commit(chars.join(""));
+        refs.current[i - 1]?.focus?.();
+        e.preventDefault();
+      }
+    } else if (e.key === "ArrowLeft" && i > 0) {
+      refs.current[i - 1]?.focus?.();
+      e.preventDefault();
+    } else if (e.key === "ArrowRight" && i < 5) {
+      refs.current[i + 1]?.focus?.();
+      e.preventDefault();
+    }
+  };
+
+  const onPaste = (e) => {
+    e.preventDefault();
+    const text = e.clipboardData?.getData("text") || "";
+    const digits = text.replace(/\D/g, "").slice(0, 6);
+    commit(digits);
+    const focusIdx = Math.min(Math.max(0, digits.length), 5);
+    refs.current[focusIdx]?.focus?.();
+  };
+
+  return h(
+    "div",
+    {
+      role: "group",
+      "aria-label": "One-time code",
+      className: `flex flex-wrap justify-center gap-1.5 sm:gap-2 ${className}`.trim(),
+      onPaste
+    },
+    [0, 1, 2, 3, 4, 5].map((i) =>
+      h("input", {
+        key: i,
+        ref: (el) => {
+          refs.current[i] = el;
+        },
+        type: "text",
+        inputMode: "numeric",
+        autoComplete: i === 0 ? "one-time-code" : "off",
+        maxLength: 1,
+        disabled: Boolean(disabled),
+        "aria-invalid": ariaInvalid,
+        autoFocus: Boolean(autoFocus) && i === 0,
+        value: clean[i] || "",
+        onChange: onChangeBox(i),
+        onKeyDown: onKeyDown(i),
+        onFocus: (ev) => ev.target.select(),
+        className: otpBoxClass
+      })
+    )
+  );
 }
 
 export function TextArea(props) {

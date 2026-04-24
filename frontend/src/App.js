@@ -8,6 +8,7 @@ import { h, f } from "./h";
 import {
   ForgotPasswordPage,
   LoginPage,
+  LoginOtpPage,
   RegisterPage,
   ResetPasswordPage,
   VerifyEmailPage
@@ -22,6 +23,7 @@ import {
   ProfilePage,
   ShopPage
 } from "./screensBuyer";
+import { AdminPage } from "./screensAdmin";
 import {
   VendorAddProductPage,
   VendorAnalyticsPage,
@@ -49,6 +51,9 @@ function VendorGate({ children }) {
     return h(Navigate, { to: "/login", replace: true, state: { from: "vendor" } });
   }
   if (user && user.role && user.role !== "seller") {
+    if (user.role === "admin") {
+      return h(Navigate, { to: "/admin", replace: true });
+    }
     return h(Navigate, { to: "/login", replace: true, state: { from: "vendor" } });
   }
   return children;
@@ -63,6 +68,9 @@ function BuyerGate({ children }) {
       "Loading…"
     );
   }
+  if (accessToken && user?.role === "admin") {
+    return h(Navigate, { to: "/admin", replace: true });
+  }
   if (accessToken && user?.role === "seller") {
     return h(Navigate, { to: "/vendor/dashboard", replace: true });
   }
@@ -70,6 +78,24 @@ function BuyerGate({ children }) {
 }
 
 /** Buyer routes that need an account (checkout, profile, payment). */
+function AdminGate({ children }) {
+  const { accessToken, loading, user } = useAuth();
+  if (loading) {
+    return h(
+      "div",
+      { className: "flex min-h-screen items-center justify-center bg-night-950 text-slate-300" },
+      "Loading…"
+    );
+  }
+  if (!accessToken) {
+    return h(Navigate, { to: "/login", replace: true, state: { from: "/admin" } });
+  }
+  if (user && user.role !== "admin") {
+    return h(Navigate, { to: "/", replace: true });
+  }
+  return children;
+}
+
 function RequireBuyerAuth({ children }) {
   const { accessToken, loading } = useAuth();
   const loc = useLocation();
@@ -97,7 +123,9 @@ function AppRoutes() {
       element: h(BuyerGate, null, h(ProductDetailPage)),
       key: "r-product"
     }),
+    h(Route, { path: "/admin", element: h(AdminGate, null, h(AdminPage)), key: "r-admin" }),
     h(Route, { path: "/login", element: h(LoginPage), key: "r-login" }),
+    h(Route, { path: "/login-otp", element: h(LoginOtpPage), key: "r-login-otp" }),
     h(Route, { path: "/register", element: h(RegisterPage), key: "r-register" }),
     h(Route, { path: "/verify-email", element: h(VerifyEmailPage), key: "r-verify" }),
     h(Route, { path: "/forgot-password", element: h(ForgotPasswordPage), key: "r-forgot" }),

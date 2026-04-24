@@ -57,7 +57,7 @@ export function formatSellerPaymentSnippet(sp) {
     [sp.bankName, sp.bankAccountName, sp.bankAccountNumber].map((x) => String(x || "").trim()).filter(Boolean).join(" · ") ||
     "";
   const parts = [];
-  if (phone) parts.push(`Phone: ${phone}`);
+  if (phone) parts.push(`MoMo: ${phone}`);
   if (bank) parts.push(`Bank: ${bank}`);
   return parts.join(" · ");
 }

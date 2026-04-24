@@ -1,6 +1,6 @@
 import mongoose, { Schema } from "mongoose";
 
-export type TokenPurpose = "email_verify" | "password_reset" | "refresh";
+export type TokenPurpose = "email_verify" | "password_reset" | "refresh" | "login_otp";
 
 export interface TokenDoc {
   _id: mongoose.Types.ObjectId;
@@ -20,7 +20,7 @@ const tokenSchema = new Schema<TokenDoc>(
     purpose: {
       type: String,
       required: true,
-      enum: ["email_verify", "password_reset", "refresh"],
+      enum: ["email_verify", "password_reset", "refresh", "login_otp"],
       index: true
     },
     tokenHash: { type: String, required: true, select: false, index: true },

@@ -8,6 +8,7 @@ const AuthContext = createContext({
   accessToken: null,
   loading: true,
   login: async () => {},
+  verifyLoginOtp: async () => {},
   register: async () => {},
   logout: async () => {},
   refreshAccess: async () => {},
@@ -116,6 +117,8 @@ export function AuthProvider({ children }) {
         method: "POST",
         json: { identifier, password }
       });
+      if (data.needsOtp) return data;
+
       if (data.user) setUser(data.user);
       else {
         const payload = decodeJwtPayload(data.accessToken);
@@ -123,6 +126,27 @@ export function AuthProvider({ children }) {
           payload?.sub
             ? { id: payload.sub, role: payload.role, email: identifier }
             : { id: "", role: "buyer", email: identifier }
+        );
+      }
+      setAccessToken(data.accessToken);
+      return data;
+    },
+    [setAccessToken]
+  );
+
+  const verifyLoginOtp = useCallback(
+    async (email, otp) => {
+      const data = await apiFetch("/api/auth/verify-login-otp", {
+        method: "POST",
+        json: { email, otp }
+      });
+      if (data.user) setUser(data.user);
+      else {
+        const payload = decodeJwtPayload(data.accessToken);
+        setUser(
+          payload?.sub
+            ? { id: payload.sub, role: payload.role, email }
+            : { id: "", role: "buyer", email }
         );
       }
       setAccessToken(data.accessToken);
@@ -155,13 +179,14 @@ export function AuthProvider({ children }) {
       accessToken,
       loading,
       login,
+      verifyLoginOtp,
       register,
       logout,
       refreshAccess,
       setAccessToken,
       setUser
     }),
-    [user, accessToken, loading, login, register, logout, refreshAccess, setAccessToken, setUser]
+    [user, accessToken, loading, login, verifyLoginOtp, register, logout, refreshAccess, setAccessToken, setUser]
   );
 
   return h(AuthContext.Provider, { value }, children);

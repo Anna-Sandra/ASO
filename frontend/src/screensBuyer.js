@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   ReceiptText,
   Search,
   Send,
+  Camera,
   Shirt,
   ShoppingCart,
   Star,
@@ -32,7 +33,7 @@ import { useAuth } from "./AuthContext";
 import { useCart } from "./CartContext";
 import { useNotice } from "./NoticeContext";
 import { useTheme } from "./ThemeContext";
-import { apiFetch, deleteAuthenticatedAccount } from "./api";
+import { apiFetch, apiUploadProfileImage, deleteAuthenticatedAccount } from "./api";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
@@ -54,6 +55,7 @@ import {
   InlineNotice,
   LogoMark,
   RefImage,
+  SelectInput,
   TextArea,
   TextInput,
   ThemeToggleButton
@@ -79,7 +81,7 @@ function buyerVendorPayPanel(sellerPayment) {
       h(
         "p",
         { className: "text-sm text-amber-950 dark:text-amber-100" },
-        "This seller has not added phone or bank payout details yet. You can still order; use your order messages if you need payment help."
+        "This seller has not added a MoMo number or bank payout details yet. You can still order; use your order messages if you need payment help."
       )
     );
   }
@@ -95,7 +97,7 @@ function buyerVendorPayPanel(sellerPayment) {
   if (phone) {
     rows.push(
       h("div", { key: "ph", className: "mt-2" }, [
-        h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Phone"),
+        h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "MoMo"),
         h("p", { className: "mt-0.5 font-mono text-sm text-slate-800 dark:text-slate-100" }, phone)
       ])
     );
@@ -238,12 +240,20 @@ function BuyerReviewModal({ open, onClose, productId, orderId, productTitle }) {
       setReviewStatus(st);
       setReviewMsg("Thanks — your review was posted.");
     } catch (ex) {
-      if (ex?.status === 409) {
-        setReviewStatus((prev) => ({
-          ...(prev || {}),
-          canSubmit: false,
-          hasReview: true
-        }));
+      if (ex?.status === 409 && orderId) {
+        try {
+          const qs3 = `?orderId=${encodeURIComponent(orderId)}&_=${Date.now()}`;
+          const st = await apiFetch(`/api/products/${productId}/review-status${qs3}`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+          setReviewStatus(st);
+          if (st?.hasReview) {
+            setReviewMsg("");
+            return;
+          }
+        } catch {
+          setReviewStatus((prev) => ({ ...(prev || {}), canSubmit: false, hasReview: true }));
+        }
       }
       setReviewMsg(ex.message || "Could not submit review");
     } finally {
@@ -416,6 +426,7 @@ export function ProductDetailPage() {
   const orderIdFromUrl = searchParams.get("orderId") || "";
   const { accessToken } = useAuth();
   const { add } = useCart();
+  const { toast } = useNotice();
   const [product, setProduct] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [reviewStatus, setReviewStatus] = useState(null);
@@ -428,6 +439,10 @@ export function ProductDetailPage() {
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [reviewMsg, setReviewMsg] = useState("");
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportCategory, setReportCategory] = useState("bad_product");
+  const [reportDesc, setReportDesc] = useState("");
+  const [reportSend, setReportSend] = useState(false);
 
   useEffect(() => {
     if (!productId) return;
@@ -482,7 +497,7 @@ export function ProductDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, productId, reviews.length, orderIdFromUrl]);
+  }, [accessToken, productId, orderIdFromUrl]);
 
   const tryAdd = () => {
     if (!product || (product.stock ?? 0) <= 0) return;
@@ -491,6 +506,30 @@ export function ProductDetailPage() {
       return;
     }
     add(product, 1);
+  };
+
+  const submitReport = async () => {
+    if (!accessToken || !productId) return;
+    const d = reportDesc.trim();
+    if (d.length < 10) {
+      toast("Please describe the issue in at least 10 characters.", { variant: "warning" });
+      return;
+    }
+    setReportSend(true);
+    try {
+      await apiFetch("/api/reports", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { category: reportCategory, description: d, targetType: "product", targetId: productId }
+      });
+      toast("Thanks — we received your report.", { variant: "success" });
+      setReportOpen(false);
+      setReportDesc("");
+    } catch (ex) {
+      toast(ex.message || "Could not send report", { variant: "error" });
+    } finally {
+      setReportSend(false);
+    }
   };
 
   const submitReview = async () => {
@@ -515,6 +554,27 @@ export function ProductDetailPage() {
       setReviewStatus(st);
       setReviewMsg("Thanks — your review was posted.");
     } catch (ex) {
+      if (ex?.status === 409) {
+        try {
+          const qs3 = orderIdFromUrl
+            ? `?orderId=${encodeURIComponent(orderIdFromUrl)}&_=${Date.now()}`
+            : `?_=${Date.now()}`;
+          const [rv, st] = await Promise.all([
+            apiFetch(`/api/products/${productId}/reviews`),
+            apiFetch(`/api/products/${productId}/review-status${qs3}`, {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            })
+          ]);
+          setReviews(rv.reviews || []);
+          setReviewStatus(st);
+          if (st?.hasReview) {
+            setReviewMsg("");
+            return;
+          }
+        } catch {
+          /* keep error message below */
+        }
+      }
       setReviewMsg(ex.message || "Could not submit review");
     } finally {
       setSubmitting(false);
@@ -673,6 +733,35 @@ export function ProductDetailPage() {
               )
             ]
           ),
+          accessToken &&
+            h(f, { key: "rep-line" }, [
+              h(
+                "button",
+                {
+                  type: "button",
+                  onClick: () => setReportOpen((v) => !v),
+                  className: "text-sm font-medium text-amber-600 underline-offset-2 hover:underline dark:text-amber-300"
+                },
+                "Report this listing"
+              ),
+              reportOpen &&
+                h(GlassPanel, { key: "rep-form", className: "mt-3 !border-amber-500/20" }, [
+                  h("p", { className: "text-xs text-slate-500" }, "Reports are reviewed by admins. Be specific (min. 10 characters)."),
+                  h(Field, { className: "mt-2", label: "Category" }, h(SelectInput, { value: reportCategory, onChange: (e) => setReportCategory(e.target.value) }, [
+                    h("option", { value: "bad_product" }, "Bad product / misleading listing"),
+                    h("option", { value: "fake_seller" }, "Fake or misleading seller"),
+                    h("option", { value: "scam" }, "Scam"),
+                    h("option", { value: "chat_abuse" }, "Abuse in messages"),
+                    h("option", { value: "other" }, "Other")
+                  ])),
+                  h(Field, { className: "mt-2", label: "What happened?" }, h(TextArea, { value: reportDesc, onChange: (e) => setReportDesc(e.target.value), rows: 4, placeholder: "Describe the issue…" })),
+                  h(
+                    Button,
+                    { className: "mt-3", type: "button", loading: reportSend, onClick: submitReport },
+                    "Submit report"
+                  )
+                ])
+            ]),
           h(GlassPanel, { key: "desc", className: "!border-white/10" }, [
             h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Description"),
             h("p", { className: "mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200" }, product.description || "No description provided.")
@@ -750,6 +839,19 @@ export function ProductDetailPage() {
   ]);
 }
 
+/** Rounded avatar: uploaded photo or initial letter. */
+function buyerUserAvatarNode(u, { sizeClass = "h-8 w-8", textClass = "text-sm" } = {}) {
+  const src = u?.profileImageUrl && String(u.profileImageUrl).trim();
+  if (src) {
+    return h("img", { src, alt: "", className: `${sizeClass} shrink-0 rounded-full object-cover` });
+  }
+  return h(
+    "span",
+    { className: `flex ${sizeClass} shrink-0 items-center justify-center rounded-full bg-sky-600 ${textClass} font-bold text-white` },
+    buyerAvatarInitial(u)
+  );
+}
+
 /** Avatar letter for buyer shell (matches vendor hub chip). */
 function buyerAvatarInitial(u) {
   if (!u) return "B";
@@ -765,18 +867,13 @@ function buyerAvatarInitial(u) {
     const ch = local.charAt(0);
     if (/[a-zA-Z0-9]/.test(ch)) return ch.toUpperCase();
   }
-  const raw = String(u.phone || "").trim();
-  if (raw.length) {
-    const digits = raw.replace(/\D/g, "");
-    if (digits.length) return digits.charAt(0);
-  }
   return "B";
 }
 
 /** Buyer chip text (same style pattern as vendor: avatar + label). */
 function buyerNavbarHandle(u) {
   if (!u) return "";
-  const label = String(u.displayName || "").trim() || u.email || u.phone || "";
+  const label = String(u.displayName || "").trim() || u.email || "";
   return label || "Your account";
 }
 
@@ -793,7 +890,7 @@ function BuyerSidebarNavLink({ to, end, icon: Icon, onClose, children }) {
       }`,
     children: ({ isActive }) =>
       h(f, null, [
-        h(Icon, { className: `h-4 w-4 shrink-0 sm:h-5 sm:w-5 ${isActive ? "text-white" : ""}` }),
+        h(Icon, { key: "ic", className: `h-4 w-4 shrink-0 sm:h-5 sm:w-5 ${isActive ? "text-white" : ""}` }),
         h("span", { key: "tx" }, children)
       ])
   });
@@ -944,14 +1041,7 @@ function BuyerLayout({ children, onOpenCart, title, hideSearch, searchValue, onS
         title: buyerNavbarHandle(user)
       },
       [
-        h(
-          "span",
-          {
-            key: "av",
-            className: "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-600 text-sm font-bold text-white"
-          },
-          buyerAvatarInitial(user)
-        ),
+        h("div", { key: "av", className: "shrink-0" }, buyerUserAvatarNode(user, { sizeClass: "h-8 w-8" })),
         h(
           "span",
           {
@@ -2242,19 +2332,19 @@ export function ProfilePage() {
   const { user, accessToken, setUser, logout } = useAuth();
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [saveErr, setSaveErr] = useState("");
   const [saveOk, setSaveOk] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const photoFileRef = useRef(null);
 
   useEffect(() => {
     if (!accessToken) {
       setDisplayName("");
       setEmail("");
-      setPhone("");
       return;
     }
     let cancelled = false;
@@ -2264,7 +2354,6 @@ export function ProfilePage() {
         if (meData?.user) {
           setDisplayName(meData.user.displayName || "");
           setEmail(meData.user.email || "");
-          setPhone(meData.user.phone || "");
           setUser(meData.user);
         }
       })
@@ -2273,6 +2362,52 @@ export function ProfilePage() {
       cancelled = true;
     };
   }, [accessToken]);
+
+  const onPickProfilePhoto = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f || !accessToken) return;
+    if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.type)) {
+      setSaveErr("Please choose a JPEG, PNG, WebP, or GIF image (max 5 MB).");
+      return;
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      setSaveErr("Image must be 5 MB or smaller.");
+      return;
+    }
+    setSaveErr("");
+    setSaveOk("");
+    setPhotoLoading(true);
+    try {
+      const data = await apiUploadProfileImage(f, accessToken);
+      if (data.user) setUser(data.user);
+      setSaveOk("Profile photo updated.");
+    } catch (ex) {
+      setSaveErr(ex.message || "Upload failed");
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
+
+  const clearProfilePhoto = async () => {
+    if (!accessToken) return;
+    setSaveErr("");
+    setSaveOk("");
+    setPhotoLoading(true);
+    try {
+      const data = await apiFetch("/api/auth/profile", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { clearProfileImage: true }
+      });
+      if (data.user) setUser(data.user);
+      setSaveOk("Profile photo removed.");
+    } catch (ex) {
+      setSaveErr(ex.message || "Could not remove photo");
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
 
   const saveProfile = async () => {
     setSaveErr("");
@@ -2283,7 +2418,7 @@ export function ProfilePage() {
       const data = await apiFetch("/api/auth/profile", {
         method: "PATCH",
         headers: { Authorization: `Bearer ${accessToken}` },
-        json: { displayName: displayName.trim(), phone: phone.trim() }
+        json: { displayName: displayName.trim() }
       });
       if (data.user) setUser(data.user);
       setSaveOk("Profile updated.");
@@ -2326,7 +2461,53 @@ export function ProfilePage() {
       { key: "layout", onOpenCart: () => setCartOpen(true), hideSearch: true },
       h("div", { key: "main", className: "mx-auto max-w-3xl px-4 py-10 sm:px-6" }, [
       h("div", { key: "hero", className: "mb-8 flex flex-col items-center text-center" }, [
-        h(RefImage, { key: "avatar", n: 12, alt: "Profile", className: "h-24 w-24 rounded-full object-cover ring-4 ring-sky-500/30" }),
+        h("div", { key: "avatar-wrap", className: "flex flex-col items-center" }, [
+          h(
+            "div",
+            { key: "av", className: "ring-4 ring-sky-500/30 ring-offset-2 ring-offset-slate-100 dark:ring-offset-night-950 rounded-full" },
+            user?.profileImageUrl && String(user.profileImageUrl).trim()
+              ? h("img", {
+                  key: "img",
+                  src: String(user.profileImageUrl).trim(),
+                  alt: "",
+                  className: "h-24 w-24 rounded-full object-cover"
+                })
+              : h(RefImage, { key: "def", n: 12, alt: "Profile", className: "h-24 w-24 rounded-full object-cover" })
+          ),
+          accessToken &&
+            h("div", { key: "photo-actions", className: "mt-4 flex flex-wrap items-center justify-center gap-2" }, [
+              h("input", {
+                key: "file",
+                ref: photoFileRef,
+                type: "file",
+                accept: "image/jpeg,image/png,image/webp,image/gif",
+                className: "sr-only",
+                onChange: onPickProfilePhoto
+              }),
+              h(
+                Button,
+                {
+                  key: "upl",
+                  variant: "ghost",
+                  className: "!min-h-[40px] gap-1.5",
+                  type: "button",
+                  disabled: photoLoading,
+                  loading: photoLoading,
+                  onClick: () => photoFileRef.current?.click()
+                },
+                [h(Camera, { key: "i", className: "h-4 w-4" }), h("span", { key: "t" }, "Upload photo")]
+              ),
+              (user?.profileImageUrl && String(user.profileImageUrl).trim() &&
+                h(Button, {
+                  key: "rm",
+                  variant: "subtle",
+                  type: "button",
+                  disabled: photoLoading,
+                  onClick: clearProfilePhoto
+                }, "Remove photo")) ||
+                null
+            ])
+        ]),
         h(
           "h1",
           { key: "title", className: "mt-4 font-display text-2xl font-bold text-slate-900 dark:text-white" },
@@ -2339,7 +2520,6 @@ export function ProfilePage() {
         h("div", { className: "mt-4 space-y-4" }, [
           h(Field, { key: "f-name", label: "Display name" }, h(TextInput, { value: displayName, onChange: (e) => setDisplayName(e.target.value), placeholder: "Your name" })),
           h(Field, { key: "f-email", label: "Email" }, h(TextInput, { type: "email", value: email, disabled: true })),
-          h(Field, { key: "f-phone", label: "Phone" }, h(TextInput, { value: phone, onChange: (e) => setPhone(e.target.value), placeholder: "+233 …" })),
           saveErr
             ? h(InlineNotice, { key: "save-err", variant: "error", onDismiss: () => setSaveErr("") }, saveErr)
             : null,
@@ -3045,13 +3225,6 @@ export function PaymentSuccessPage() {
 
   const sellers = order?.sellerContacts || [];
   const confirmed = new Set(order?.confirmedSellerIds || []);
-  const sellerCallHref = (rawPhone) => {
-    const s = String(rawPhone || "").trim();
-    if (!s) return "";
-    const cleaned = s.replace(/[^\d+]/g, "");
-    if (!cleaned) return "";
-    return `tel:${cleaned}`;
-  };
 
   return h("div", { className: "mx-auto max-w-lg px-4 py-8 sm:py-12" }, [
     h(GlassPanel, { className: "text-center" }, [
@@ -3087,17 +3260,7 @@ export function PaymentSuccessPage() {
             ...sellers.map((sc) =>
               h("li", { key: sc.id, className: "flex items-center justify-between gap-2 rounded-xl border border-white/10 px-3 py-2" }, [
                 h("div", { className: "min-w-0" }, [
-                  h("span", { className: "block truncate" }, sc.displayName || "Seller"),
-                  sellerCallHref(sc.phone)
-                    ? h(
-                        "a",
-                        {
-                          href: sellerCallHref(sc.phone),
-                          className: "mt-1 inline-block text-xs font-medium text-sky-600 hover:underline dark:text-sky-300"
-                        },
-                        "Call vendor"
-                      )
-                    : null
+                  h("span", { className: "block truncate" }, sc.displayName || "Seller")
                 ]),
                 h("span", { className: "shrink-0 text-xs font-medium" }, confirmed.has(sc.id) ? "Confirmed" : "Pending")
               ])

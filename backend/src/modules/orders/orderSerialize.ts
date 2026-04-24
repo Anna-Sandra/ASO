@@ -67,6 +67,9 @@ export function serializeOrder(o: Record<string, unknown>) {
       createdAt: m.createdAt
     })),
     stripeCheckoutSessionId: o.stripeCheckoutSessionId,
+    disputeOpen: Boolean((o as { disputeOpen?: boolean }).disputeOpen),
+    adminNote: (o as { adminNote?: string }).adminNote ?? "",
+    refundStatus: (o as { refundStatus?: string }).refundStatus ?? "none",
     createdAt: o.createdAt,
     updatedAt: o.updatedAt
   };
@@ -122,7 +125,7 @@ export async function withContacts(rows: Record<string, unknown>[]) {
       buyerContact: {
         id: buyerId,
         email: bu?.email ?? "",
-        phone: bu?.phone ?? "",
+        phone: "",
         displayName: bu?.displayName ?? ""
       },
       sellerContacts: Object.values(sellerContactById)

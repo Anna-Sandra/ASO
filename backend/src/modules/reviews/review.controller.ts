@@ -35,7 +35,10 @@ async function reviewerDisplayNames(buyerIds: string[]) {
 export const listProductReviews = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid product id");
-  const rows = await Review.find({ productId: id }).sort({ createdAt: -1 }).limit(100).lean();
+  const product = await Product.findById(id).select("status").lean();
+  if (!product || product.status !== "active") throw new HttpError(404, "Product not found");
+  const productOid = new mongoose.Types.ObjectId(id);
+  const rows = await Review.find({ productId: productOid }).sort({ createdAt: -1 }).limit(100).lean();
   const byName = await reviewerDisplayNames(rows.map((r) => r.buyerId.toString()));
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({
@@ -59,7 +62,7 @@ export const getReviewStatus = asyncHandler(async (req: Request, res: Response) 
   const buyerId = new mongoose.Types.ObjectId(req.user!.id);
   const productOid = new mongoose.Types.ObjectId(id);
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
-  const existing = await Review.findOne({ productId: id, buyerId }).lean();
+  const existing = await Review.findOne({ productId: productOid, buyerId }).lean();
   if (existing) {
     res.json({
       canSubmit: false,
