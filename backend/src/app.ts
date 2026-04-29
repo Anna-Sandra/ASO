@@ -68,7 +68,10 @@ export function createApp() {
       ok: true,
       /** If these are missing in JSON, this process is an old build — run `npm run build` in backend and restart. */
       accountDeletion: { post: "/api/auth/delete-account", delete: "/api/auth/account" },
-      uploads: { profileImage: "POST /api/uploads/profile-image" }
+      uploads: {
+        profileImage: "POST /api/uploads/profile-image",
+        productImages: "POST /api/uploads/product-images"
+      }
     })
   );
 

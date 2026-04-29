@@ -3,7 +3,7 @@ import path from "path";
 import { Router } from "express";
 import multer from "multer";
 
-import { protect } from "../../middleware/auth";
+import { authorize, protect } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
@@ -52,15 +52,22 @@ router.post("/profile-image", protect, requireActiveAccount, upload.single("imag
   }
 });
 
-router.post("/product-images", protect, requireActiveAccount, upload.array("images", 6), async (req, res, next) => {
-  try {
-    const files = Array.isArray(req.files) ? req.files : [];
-    if (!files.length) throw new HttpError(400, "At least one image file is required");
+router.post(
+  "/product-images",
+  protect,
+  requireActiveAccount,
+  authorize("seller", "admin"),
+  upload.array("images", 6),
+  async (req, res, next) => {
+    try {
+      const files = Array.isArray(req.files) ? req.files : [];
+      if (!files.length) throw new HttpError(400, "At least one image file is required");
 
-    res.status(201).json({ imageUrls: files.map((file) => `/uploads/products/${file.filename}`) });
-  } catch (err) {
-    next(err);
+      res.status(201).json({ imageUrls: files.map((file) => `/uploads/products/${file.filename}`) });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 export default router;
