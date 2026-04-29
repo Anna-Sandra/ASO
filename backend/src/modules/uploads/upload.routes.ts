@@ -12,10 +12,12 @@ const router = Router();
 
 const uploadRoot = path.join(process.cwd(), "uploads");
 const avatarDir = path.join(uploadRoot, "avatars");
+const productDir = path.join(uploadRoot, "products");
 fs.mkdirSync(avatarDir, { recursive: true });
+fs.mkdirSync(productDir, { recursive: true });
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, avatarDir),
+  destination: (req, _file, cb) => cb(null, req.path.includes("product-images") ? productDir : avatarDir),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     const userId = req.user?.id ?? "user";
@@ -45,6 +47,17 @@ router.post("/profile-image", protect, requireActiveAccount, upload.single("imag
     if (!user) throw new HttpError(404, "User not found");
 
     res.status(201).json({ profileImageUrl });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/product-images", protect, requireActiveAccount, upload.array("images", 6), async (req, res, next) => {
+  try {
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (!files.length) throw new HttpError(400, "At least one image file is required");
+
+    res.status(201).json({ imageUrls: files.map((file) => `/uploads/products/${file.filename}`) });
   } catch (err) {
     next(err);
   }
