@@ -3,7 +3,15 @@ import { connectDb } from "./config/db";
 import { env } from "./config/env";
 
 async function main() {
-  await connectDb();
+  try {
+    await connectDb();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[db] MongoDB connection failed — API still starts. Env-based platform admin can sign in; most routes need the database.",
+      err
+    );
+  }
   const app = createApp();
 
   const server = app.listen(env.PORT, () => {

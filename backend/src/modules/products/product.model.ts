@@ -1,12 +1,13 @@
 import mongoose, { Schema } from "mongoose";
 
 export const PRODUCT_CATEGORIES = [
-  "electronics",
-  "books",
-  "clothing",
-  "food",
-  "footwears",
-  "other"
+  "food_drinks",
+  "fashion_accessories",
+  "electronics_gadgets",
+  "beauty_personal_care",
+  "services",
+  "books_academic",
+  "groceries_essentials"
 ] as const;
 export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
 

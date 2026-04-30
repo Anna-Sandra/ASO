@@ -16,7 +16,7 @@ export interface OrderLineItem {
   name: string;
   quantity: number;
   unitPrice: number;
-  /** Buyer-paid line gross = unitPrice × quantity (stored implicitly; also derivable). */
+  /** Line list subtotal = unitPrice × quantity (vendor’s intended proceeds). */
   platformFee: number;
   sellerProceeds: number;
 }
@@ -45,18 +45,48 @@ export interface OrderDoc {
   currency: string;
   subtotal: number;
   total: number;
+  /**
+   * 1 = legacy (buyer’s `total` equals listing subtotal; commission taken from seller share).
+   * 2 = fees on top (buyer pays subtotal + service + Paystack processing; seller nets list price per line).
+   */
+  pricingVersion?: number;
+  /** Buyer-paid Paystack / processing margin (GHS), included in `total`. Only set for pricingVersion ≥ 2. */
+  processingFeeTotal?: number;
   status: OrderStatus;
-  paymentMethod?: "stripe" | "momo" | "bank" | null;
+  paymentMethod?: "stripe" | "momo" | "bank" | "paystack" | null;
   paymentReference?: string | null;
   paymentDetails?: OrderPaymentDetails | null;
   stripeCheckoutSessionId?: string | null;
+  /** When true, this order’s Paystack charge used split/subaccount at initialize — do not run transfer payouts. */
+  paystackUsedCheckoutSplit?: boolean;
+  /** Paystack transaction reference from /transaction/initialize (webhook matches this). */
+  paystackReference?: string | null;
+  /** Paystack’s numeric transaction id from /transaction/verify (used for refunds API). */
+  paystackTransactionId?: number | null;
+  /** After online payment, automatic vendor bank transfers (Paystack Transfers) status. */
+  paystackPayoutStatus?: "none" | "in_progress" | "complete" | "partial" | "skipped";
+  paystackPayouts?: {
+    sellerId: mongoose.Types.ObjectId;
+    amountGross: number;
+    transferId?: string;
+    reference?: string;
+    status: "ok" | "skipped_no_recipient" | "error";
+    message?: string;
+  }[];
   /** Sellers who confirmed they received this order’s off-platform payment (MoMo/bank). When all unique line sellers are listed, order becomes `paid`. */
   confirmedSellerIds?: mongoose.Types.ObjectId[];
   messages: OrderMessage[];
   /** Admin moderation: buyer/seller dispute flag. */
   disputeOpen?: boolean;
   adminNote?: string;
-  refundStatus?: "none" | "requested" | "refunded";
+  /**
+   * Refund tracking. `refunded` is only set after Paystack reports refund `processed`.
+   * `refund_processing` = refund initiated with Paystack, settlement pending.
+   */
+  refundStatus?: "none" | "requested" | "refund_processing" | "refunded";
+  paystackRefundId?: number | null;
+  paystackRefundRemoteStatus?: string;
+  refundStockRestored?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,6 +111,8 @@ const orderSchema = new Schema<OrderDoc>(
     currency: { type: String, default: "ghs" },
     subtotal: { type: Number, required: true, min: 0 },
     total: { type: Number, required: true, min: 0 },
+    pricingVersion: { type: Number, min: 1, max: 2, default: 1 },
+    processingFeeTotal: { type: Number, min: 0, default: 0 },
     status: {
       type: String,
       enum: [
@@ -98,7 +130,7 @@ const orderSchema = new Schema<OrderDoc>(
       type: [{ type: Schema.Types.ObjectId, ref: "User" }],
       default: []
     },
-    paymentMethod: { type: String, enum: ["stripe", "momo", "bank"], default: null },
+    paymentMethod: { type: String, enum: ["stripe", "momo", "bank", "paystack"], default: null },
     paymentReference: { type: String, default: null },
     paymentDetails: {
       type: {
@@ -112,6 +144,27 @@ const orderSchema = new Schema<OrderDoc>(
       _id: false
     },
     stripeCheckoutSessionId: { type: String, default: null },
+    paystackUsedCheckoutSplit: { type: Boolean, default: false },
+    paystackReference: { type: String, default: null, index: true },
+    paystackTransactionId: { type: Number, default: null },
+    paystackPayoutStatus: {
+      type: String,
+      enum: ["none", "in_progress", "complete", "partial", "skipped"],
+      default: "none"
+    },
+    paystackPayouts: {
+      type: [
+        {
+          sellerId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+          amountGross: { type: Number, required: true },
+          transferId: { type: String, default: "" },
+          reference: { type: String, default: "" },
+          status: { type: String, enum: ["ok", "skipped_no_recipient", "error"], required: true },
+          message: { type: String, default: "" }
+        }
+      ],
+      default: []
+    },
     messages: {
       type: [
         new Schema<OrderMessage>(
@@ -128,7 +181,14 @@ const orderSchema = new Schema<OrderDoc>(
     },
     disputeOpen: { type: Boolean, default: false, index: true },
     adminNote: { type: String, default: "", maxlength: 4000 },
-    refundStatus: { type: String, enum: ["none", "requested", "refunded"], default: "none" }
+    refundStatus: {
+      type: String,
+      enum: ["none", "requested", "refund_processing", "refunded"],
+      default: "none"
+    },
+    paystackRefundId: { type: Number, default: null },
+    paystackRefundRemoteStatus: { type: String, default: "" },
+    refundStockRestored: { type: Boolean, default: false }
   },
   { timestamps: true }
 );

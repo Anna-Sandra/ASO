@@ -3,14 +3,37 @@
 @tailwind utilities;
 
 @layer base {
+  /* Viewport: scrollable but no visible scrollbar (wheel / touch / keyboard still work). */
   html {
     @apply scroll-smooth;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
   body {
-    @apply min-h-screen bg-slate-100 text-slate-900 antialiased transition-colors duration-300;
+    @apply min-h-screen bg-slate-100 text-slate-950 antialiased transition-colors duration-300;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
   html.dark body {
     @apply bg-night-950 text-slate-100 bg-mesh-dark;
+  }
+  /* Any nested scroll areas (tables, sidebars, flex children): hide bars; scrolling still works. */
+  *,
+  *::before,
+  *::after {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 }
 
@@ -40,14 +63,110 @@
 }
 
 @layer utilities {
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  /* Tailwind overflow utilities: keep overflow behavior, hide scroll track (composes with generated rules). */
+  .overflow-y-auto {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .overflow-y-auto::-webkit-scrollbar {
+    display: none;
+  }
+  .overflow-x-auto {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .overflow-x-auto::-webkit-scrollbar {
+    display: none;
+  }
+  .overflow-auto {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .overflow-auto::-webkit-scrollbar {
+    display: none;
+  }
+  .overflow-y-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .overflow-y-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .overflow-x-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .overflow-x-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  /* Shorthand: overflow auto + hidden bars (if you add this class without overflow-* from Tailwind). */
+  .scroll-area {
+    overflow: auto;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scroll-area::-webkit-scrollbar {
+    display: none;
+  }
+  .scroll-area-y {
+    overflow-y: auto;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scroll-area-y::-webkit-scrollbar {
+    display: none;
+  }
+  .scroll-area-x {
+    overflow-x: auto;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scroll-area-x::-webkit-scrollbar {
+    display: none;
+  }
   .glass {
-    @apply border border-white/20 bg-white/40 shadow-glass backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/40;
+    @apply border border-slate-200/95 bg-white/80 shadow-glass backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/40;
   }
   .glass-strong {
-    @apply border border-white/25 bg-white/55 shadow-glass backdrop-blur-2xl dark:border-sky-400/10 dark:bg-night-850/70;
+    @apply border border-slate-200/95 bg-white/90 shadow-glass backdrop-blur-2xl dark:border-sky-400/10 dark:bg-night-850/70;
   }
   .tap-target {
     @apply min-h-[44px] min-w-[44px] touch-manipulation;
+  }
+}
+
+/* Vendor application & other full-page flows: match body + glass system */
+@layer components {
+  .page-app-shell {
+    @apply min-h-screen bg-slate-100 text-slate-950 antialiased transition-colors duration-300 dark:bg-night-950 dark:bg-mesh-dark dark:text-slate-100;
+  }
+  .page-topbar {
+    @apply border-b border-slate-200/95 bg-white/85 px-4 py-3 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-night-900/40;
+  }
+  .page-topbar-inner {
+    @apply mx-auto flex max-w-6xl items-center justify-between gap-3;
+  }
+  .vendor-form-upload {
+    @apply flex w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-sky-300/60 bg-white/30 px-4 py-8 text-center transition hover:bg-white/45 dark:border-sky-500/35 dark:bg-slate-900/30 dark:hover:bg-slate-900/45;
+  }
+  .vendor-form-terms {
+    @apply flex cursor-pointer items-start gap-3 rounded-2xl border border-white/20 bg-white/30 p-3 dark:border-white/10 dark:bg-slate-900/30;
+  }
+  .vendor-form-step-dot {
+    @apply absolute -left-[21px] flex h-6 w-6 items-center justify-center rounded-full bg-sky-500 text-xs font-bold text-white dark:bg-sky-600;
+  }
+  .vendor-form-step-line {
+    @apply mt-3 space-y-3 border-l-2 border-sky-300 pl-4 dark:border-sky-600;
+  }
+  .vendor-form-help {
+    @apply mt-6 rounded-2xl border border-sky-200/50 bg-sky-50/60 p-3 text-xs text-sky-950 dark:border-sky-500/25 dark:bg-sky-950/35 dark:text-sky-100;
   }
 }
 

@@ -10,6 +10,11 @@ import { Order } from "../orders/order.model";
 import { Product } from "../products/product.model";
 import { Review } from "../reviews/review.model";
 import { withContacts } from "../orders/orderSerialize";
+import {
+  createGhanaPayoutRecipient,
+  createGhanaSubaccount,
+  listPaystackBanksGhana
+} from "../payments/paystackPayouts";
 import type { VendorAnalyticsEventType } from "./vendorAnalyticsEvent.model";
 import { VendorAnalyticsEvent } from "./vendorAnalyticsEvent.model";
 
@@ -83,10 +88,16 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
   if (!touchesSeller) throw new HttpError(403, "Forbidden");
 
   if (status === "cancelled") {
-    if (!["paid", "processing", "awaiting_vendor_payment"].includes(order.status)) {
-      throw new HttpError(400, "Cannot cancel this order");
+    if (!["pending_payment", "paid", "processing", "awaiting_vendor_payment"].includes(order.status)) {
+      throw new HttpError(400, "Cannot cancel this order in its current state");
     }
     order.status = "cancelled";
+    order.messages.push({
+      senderId: new mongoose.Types.ObjectId(sid),
+      senderRole: "seller",
+      text: "Order cancelled by seller.",
+      createdAt: new Date()
+    });
   } else {
     if (order.status === "pending_payment" || order.status === "awaiting_vendor_payment") {
       throw new HttpError(400, "Order not paid yet — confirm buyer payment first if they paid off-platform");
@@ -103,6 +114,32 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
   await order.save();
   const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
   res.json({ order: serialized });
+});
+
+/**
+ * Hard-delete from the vendor hub: same seller membership as other `/api/vendor/orders/*` routes
+ * (uses `ObjectId.equals` so it stays consistent with the DB query in `listVendorOrders`).
+ * Allowed only for `pending_payment` or `cancelled` (abandoned / cleaned-up orders).
+ */
+export const deleteVendorOrder = asyncHandler(async (req: Request, res: Response) => {
+  const { orderId } = req.params;
+  if (!mongoose.isValidObjectId(orderId)) throw new HttpError(400, "Invalid order id");
+  const order = await Order.findById(orderId);
+  if (!order) throw new HttpError(404, "Order not found");
+
+  const sid = new mongoose.Types.ObjectId(req.user!.id);
+  const touchesSeller = order.items.some((it) => it.sellerId.equals(sid));
+  if (!touchesSeller) throw new HttpError(403, "Forbidden");
+
+  if (!["pending_payment", "cancelled"].includes(order.status)) {
+    throw new HttpError(
+      400,
+      "Only pending payment or cancelled orders can be deleted. This order is still active."
+    );
+  }
+
+  await order.deleteOne();
+  res.status(204).send();
 });
 
 /** After buyer pays via MoMo/bank (off-platform), each involved seller confirms receipt; then order becomes `paid` and stock is reduced. */
@@ -323,4 +360,89 @@ export const listVendorReviews = asyncHandler(async (req: Request, res: Response
       createdAt: r.createdAt
     }))
   });
+});
+
+/** Ghana GHS bank list for Paystack transfer recipients (sellers). */
+export const getPaystackGhanaBanks = asyncHandler(async (_req: Request, res: Response) => {
+  if (!env.PAYSTACK_SECRET_KEY?.trim()) {
+    throw new HttpError(503, "Paystack is not configured");
+  }
+  const banks = await listPaystackBanksGhana();
+  res.json({ banks });
+});
+
+/** Link seller bank/MoMo to Paystack: transfer recipient + subaccount (for checkout split payouts). */
+export const registerPaystackPayoutAccount = asyncHandler(async (req: Request, res: Response) => {
+  if (!env.PAYSTACK_SECRET_KEY?.trim()) {
+    throw new HttpError(503, "Paystack is not configured");
+  }
+  if (req.user!.role !== "seller") {
+    throw new HttpError(403, "Sellers only");
+  }
+  const { bankCode, accountNumber, recipientType } = req.body as {
+    bankCode: string;
+    accountNumber?: string;
+    recipientType: "ghipss" | "mobile_money";
+  };
+  const u = await User.findById(req.user!.id);
+  if (!u) throw new HttpError(404, "User not found");
+  if (u.role !== "seller") {
+    throw new HttpError(403, "Sellers only");
+  }
+  const prevAccNorm = (u.bankAccountNumber || "").replace(/\s/g, "").trim();
+  const prevCode = (u.ghanaBankCode || "").trim();
+  let acc = (accountNumber || u.bankAccountNumber || "").replace(/\s/g, "").trim();
+  /* MoMo payouts: sellers often store the wallet only on phone (buyer payment contact). */
+  if (!acc && recipientType === "mobile_money") {
+    acc = String(u.phone || "")
+      .replace(/\s/g, "")
+      .trim();
+  }
+  const name = (u.bankAccountName || u.businessName || u.displayName || "").trim() || "Seller";
+  const code = (bankCode || u.ghanaBankCode || "").trim();
+  if (!acc) throw new HttpError(400, "Provide accountNumber or set bank account number in your vendor profile");
+  if (!code) throw new HttpError(400, "Provide bankCode (from GET /api/vendor/paystack/ghana-banks)");
+  const ptype = recipientType;
+
+  let recipientCode: string;
+  try {
+    recipientCode = await createGhanaPayoutRecipient({
+      name,
+      accountNumber: acc,
+      bankCode: code,
+      recipientType: ptype
+    });
+  } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : "Paystack could not verify this account");
+  }
+  const incomingAccNorm = acc.replace(/\s/g, "").trim();
+  const incomingCode = code.trim();
+  const samePayoutDetails = prevAccNorm === incomingAccNorm && prevCode === incomingCode;
+
+  u.ghanaBankCode = code;
+  u.ghanaPayoutChannel = ptype;
+  u.paystackTransferRecipientCode = recipientCode;
+  if (accountNumber) u.bankAccountNumber = acc;
+
+  let subaccountCode = (u.paystackSubaccountCode || "").trim();
+  if (!samePayoutDetails || !subaccountCode) {
+    try {
+      subaccountCode = await createGhanaSubaccount({
+        businessName: name,
+        accountNumber: acc,
+        settlementBank: code
+      });
+    } catch (e) {
+      throw new HttpError(
+        400,
+        e instanceof Error
+          ? `${e.message} (Paystack could not create a subaccount for split payouts. Bank settlement may be required; check Paystack Ghana subaccount rules.)`
+          : "Paystack could not create a subaccount for split payouts"
+      );
+    }
+  }
+  u.paystackSubaccountCode = subaccountCode;
+  await u.save();
+
+  res.json({ ok: true, paystackTransferRecipientCode: recipientCode, paystackSubaccountCode: subaccountCode });
 });

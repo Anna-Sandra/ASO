@@ -21,7 +21,7 @@ const variants = {
   ghost:
     "border border-slate-300/80 bg-white/30 text-slate-800 hover:bg-white/50 dark:border-white/15 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10",
   danger:
-    "border border-rose-400/40 bg-rose-500/15 text-rose-200 hover:bg-rose-500/25",
+    "border border-rose-400/55 bg-rose-500/10 text-rose-900 hover:bg-rose-500/18 dark:border-rose-400/40 dark:bg-rose-500/15 dark:text-rose-200 dark:hover:bg-rose-500/25",
   subtle: "bg-slate-900/5 text-slate-800 hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10"
 };
 
@@ -140,7 +140,7 @@ export function Field({ label, error, children }) {
           {
             key: `lb-${uid}`,
             className:
-              "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400"
+              "text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-400"
           },
           label
         )
@@ -252,10 +252,11 @@ export function OtpCodeInput({ value = "", onChange, disabled, className = "", "
 }
 
 export function TextArea(props) {
-  const { className = "", ...rest } = props;
+  const { className = "", autoMinHeight = true, ...rest } = props;
+  const minH = autoMinHeight ? "min-h-[4.5rem]" : "min-h-0";
   return h("textarea", {
     ...rest,
-    className: `w-full min-h-[120px] rounded-2xl border border-slate-300/70 bg-white/60 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-sky-400/60 dark:border-white/10 dark:bg-night-900/50 dark:text-slate-100 ${className}`.trim()
+    className: `w-full ${minH} rounded-2xl border border-slate-300/70 bg-white/60 px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-sky-400/60 dark:border-white/10 dark:bg-night-900/50 dark:text-slate-100 ${className}`.trim()
   });
 }
 
@@ -272,11 +273,16 @@ export function SelectInput({ children, className = "", ...rest }) {
 
 export function Badge({ tone = "neutral", children }) {
   const tones = {
-    neutral: "bg-slate-500/15 text-slate-700 dark:text-slate-200",
-    success: "bg-emerald-500/15 text-emerald-300",
-    warn: "bg-amber-500/15 text-amber-200",
-    danger: "bg-rose-500/15 text-rose-200",
-    info: "bg-sky-500/15 text-sky-200"
+    neutral:
+      "border border-slate-300/90 bg-slate-100 text-slate-800 dark:border-transparent dark:bg-slate-500/15 dark:text-slate-200",
+    success:
+      "border border-emerald-300/80 bg-emerald-50 text-emerald-900 dark:border-transparent dark:bg-emerald-500/15 dark:text-emerald-200",
+    warn:
+      "border border-amber-300/80 bg-amber-50 text-amber-950 dark:border-transparent dark:bg-amber-500/15 dark:text-amber-200",
+    danger:
+      "border border-rose-300/80 bg-rose-50 text-rose-900 dark:border-transparent dark:bg-rose-500/15 dark:text-rose-200",
+    info:
+      "border border-sky-300/80 bg-sky-50 text-sky-950 dark:border-transparent dark:bg-sky-500/15 dark:text-sky-200"
   };
   return h(
     "span",

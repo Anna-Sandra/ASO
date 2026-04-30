@@ -5,6 +5,12 @@ export const adminPatchUserSchema = z.object({
   sellerVerified: z.boolean().optional()
 });
 
+/** Super admin: promote a user to role `admin` by id or by email. */
+export const grantAdminBodySchema = z.union([
+  z.object({ userId: z.string().trim().min(1) }),
+  z.object({ email: z.string().trim().email() })
+]);
+
 export const adminResetPasswordSchema = z.object({
   newPassword: z.string().min(8).max(128)
 });
@@ -14,11 +20,50 @@ export const adminPlatformSettingsSchema = z.object({
   momoEnabled: z.boolean().optional(),
   stripeEnabled: z.boolean().optional(),
   bankEnabled: z.boolean().optional(),
-  listingPolicyNote: z.string().max(10000).optional()
+  listingPolicyNote: z.string().max(10000).optional(),
+  listingAllowedItemsNote: z.string().max(8000).optional(),
+  listingProhibitedItemsNote: z.string().max(8000).optional(),
+  listingModerationGuidelines: z.string().max(8000).optional(),
+  listingAutoRejectKeywords: z
+    .array(z.coerce.string())
+    .max(50)
+    .optional()
+    .transform((arr) =>
+      [...new Set((arr ?? []).map((s) => String(s).trim().toLowerCase()).filter(Boolean))]
+        .slice(0, 50)
+        .map((k) => k.slice(0, 64))
+    ),
+  listingAutoModerationEnabled: z.boolean().optional(),
+  listingKeywordBlockEnabled: z.boolean().optional(),
+  listingDefaultApprovalMode: z.enum(["require_approval", "auto_approve"]).optional(),
+  listingKeywordViolationAction: z.enum(["reject_auto", "flag_review"]).optional(),
+  siteName: z.string().trim().min(1).max(120).optional(),
+  siteDescription: z.string().max(1000).optional(),
+  supportEmail: z
+    .union([z.literal(""), z.string().trim().email().max(200)])
+    .optional(),
+  maintenanceMode: z.boolean().optional(),
+  maintenanceMessage: z.string().max(2000).optional(),
+  allowPublicRegistration: z.boolean().optional(),
+  allowVendorApplications: z.boolean().optional()
+});
+
+export const adminEmailTestSchema = z.object({
+  to: z.string().trim().email().max(320),
+  /** If omitted or blank, a professional default subject is used (includes site name). */
+  subject: z.string().trim().max(200).optional(),
+  /** Plain text only; converted to safe HTML (paragraphs and line breaks). If omitted or blank, a default verification copy is sent. */
+  bodyText: z.string().max(8000).optional()
+});
+
+export const adminEmailLogsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional().default(1),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(40)
 });
 
 export const adminReportPatchSchema = z.object({
-  status: z.enum(["open", "in_review", "resolved", "dismissed"]),
+  status: z.enum(["open", "in_review", "resolved", "dismissed"]).optional(),
+  priority: z.enum(["low", "medium", "high"]).optional(),
   adminNote: z.string().max(4000).optional()
 });
 
@@ -36,7 +81,7 @@ export const adminOrderPatchSchema = z.object({
   status: orderStatusEnum.optional(),
   disputeOpen: z.boolean().optional(),
   adminNote: z.string().max(4000).optional(),
-  refundStatus: z.enum(["none", "requested", "refunded"]).optional()
+  refundStatus: z.enum(["none", "requested"]).optional()
 });
 
 export const adminProductPatchSchema = z.object({
@@ -104,11 +149,15 @@ export const adminOrdersQuerySchema = adminListQuerySchema.extend({
     .optional()
     .default("all"),
   dispute: z.enum(["all", "yes", "no"]).optional().default("all"),
-  refund: z.enum(["all", "none", "requested", "refunded"]).optional().default("all"),
+  refund: z.preprocess(
+    (v) => firstQueryString(v) ?? "all",
+    z.enum(["all", "none", "requested", "refund_processing", "refunded"])
+  ),
   search: z.string().trim().max(200).optional().default("")
 });
 
 export const adminReportsQuerySchema = adminListQuerySchema.extend({
   status: z.enum(["all", "open", "in_review", "resolved", "dismissed"]).optional().default("all"),
+  priority: z.enum(["all", "low", "medium", "high"]).optional().default("all"),
   search: z.string().trim().max(200).optional().default("")
 });

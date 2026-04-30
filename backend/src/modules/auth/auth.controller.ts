@@ -1,6 +1,13 @@
 import bcrypt from "bcrypt";
 import type { Request, Response } from "express";
 import mongoose, { type HydratedDocument } from "mongoose";
+import {
+  bootstrapAdminSessionUserJson,
+  ensureBootstrapAdminIfNoAdmins,
+  getBootstrapAdminJwtSub,
+  isBootstrapAdminJwtSub,
+  matchesEnvBootstrapAdmin
+} from "../../config/bootstrapAdmin";
 import { env, isEmailTransportConfigured } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { sendEmail } from "../../utils/mailer";
@@ -9,9 +16,18 @@ import { Order } from "../orders/order.model";
 import { Product } from "../products/product.model";
 import { Review } from "../reviews/review.model";
 import { VendorAnalyticsEvent } from "../vendor/vendorAnalyticsEvent.model";
+import { VendorApplication } from "../vendorApplications/vendorApplication.model";
+import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { Token } from "./token.model";
-import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type UserRole } from "./user.model";
-import { createOpaqueToken, sha256, signAccessToken } from "./jwt";
+import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type UserRole, type VendorProfileStatus } from "./user.model";
+import {
+  buildAccessTokenPayloadForDbUser,
+  createOpaqueToken,
+  sha256,
+  signAccessToken,
+  signBootstrapRefreshToken,
+  tryVerifyBootstrapRefreshToken
+} from "./jwt";
 
 type LeanUser = {
   _id: mongoose.Types.ObjectId;
@@ -23,6 +39,8 @@ type LeanUser = {
   emailVerifiedAt?: Date | null;
   accountStatus?: string;
   sellerVerified?: boolean;
+  vendorStatus?: VendorProfileStatus;
+  businessName?: string;
   bankName?: string;
   bankAccountNumber?: string;
   bankAccountName?: string;
@@ -30,12 +48,26 @@ type LeanUser = {
 
 function pickProfileFromUser(
   u: LeanUser
-): { profileImageUrl: string; emailVerifiedAt?: Date | null; accountStatus: string; sellerVerified: boolean } {
+): {
+  profileImageUrl: string;
+  emailVerifiedAt?: Date | null;
+  accountStatus: string;
+  sellerVerified: boolean;
+  vendorStatus: VendorProfileStatus;
+  businessName: string;
+} {
+  const role = normalizeUserRole(u.role);
+  let vendorStatus = (u as { vendorStatus?: VendorProfileStatus }).vendorStatus;
+  if (vendorStatus !== "pending" && vendorStatus !== "approved" && vendorStatus !== "rejected" && vendorStatus !== "none") {
+    vendorStatus = role === "seller" ? "approved" : "none";
+  }
   return {
     profileImageUrl: typeof u.profileImageUrl === "string" && u.profileImageUrl.trim() ? u.profileImageUrl.trim() : "",
     emailVerifiedAt: u.emailVerifiedAt,
     accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
-    sellerVerified: Boolean((u as { sellerVerified?: boolean }).sellerVerified)
+    sellerVerified: Boolean((u as { sellerVerified?: boolean }).sellerVerified),
+    vendorStatus,
+    businessName: typeof (u as { businessName?: string }).businessName === "string" ? (u as { businessName: string }).businessName.trim() : ""
   };
 }
 
@@ -77,11 +109,14 @@ async function issueRefreshToken(userId: mongoose.Types.ObjectId) {
 
 async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, extra?: Record<string, unknown>) {
   const role = normalizeUserRole(user.role);
-  const accessToken = signAccessToken({ sub: user._id.toString(), role });
+  const accessPayload = buildAccessTokenPayloadForDbUser(user._id.toString(), role, user.email);
+  const accessToken = signAccessToken(accessPayload);
   const { refreshToken } = await issueRefreshToken(user._id);
 
   res.cookie("refreshToken", refreshToken, refreshCookieOptions());
   const p = pickProfileFromUser(user as LeanUser);
+  const recipient = String((user as { paystackTransferRecipientCode?: string }).paystackTransferRecipientCode || "").trim();
+  const subacct = String((user as { paystackSubaccountCode?: string }).paystackSubaccountCode || "").trim();
   res.json({
     accessToken,
     user: {
@@ -91,9 +126,46 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
       displayName: user.displayName ?? "",
       phone: publicPhoneForPaymentRole(role, user.phone),
       profileImageUrl: p.profileImageUrl,
+      vendorStatus: p.vendorStatus,
+      businessName: p.businessName,
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
-      bankAccountName: user.bankAccountName ?? ""
+      bankAccountName: user.bankAccountName ?? "",
+      ...(role === "seller"
+        ? {
+            paystackPayoutRegistered: Boolean(recipient),
+            paystackSubaccountRegistered: Boolean(subacct),
+            ghanaPayoutChannel: (user as { ghanaPayoutChannel?: "ghipss" | "mobile_money" }).ghanaPayoutChannel,
+            ghanaBankCode: (user as { ghanaBankCode?: string }).ghanaBankCode || ""
+          }
+        : {}),
+      ...(accessPayload.al ? { adminLevel: accessPayload.al } : {})
+    },
+    ...extra
+  });
+}
+
+/** Login success for BOOTSTRAP_ADMIN_* without a MongoDB user (works when DB is empty or offline). */
+function sendEnvBootstrapAdminLoginSuccess(res: Response, extra?: Record<string, unknown>) {
+  const sub = getBootstrapAdminJwtSub();
+  const accessToken = signAccessToken({ sub, role: "admin", al: "super" });
+  res.cookie("refreshToken", signBootstrapRefreshToken(), refreshCookieOptions());
+  const u = bootstrapAdminSessionUserJson();
+  res.json({
+    accessToken,
+    user: {
+      id: u.id,
+      email: u.email,
+      role: u.role,
+      displayName: u.displayName,
+      phone: u.phone,
+      profileImageUrl: u.profileImageUrl,
+      vendorStatus: u.vendorStatus,
+      businessName: u.businessName,
+      bankName: u.bankName,
+      bankAccountNumber: u.bankAccountNumber,
+      bankAccountName: u.bankAccountName,
+      adminLevel: "super" as const
     },
     ...extra
   });
@@ -125,15 +197,15 @@ async function issueLoginOtpAndRespond(user: HydratedDocument<UserDoc>, res: Res
 
   res.json({
     needsOtp: true,
-    email: addr || undefined
+    email: addr || undefined,
+    loginOtpEmailSent: canSendEmail
   });
 }
 
 export const register = asyncHandler(async (req: Request, res: Response) => {
-  const { email, password, role, displayName, username } = req.body as {
+  const { email, password, displayName, username } = req.body as {
     email: string;
     password: string;
-    role: "buyer" | "seller";
     displayName?: string;
     username?: string;
   };
@@ -143,6 +215,15 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   const cleanDisplayNameRaw =
     typeof displayName === "string" ? displayName.trim().slice(0, 120) : typeof username === "string" ? username.trim().slice(0, 120) : "";
   const cleanDisplayName = cleanDisplayNameRaw;
+
+  const platform = await getOrCreateSettings();
+  if (platform.maintenanceMode === true) {
+    const msg = (platform.maintenanceMessage || "").trim();
+    throw new HttpError(503, msg || "The platform is undergoing maintenance. Please try again later.");
+  }
+  if (platform.allowPublicRegistration === false) {
+    throw new HttpError(403, "New registrations are temporarily disabled. Please check back later.");
+  }
 
   const existing = await User.findOne({ email: cleanEmail }).lean();
   if (existing) {
@@ -155,7 +236,8 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   const user = await User.create({
     email: cleanEmail,
     passwordHash,
-    role,
+    role: "buyer",
+    vendorStatus: "none",
     emailVerifiedAt: verifiedNow,
     ...(cleanDisplayName ? { displayName: cleanDisplayName } : {})
   });
@@ -184,7 +266,9 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
       email: user.email ?? "",
       phone: publicPhoneForPaymentRole(user.role as UserRole, user.phone),
       role: user.role,
-      displayName: user.displayName ?? ""
+      displayName: user.displayName ?? "",
+      vendorStatus: "none" as VendorProfileStatus,
+      businessName: ""
     },
     message: shouldEmailVerify ? "Verification email sent" : "Account created",
     requiresEmailVerification: shouldEmailVerify,
@@ -226,9 +310,29 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { identifier, password } = req.body as { identifier: string; password: string };
   const lower = identifier.trim().toLowerCase();
+
+  /** JWT-only “platform admin” when MongoDB is down: no user row, no OTP. Not used when the DB is up (same credentials go through normal login + OTP). */
+  if (mongoose.connection.readyState !== 1) {
+    if (matchesEnvBootstrapAdmin(identifier, password)) {
+      sendEnvBootstrapAdminLoginSuccess(res);
+      return;
+    }
+    throw new HttpError(
+      503,
+      "The database is unavailable. Only the configured platform admin account can sign in until MongoDB is reachable again."
+    );
+  }
+
+  await ensureBootstrapAdminIfNoAdmins();
   const user = await User.findOne({ email: lower }).select("+passwordHash");
   if (!user) {
-    throw new HttpError(401, "No account found with this email. Check for typos, or create an account.");
+    const adminCount = await User.countDocuments({ role: "admin" });
+    let msg = "No account found with this email. Check for typos, or create an account.";
+    if (adminCount === 0) {
+      msg +=
+        " The database has no admin yet — set BOOTSTRAP_ADMIN_EMAIL to the address you use here and BOOTSTRAP_ADMIN_PASSWORD (8+ characters) in backend/.env, then try signing in again.";
+    }
+    throw new HttpError(401, msg);
   }
   if (!env.AUTH_SKIP_EMAIL_VERIFICATION && user.email && !user.emailVerifiedAt) {
     throw new HttpError(
@@ -279,12 +383,32 @@ export const verifyLoginOtp = asyncHandler(async (req: Request, res: Response) =
     revokedAt: null,
     expiresAt: { $gt: new Date() }
   }).select("+tokenHash");
-  if (!doc) {
-    throw new HttpError(400, "That code is incorrect or has expired. Try again or sign in again.");
+  if (doc) {
+    await Token.updateOne({ _id: doc._id }, { $set: { usedAt: new Date() } });
+    await sendLoginSuccess(res, user);
+    return;
   }
 
-  await Token.updateOne({ _id: doc._id }, { $set: { usedAt: new Date() } });
-  await sendLoginSuccess(res, user);
+  const hasActiveOtp = await Token.exists({
+    userId: user._id,
+    purpose: "login_otp",
+    usedAt: null,
+    revokedAt: null,
+    expiresAt: { $gt: new Date() }
+  });
+  if (hasActiveOtp) {
+    throw new HttpError(400, "That code is incorrect. Check the code in your email and try again.");
+  }
+
+  const hadAnyLoginOtp = await Token.exists({ userId: user._id, purpose: "login_otp" });
+  if (hadAnyLoginOtp) {
+    throw new HttpError(
+      400,
+      "This sign-in code has expired. Request a new code below.",
+      "LOGIN_OTP_EXPIRED"
+    );
+  }
+  throw new HttpError(400, "No valid sign-in code. Go back to sign in to receive a new code.");
 });
 
 export const resendVerificationOtp = asyncHandler(async (req: Request, res: Response) => {
@@ -365,10 +489,36 @@ export const resendLoginOtp = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const getMe = asyncHandler(async (req: Request, res: Response) => {
+  if (isBootstrapAdminJwtSub(req.user!.id)) {
+    const u = bootstrapAdminSessionUserJson();
+    res.json({
+      user: {
+        id: u.id,
+        email: u.email,
+        role: u.role,
+        displayName: u.displayName,
+        phone: u.phone,
+        profileImageUrl: u.profileImageUrl,
+        emailVerifiedAt: new Date(),
+        accountStatus: "active",
+        sellerVerified: true,
+        vendorStatus: u.vendorStatus,
+        businessName: u.businessName,
+        bankName: u.bankName,
+        bankAccountNumber: u.bankAccountNumber,
+        bankAccountName: u.bankAccountName,
+        adminLevel: "super" as const
+      }
+    });
+    return;
+  }
+
   const user = await User.findById(req.user!.id).lean();
   if (!user) throw new HttpError(404, "We couldn't find your account. Please sign in again.");
   const role = normalizeUserRole(user.role);
   const p = pickProfileFromUser(user as LeanUser);
+  const recipient = String((user as { paystackTransferRecipientCode?: string }).paystackTransferRecipientCode || "").trim();
+  const subacct = String((user as { paystackSubaccountCode?: string }).paystackSubaccountCode || "").trim();
   res.json({
     user: {
       id: user._id.toString(),
@@ -380,9 +530,22 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       emailVerifiedAt: p.emailVerifiedAt,
       accountStatus: p.accountStatus,
       sellerVerified: p.sellerVerified,
+      vendorStatus: p.vendorStatus,
+      businessName: p.businessName,
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
-      bankAccountName: user.bankAccountName ?? ""
+      bankAccountName: user.bankAccountName ?? "",
+      ...(role === "seller"
+        ? {
+            paystackPayoutRegistered: Boolean(recipient),
+            paystackSubaccountRegistered: Boolean(subacct),
+            ghanaPayoutChannel: (user as { ghanaPayoutChannel?: "ghipss" | "mobile_money" }).ghanaPayoutChannel,
+            ghanaBankCode: (user as { ghanaBankCode?: string }).ghanaBankCode || ""
+          }
+        : {}),
+      ...(role === "admin" && req.user?.adminLevel
+        ? { adminLevel: req.user.adminLevel }
+        : {})
     }
   });
 });
@@ -412,6 +575,8 @@ export const updateProfile = asyncHandler(async (req: Request, res: Response) =>
   if (!user) throw new HttpError(404, "We couldn't update your profile. Please sign in again.");
   const p = pickProfileFromUser(user as LeanUser);
   const role = normalizeUserRole(user.role);
+  const recipient = String((user as { paystackTransferRecipientCode?: string }).paystackTransferRecipientCode || "").trim();
+  const subacct = String((user as { paystackSubaccountCode?: string }).paystackSubaccountCode || "").trim();
   res.json({
     user: {
       id: user._id.toString(),
@@ -420,9 +585,19 @@ export const updateProfile = asyncHandler(async (req: Request, res: Response) =>
       displayName: user.displayName ?? "",
       phone: publicPhoneForPaymentRole(role, user.phone),
       profileImageUrl: p.profileImageUrl,
+      vendorStatus: p.vendorStatus,
+      businessName: p.businessName,
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
-      bankAccountName: user.bankAccountName ?? ""
+      bankAccountName: user.bankAccountName ?? "",
+      ...(role === "seller"
+        ? {
+            paystackPayoutRegistered: Boolean(recipient),
+            paystackSubaccountRegistered: Boolean(subacct),
+            ghanaPayoutChannel: (user as { ghanaPayoutChannel?: "ghipss" | "mobile_money" }).ghanaPayoutChannel,
+            ghanaBankCode: (user as { ghanaBankCode?: string }).ghanaBankCode || ""
+          }
+        : {})
     }
   });
 });
@@ -471,6 +646,7 @@ export const deleteAccount = asyncHandler(async (req: Request, res: Response) =>
     await Product.deleteMany({ sellerId: uidObj });
   }
 
+  await VendorApplication.deleteMany({ userId: uidObj });
   await Token.deleteMany({ userId: uidObj });
   await User.deleteOne({ _id: uidObj });
   res.clearCookie("refreshToken", refreshCookieOptions());
@@ -485,6 +661,18 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
   if (!refreshToken) {
     res.json({ accessToken: null });
     return;
+  }
+
+  if (tryVerifyBootstrapRefreshToken(refreshToken)) {
+    const sub = getBootstrapAdminJwtSub();
+    const accessToken = signAccessToken({ sub, role: "admin", al: "super" });
+    res.cookie("refreshToken", signBootstrapRefreshToken(), refreshCookieOptions());
+    res.json({ accessToken });
+    return;
+  }
+
+  if (mongoose.connection.readyState !== 1) {
+    throw new HttpError(503, "The database is unavailable. Please sign in again when the server is healthy.");
   }
 
   const tokenHash = sha256(refreshToken);
@@ -502,7 +690,7 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
   await Token.updateOne({ _id: existing._id }, { $set: { revokedAt: new Date() } });
 
   const role = normalizeUserRole(user.role);
-  const accessToken = signAccessToken({ sub: user._id.toString(), role });
+  const accessToken = signAccessToken(buildAccessTokenPayloadForDbUser(user._id.toString(), role, user.email));
   const rotated = await issueRefreshToken(user._id);
 
   res.cookie("refreshToken", rotated.refreshToken, refreshCookieOptions());
@@ -511,11 +699,15 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
 
 export const logout = asyncHandler(async (req: Request, res: Response) => {
   const refreshToken = (req.cookies?.refreshToken as string | undefined) || (req.body as any)?.refreshToken;
-  if (refreshToken) {
-    await Token.updateMany(
-      { purpose: "refresh", tokenHash: sha256(refreshToken), revokedAt: null },
-      { $set: { revokedAt: new Date() } }
-    );
+  if (refreshToken && mongoose.connection.readyState === 1) {
+    try {
+      await Token.updateMany(
+        { purpose: "refresh", tokenHash: sha256(refreshToken), revokedAt: null },
+        { $set: { revokedAt: new Date() } }
+      );
+    } catch {
+      /* offline DB — still clear cookie */
+    }
   }
 
   res.clearCookie("refreshToken", refreshCookieOptions());

@@ -3,6 +3,13 @@ import { VENDOR_ANALYTICS_EVENT_TYPES, type VendorAnalyticsEventType } from "./v
 
 const eventTypeSet = new Set<string>(VENDOR_ANALYTICS_EVENT_TYPES);
 
+export const paystackPayoutAccountSchema = z.object({
+  bankCode: z.string().trim().min(1).max(32),
+  accountNumber: z.string().trim().min(1).max(20).optional(),
+  /** Must match the selected list row (ghipss = bank, mobile_money = MoMo). */
+  recipientType: z.enum(["ghipss", "mobile_money"]).default("ghipss")
+});
+
 export const vendorAnalyticsEventBodySchema = z.object({
   type: z
     .string()

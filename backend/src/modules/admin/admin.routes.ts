@@ -1,27 +1,42 @@
 import { Router } from "express";
-import { protect, authorize } from "../../middleware/auth";
+import { protect, authorize, requireSuperAdmin } from "../../middleware/auth";
 import { requireAdminEnvSecret } from "../../middleware/adminSecret";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody, validateQuery } from "../../middleware/validate";
 import {
+  adminBadges,
+  adminBulkCleanup,
   adminDashboard,
   approveProduct,
+  deleteAdminOrder,
   deleteAdminProduct,
+  deleteAdminReport,
+  deleteAdminUser,
+  deleteAdminVendorApplication,
+  listVendorApplications,
+  patchAdminVendorApplication,
   getAdminConversation,
+  getAdminConversationWithUser,
   getAdminPlatformSettings,
   getAdminRevenue,
   getAdminSellerBalances,
   getAdminUserSummary,
+  grantAdmin,
+  revokeAdmin,
   listAdminConversations,
+  listAdminEmailLogs,
   listAdminOrders,
   listAdminProducts,
   listAdminReports,
   listAdminUsers,
   patchAdminOrder,
+  postAdminMessageToUser,
+  refundAdminOrderPaystack,
   patchAdminPlatformSettings,
   patchAdminProduct,
   patchAdminReport,
   patchAdminUser,
+  postAdminSettingsEmailTest,
   rejectProduct,
   resetAdminUserPassword
 } from "./admin.controller";
@@ -31,19 +46,45 @@ import {
   adminOrdersQuerySchema,
   adminPatchUserSchema,
   adminPlatformSettingsSchema,
+  adminEmailLogsQuerySchema,
+  adminEmailTestSchema,
   adminProductPatchSchema,
   adminProductsQuerySchema,
   adminRejectProductSchema,
   adminReportPatchSchema,
   adminReportsQuerySchema,
   adminResetPasswordSchema,
-  adminUsersQuerySchema
+  adminUsersQuerySchema,
+  grantAdminBodySchema
 } from "./admin.schemas";
+import { conversationMessageSchema } from "../conversations/conversation.schemas";
+import { adminVendorApplicationsQuerySchema, patchVendorApplicationSchema } from "../vendorApplications/vendorApplication.schemas";
 
 const router = Router();
 
 router.get("/dashboard", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, adminDashboard);
+router.get("/badges", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, adminBadges);
 router.get("/users", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminUsersQuerySchema), listAdminUsers);
+router.post(
+  "/users/grant-admin",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  validateBody(grantAdminBodySchema),
+  grantAdmin
+);
+router.post(
+  "/users/revoke-admin",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  validateBody(grantAdminBodySchema),
+  revokeAdmin
+);
 router.patch("/users/:id", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateBody(adminPatchUserSchema), patchAdminUser);
 router.get("/products", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminProductsQuerySchema), listAdminProducts);
 router.post("/products/:id/approve", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, approveProduct);
@@ -59,6 +100,24 @@ router.post(
 router.get("/orders", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminOrdersQuerySchema), listAdminOrders);
 router.get("/revenue", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminRevenue);
 router.get("/sellers/balances", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminSellerBalances);
+router.get(
+  "/vendor-applications",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateQuery(adminVendorApplicationsQuerySchema),
+  listVendorApplications
+);
+router.patch(
+  "/vendor-applications/:id",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateBody(patchVendorApplicationSchema),
+  patchAdminVendorApplication
+);
 router.get("/settings", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminPlatformSettings);
 router.patch(
   "/settings",
@@ -66,8 +125,28 @@ router.patch(
   requireActiveAccount,
   authorize("admin"),
   requireAdminEnvSecret,
+  requireSuperAdmin,
   validateBody(adminPlatformSettingsSchema),
   patchAdminPlatformSettings
+);
+router.post(
+  "/settings/email-test",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  validateBody(adminEmailTestSchema),
+  postAdminSettingsEmailTest
+);
+router.get(
+  "/email-logs",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateQuery(adminEmailLogsQuerySchema),
+  listAdminEmailLogs
 );
 router.get("/reports", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminReportsQuerySchema), listAdminReports);
 router.patch(
@@ -80,6 +159,16 @@ router.patch(
   patchAdminReport
 );
 router.get("/conversations", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminListQuerySchema), listAdminConversations);
+router.get("/conversations/with-user/:userId", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminConversationWithUser);
+router.post(
+  "/conversations/with-user/:userId/messages",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateBody(conversationMessageSchema),
+  postAdminMessageToUser
+);
 router.get("/conversations/:id", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminConversation);
 router.get("/users/:id/summary", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminUserSummary);
 router.post(
@@ -88,8 +177,17 @@ router.post(
   requireActiveAccount,
   authorize("admin"),
   requireAdminEnvSecret,
+  requireSuperAdmin,
   validateBody(adminResetPasswordSchema),
   resetAdminUserPassword
+);
+router.post(
+  "/orders/:id/refund-paystack",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  refundAdminOrderPaystack
 );
 router.patch(
   "/orders/:id",
@@ -109,6 +207,59 @@ router.patch(
   validateBody(adminProductPatchSchema),
   patchAdminProduct
 );
-router.delete("/products/:id", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, deleteAdminProduct);
+router.delete(
+  "/products/:id",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  deleteAdminProduct
+);
+router.delete(
+  "/reports/:id",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  deleteAdminReport
+);
+router.delete(
+  "/orders/:id",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  deleteAdminOrder
+);
+router.delete(
+  "/vendor-applications/:id",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  deleteAdminVendorApplication
+);
+router.delete(
+  "/users/:id",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  deleteAdminUser
+);
+router.post(
+  "/cleanup",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  adminBulkCleanup
+);
 
 export default router;

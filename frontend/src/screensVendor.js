@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  AlertTriangle,
   ArrowLeft,
   BarChart3,
   Box,
@@ -201,12 +202,34 @@ function humanizeOrderStatus(s) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Match API enums even if a legacy payload used spaces or different casing. */
+function normalizeOrderStatus(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+}
+
 export function VendorShell() {
   const { dark, toggle } = useTheme();
-  const { user, accessToken, logout } = useAuth();
+  const { user, accessToken, logout, setUser } = useAuth();
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
   const [orderBadge, setOrderBadge] = useState(0);
+
+  /** Keep payout banner in sync with `/api/auth/me` (login payload used to omit Paystack flags). */
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    apiFetch("/api/auth/me", { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((d) => {
+        if (!cancelled && d?.user) setUser(d.user);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, setUser]);
 
   const refreshOrderBadge = () => {
     if (!accessToken || user?.role !== "seller") {
@@ -241,7 +264,7 @@ export function VendorShell() {
   const sidebar = h(
     "aside",
     {
-      className: `fixed inset-y-0 left-0 z-40 flex h-[100dvh] max-h-[100dvh] w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-white/10 bg-white/35 p-4 shadow-2xl backdrop-blur-2xl transition-transform dark:bg-night-900/50 lg:max-w-none lg:translate-x-0 ${
+      className: `fixed inset-y-0 left-0 z-40 flex h-[100dvh] max-h-[100dvh] w-60 max-w-[85vw] flex-col overflow-y-auto border-r border-white/10 bg-white/35 p-4 shadow-2xl backdrop-blur-2xl transition-transform dark:bg-night-900/50 lg:max-w-none lg:translate-x-0 ${
         open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       }`
     },
@@ -265,7 +288,8 @@ export function VendorShell() {
         h(NavItem, { key: "n-prod", to: "/vendor/products", icon: Box, end: true }, "My products"),
         h(NavItem, { key: "n-add", to: "/vendor/products/new", icon: PlusCircle }, "Add product"),
         h(NavItem, { key: "n-orders", to: "/vendor/orders", icon: ShoppingCart, badge: orderBadge }, "Orders"),
-        h(NavItem, { key: "n-msg", to: "/vendor/messages", icon: MessageSquare }, "Messages")
+        h(NavItem, { key: "n-msg", to: "/vendor/messages", icon: MessageSquare }, "Messages"),
+        h(NavItem, { key: "n-rep", to: "/vendor/reports", icon: AlertTriangle }, "Reports")
       ]),
       h("div", { key: "ins-title", className: "mb-2 mt-6 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400" }, "Insights"),
       h("nav", { key: "ins-nav", className: "space-y-1" }, [
@@ -297,7 +321,7 @@ export function VendorShell() {
         "aria-label": "Close menu"
       }),
     h("div", { key: "layout", className: "flex min-h-screen" }, [
-      h("div", { key: "sidebar-gutter", className: "w-0 shrink-0 lg:w-72", "aria-hidden": true }),
+      h("div", { key: "sidebar-gutter", className: "w-0 shrink-0 lg:w-60", "aria-hidden": true }),
       sidebar,
       h("div", { key: "content-wrap", className: "flex min-h-screen min-w-0 flex-1 flex-col" }, [
         h(
@@ -372,7 +396,32 @@ export function VendorShell() {
             ])
           ])
         ),
-        h("main", { key: "main", className: "mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6" }, h(Outlet))
+        h("main", { key: "main", className: "mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6" }, [
+          user?.role === "seller" && !user?.paystackPayoutRegistered
+            ? h(
+                InlineNotice,
+                {
+                  key: "paystack-banner",
+                  variant: "warning",
+                  title: "Register Paystack payouts",
+                  className: "mb-5"
+                },
+                h("div", { className: "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" }, [
+                  h(
+                    "p",
+                    { key: "blurb", className: "min-w-0" },
+                    "You need to link your bank in Store settings so Paystack can pay out your share when buyers use card or MoMo. Do this as soon as you can."
+                  ),
+                  h(
+                    Link,
+                    { key: "set", to: "/vendor/settings#vendor-paystack-payouts", className: "shrink-0" },
+                    h(Button, { className: "!min-h-10 w-full !px-4 !py-2.5 !text-sm sm:w-auto" }, "Register in Store settings")
+                  )
+                ])
+              )
+            : null,
+          h(Outlet, { key: "out" })
+        ])
       ])
     ])
   ]);
@@ -681,9 +730,8 @@ export function VendorAddProductPage() {
   const nav = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("electronics");
+  const [category, setCategory] = useState("food_drinks");
   const [price, setPrice] = useState("");
-  const [compareAtPrice, setCompareAtPrice] = useState("");
   const [stock, setStock] = useState("25");
   const [tags, setTags] = useState("");
   const [imageList, setImageList] = useState([]);
@@ -712,13 +760,12 @@ export function VendorAddProductPage() {
         .slice(0, 10);
       const urls = imageList.slice(0, MAX_PRODUCT_IMAGES);
       const nextStatus = asDraft ? "draft" : "active";
-      const compareNum = compareAtPrice === "" ? null : Number(compareAtPrice);
       const body = {
         name: trimmedName,
         description: description.trim(),
         category,
         price: priceNum,
-        compareAtPrice: compareNum != null && Number.isFinite(compareNum) && compareNum > 0 ? compareNum : null,
+        compareAtPrice: null,
         stock: Math.max(0, Math.floor(Number(stock) || 0)),
         status: nextStatus,
         tags: tagList,
@@ -755,20 +802,16 @@ export function VendorAddProductPage() {
           h("div", { className: "space-y-4" }, [
             h(Field, { key: "fld-name", label: "Product name" }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Scientific calculator, rice bowl meal kit" })),
             h(Field, { key: "fld-desc", label: "Description" }, h(TextArea, { value: description, onChange: (e) => setDescription(e.target.value), placeholder: "Tell buyers what makes this special…" })),
-            h("div", { key: "row-price", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
-              h(Field, { label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value), placeholder: "18.99" })),
-              h(Field, { label: "Compare at (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: compareAtPrice, onChange: (e) => setCompareAtPrice(e.target.value), placeholder: "Optional" }))
+            h("div", { key: "row-price-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
+              h(Field, { key: "fld-price", label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value), placeholder: "18.99" })),
+              h(Field, { key: "fld-stock", label: "Stock quantity" }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value), placeholder: "42" }))
             ]),
-            h("div", { key: "row-cat-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
+            h("div", { key: "row-cat-tags", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
               h(
                 Field,
-                { label: "Category" },
+                { key: "fld-cat", label: "Category" },
                 h("div", { className: "space-y-2" }, [
-                  h(
-                    "p",
-                    { key: "cat-hint", className: "text-xs text-slate-500 dark:text-slate-400" },
-                    "Pick Electronics, Books, Clothing, Food, Footwears, or Other — buyers filter the shop by this."
-                  ),
+                 
                   h(
                     SelectInput,
                     { key: "cat-sel", value: category, onChange: (e) => setCategory(e.target.value) },
@@ -776,9 +819,8 @@ export function VendorAddProductPage() {
                   )
                 ])
               ),
-              h(Field, { label: "Stock quantity" }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value), placeholder: "42" }))
+              h(Field, { key: "fld-tags", label: "Tags (comma-separated)" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value), placeholder: "new, popular" }))
             ]),
-            h(Field, { key: "fld-tags", label: "Tags (comma-separated)" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value), placeholder: "new, popular" })),
             h(VendorProductPhotos, {
               key: "photos",
               accessToken,
@@ -824,9 +866,8 @@ export function VendorEditProductPage() {
   const nav = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("electronics");
+  const [category, setCategory] = useState("food_drinks");
   const [price, setPrice] = useState("");
-  const [compareAtPrice, setCompareAtPrice] = useState("");
   const [stock, setStock] = useState("25");
   const [status, setStatus] = useState("draft");
   const [serverStatus, setServerStatus] = useState(null);
@@ -851,9 +892,8 @@ export function VendorEditProductPage() {
         const p = d.product;
         setName(p.name || "");
         setDescription(p.description || "");
-        setCategory(p.category || "electronics");
+        setCategory(p.category || "food_drinks");
         setPrice(String(p.price ?? ""));
-        setCompareAtPrice(p.compareAtPrice != null ? String(p.compareAtPrice) : "");
         setStock(String(p.stock ?? 0));
         setServerStatus(p.status || "draft");
         setRejectionReason(p.rejectionReason || null);
@@ -900,7 +940,7 @@ export function VendorEditProductPage() {
           description: description.trim(),
           category,
           price: Number(price),
-          compareAtPrice: compareAtPrice ? Number(compareAtPrice) : null,
+          compareAtPrice: null,
           stock: Number(stock) || 0,
           status,
           tags: tagList,
@@ -929,18 +969,13 @@ export function VendorEditProductPage() {
         h(Field, { label: "Description" }, h(TextArea, { value: description, onChange: (e) => setDescription(e.target.value) })),
         h("div", { className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
           h(Field, { label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value) })),
-          h(Field, { label: "Compare at (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: compareAtPrice, onChange: (e) => setCompareAtPrice(e.target.value) }))
+          h(Field, { label: "Stock" }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value) }))
         ]),
-        h("div", { className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
+        h("div", { key: "row-cat-tags", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
           h(
             Field,
-            { label: "Category" },
+            { key: "fld-cat", label: "Category" },
             h("div", { className: "space-y-2" }, [
-              h(
-                "p",
-                { key: "cat-hint", className: "text-xs text-slate-500 dark:text-slate-400" },
-                "Pick Electronics, Books, Clothing, Food, Footwears, or Other — buyers filter the shop by this."
-              ),
               h(
                 SelectInput,
                 { key: "cat-sel", value: category, onChange: (e) => setCategory(e.target.value) },
@@ -948,7 +983,7 @@ export function VendorEditProductPage() {
               )
             ])
           ),
-          h(Field, { label: "Stock" }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value) }))
+          h(Field, { key: "fld-tags", label: "Tags (comma-separated)" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value), placeholder: "new, popular" }))
         ]),
         rejectionReason && serverStatus === "rejected"
           ? h(InlineNotice, { key: "rej", variant: "warning", className: "mb-2", size: "sm" }, [
@@ -980,7 +1015,6 @@ export function VendorEditProductPage() {
             )
           ])
         ),
-        h(Field, { label: "Tags" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value) })),
         h(VendorProductPhotos, { key: "photos", accessToken, imageList, setImageList, setErr }),
         h(Button, { type: "button", onClick: save, loading: saving }, "Save changes")
       ])
@@ -990,7 +1024,8 @@ export function VendorEditProductPage() {
 
 export function VendorOrdersPage() {
   const { accessToken, user } = useAuth();
-  const { alert } = useNotice();
+  const nav = useNavigate();
+  const { alert, confirm } = useNotice();
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1047,6 +1082,24 @@ export function VendorOrdersPage() {
     }
   };
 
+  const deleteOrder = async (orderId) => {
+    if (!accessToken) return;
+    const agreed = await confirm(
+      "This permanently removes the order for you and the buyer. For unpaid checkouts, use this instead of a separate cancel step.",
+      { title: "Delete this order?", confirmLabel: "Delete", cancelLabel: "Keep" }
+    );
+    if (!agreed) return;
+    try {
+      await apiFetch(`/api/orders/${orderId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      load();
+    } catch (ex) {
+      await alert(ex.message || "Could not delete", { variant: "error", title: "Delete order" });
+    }
+  };
+
   return h(f, null, [
     err
       ? h(InlineNotice, { key: "err", variant: "error", className: "mb-4", onDismiss: () => setErr("") }, err)
@@ -1065,20 +1118,39 @@ export function VendorOrdersPage() {
       },
       "For off-platform (MoMo/bank) payments, confirm when money hits your account — stock only releases after every seller on that order has confirmed. Message buyers from Messages in the sidebar."
     ),
-    loading && h("p", { className: "mb-4 text-sm text-slate-500" }, "Loading…"),
-    h(GlassCard, { key: "table-card", className: "!overflow-x-auto !p-0" }, h("table", { className: "w-full min-w-[900px] text-left text-sm" }, [
-      h("thead", { className: "border-b border-white/10 bg-white/20 text-xs uppercase dark:bg-white/5" }, h("tr", null, [
-        "Order",
-        "Buyer line",
-        "Your total",
-        "Your items total",
-        "Status",
-        "Next step"
-      ].map((c) => h("th", { key: c, className: "px-3 py-3" }, c)))),
+    loading && h("p", { className: "mb-4 text-sm text-slate-600 dark:text-slate-400" }, "Loading…"),
+    h(GlassCard, { key: "table-card", className: "!overflow-x-auto !p-0" }, h("table", { className: "table-fixed w-full min-w-[920px] text-left text-sm" }, [
+      h(
+        "colgroup",
+        { key: "cols" },
+        [0, 1, 2, 3, 4, 5].map((i) => h("col", { key: i, style: { width: `${100 / 6}%` } }))
+      ),
+      h(
+        "thead",
+        { className: "border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-400" },
+        h("tr", null, ["Order", "Buyer line", "Your total", "Status", "Next step", "Actions"].map((c, i, arr) =>
+          h(
+            "th",
+            {
+              key: c,
+              className: [
+                "px-3 py-3.5 font-semibold tracking-wide",
+                i === arr.length - 1
+                  ? "sticky right-0 z-30 min-w-[10.5rem] border-l border-slate-200 bg-slate-50 shadow-[-10px_0_18px_-10px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-night-900 dark:shadow-[-10px_0_24px_-10px_rgba(0,0,0,0.55)]"
+                  : ""
+              ]
+                .filter(Boolean)
+                .join(" ")
+            },
+            c
+          )
+        ))
+      ),
       h(
         "tbody",
-        { className: "divide-y divide-white/10" },
+        { className: "divide-y divide-slate-100 dark:divide-white/10" },
         orders.map((o) => {
+          const status = normalizeOrderStatus(o.status);
           const lines = o.items || [];
           const line = lines[0];
           const lineLabel =
@@ -1091,122 +1163,143 @@ export function VendorOrdersPage() {
             o.vendorSellerProceeds != null && Number.isFinite(o.vendorSellerProceeds)
               ? o.vendorSellerProceeds
               : lines.reduce((s, it) => s + (Number(it.sellerProceeds) || 0), 0);
-          const itemsTotal =
-            o.vendorLineGross != null && Number.isFinite(o.vendorLineGross)
-              ? o.vendorLineGross
-              : o.buyerOrderTotal != null
-                ? o.buyerOrderTotal
-                : o.total;
-          return h("tr", { key: o.id, className: "hover:bg-white/5" }, [
-            h("td", { className: "px-3 py-3 font-mono text-xs" }, `#${o.id.slice(-8)}`),
+          return h("tr", { key: o.id, className: "group hover:bg-slate-50/90 dark:hover:bg-white/5" }, [
             h(
               "td",
-              { className: "px-3 py-3" },
-              [
-                h("div", { key: "line" }, lineLabel),
-                o.buyerContact?.email &&
-                  h("div", { key: "contact", className: "mt-1 text-[11px]" }, [
-                    h(
-                      "a",
-                      {
-                        key: "em",
-                        href: `mailto:${o.buyerContact.email}`,
-                        className: "text-sky-600 hover:underline dark:text-sky-300"
-                      },
-                      "Email buyer"
-                    )
-                  ])
-              ].filter(Boolean)
+              { className: "min-w-0 px-3 py-3.5 align-top whitespace-nowrap font-mono text-xs text-slate-700 dark:text-slate-300" },
+              `#${o.id.slice(-8)}`
             ),
-            h("td", { className: "px-3 py-3 font-semibold text-emerald-600 dark:text-emerald-400" }, formatGhc(myEarn)),
-            h("td", { className: "px-3 py-3 text-slate-600 dark:text-slate-300" }, formatGhc(itemsTotal)),
-            h("td", { className: "px-3 py-3" }, h(Badge, { tone: "neutral" }, humanizeOrderStatus(o.status))),
             h(
               "td",
-              { className: "px-3 py-3" },
-              h("div", { className: "space-y-2" }, [
+              { className: "min-w-0 px-3 py-3.5 align-top break-words leading-relaxed text-slate-800 dark:text-slate-100" },
+              lineLabel
+            ),
+            h("td", { className: "min-w-0 whitespace-nowrap px-3 py-3.5 align-top font-semibold text-emerald-600 dark:text-emerald-400" }, formatGhc(myEarn)),
+            h("td", { className: "min-w-0 px-3 py-3.5 align-top" }, h(Badge, { tone: "neutral" }, humanizeOrderStatus(o.status))),
+            h(
+              "td",
+              { className: "min-w-0 px-3 py-3.5 align-top" },
+              h("div", { className: "flex flex-col gap-2" }, [
                 h(
                   "div",
-                  { className: "flex flex-wrap gap-1" },
+                  { className: "flex flex-wrap gap-1.5" },
                   [
-                  o.status === "awaiting_vendor_payment" &&
-                    !(o.confirmedSellerIds || []).includes(user?.id) &&
-                    h(
-                      Button,
-                      {
-                        key: "pay-ok",
-                        variant: "primary",
-                        className: "!min-h-[32px] !px-2 !py-1 !text-xs",
-                        type: "button",
-                        onClick: () => confirmPayment(o.id)
-                      },
-                      "Confirm received payment"
-                    ),
-                  o.status === "awaiting_vendor_payment" &&
-                    (o.confirmedSellerIds || []).includes(user?.id) &&
-                    h("span", { key: "pay-wait", className: "text-[11px] text-emerald-600 dark:text-emerald-400" }, "You confirmed · waiting others"),
-                  ["paid", "processing"].includes(o.status) &&
-                    h(
-                      Button,
-                      {
-                        key: "proc",
-                        variant: "ghost",
-                        className: "!min-h-[32px] !px-2 !py-1 !text-xs",
-                        type: "button",
-                        onClick: () => updateStatus(o.id, "processing")
-                      },
-                      "Mark processing"
-                    ),
-                  o.status === "processing" &&
-                    h(
-                      Button,
-                      {
-                        key: "sent_for_delivery",
-                        variant: "ghost",
-                        className: "!min-h-[32px] !px-2 !py-1 !text-xs",
-                        type: "button",
-                        onClick: () => updateStatus(o.id, "sent_for_delivery")
-                      },
-                      "Sent for delivery"
-                    ),
-                  o.status === "sent_for_delivery" &&
-                    h(
-                      Button,
-                      {
-                        key: "del",
-                        variant: "ghost",
-                        className: "!min-h-[32px] !px-2 !py-1 !text-xs",
-                        type: "button",
-                        onClick: () => updateStatus(o.id, "delivered")
-                      },
-                      "Delivered"
-                    ),
-                  ["paid", "processing", "awaiting_vendor_payment"].includes(o.status) &&
-                    h(
-                      Button,
-                      {
-                        key: "cxl",
-                        variant: "danger",
-                        className: "!min-h-[32px] !px-2 !py-1 !text-xs",
-                        type: "button",
-                        onClick: () => updateStatus(o.id, "cancelled")
-                      },
-                      "Cancel"
-                    )
+                    status === "awaiting_vendor_payment" &&
+                      !(o.confirmedSellerIds || []).includes(user?.id) &&
+                      h(
+                        Button,
+                        {
+                          key: "pay-ok",
+                          variant: "primary",
+                          className: "!min-h-[34px] !px-2.5 !py-1.5 !text-xs",
+                          type: "button",
+                          onClick: () => confirmPayment(o.id)
+                        },
+                        "Confirm received payment"
+                      ),
+                    status === "awaiting_vendor_payment" &&
+                      (o.confirmedSellerIds || []).includes(user?.id) &&
+                      h(
+                        "span",
+                        {
+                          key: "pay-wait",
+                          className: "block max-w-[14rem] text-[11px] leading-snug text-emerald-700 dark:text-emerald-400"
+                        },
+                        "You confirmed · waiting others"
+                      ),
+                    status === "paid" &&
+                      h(
+                        Button,
+                        {
+                          key: "proc",
+                          variant: "ghost",
+                          className:
+                            "!min-h-[34px] !px-2.5 !py-1.5 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                          type: "button",
+                          onClick: () => updateStatus(o.id, "processing")
+                        },
+                        "Mark processing"
+                      ),
+                    status === "processing" &&
+                      h(
+                        Button,
+                        {
+                          key: "sent_for_delivery",
+                          variant: "ghost",
+                          className:
+                            "!min-h-[34px] !px-2.5 !py-1.5 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                          type: "button",
+                          onClick: () => updateStatus(o.id, "sent_for_delivery")
+                        },
+                        "Sent for delivery"
+                      ),
+                    status === "sent_for_delivery" &&
+                      h(
+                        Button,
+                        {
+                          key: "del",
+                          variant: "ghost",
+                          className:
+                            "!min-h-[34px] !px-2.5 !py-1.5 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                          type: "button",
+                          onClick: () => updateStatus(o.id, "delivered")
+                        },
+                        "Delivered"
+                      )
                   ].filter(Boolean)
                 ),
-                h(
-                  Link,
-                  {
-                    key: "to-msg",
-                    to: o.buyerContact?.id
-                      ? `/vendor/messages?peer=${encodeURIComponent(String(o.buyerContact.id))}`
-                      : "/vendor/messages",
-                    className: "inline-block text-[11px] font-medium text-sky-600 hover:underline dark:text-sky-300"
-                  },
-                  "Open Messages →"
-                )
+                h(Button, {
+                  key: "to-msg",
+                  variant: "ghost",
+                  className:
+                    "!min-h-[34px] w-full !px-2.5 !py-1.5 !text-xs !text-sky-700 hover:!bg-sky-50 hover:!text-sky-800 sm:w-fit dark:!text-sky-400 dark:hover:!bg-white/10 dark:hover:!text-sky-300",
+                  type: "button",
+                  onClick: () =>
+                    nav(
+                      o.buyerContact?.id
+                        ? `/vendor/messages?peer=${encodeURIComponent(String(o.buyerContact.id))}`
+                        : "/vendor/messages"
+                    )
+                }, [
+                  h(MessageSquare, { key: "ic-m", className: "h-3.5 w-3.5 shrink-0" }),
+                  h("span", { key: "l-m", className: "ml-1" }, "Message")
+                ])
               ])
+            ),
+            h(
+              "td",
+              {
+                className:
+                  "min-w-0 px-3 py-3.5 align-top sticky right-0 z-20 min-w-[10.5rem] border-l border-slate-200 bg-white shadow-[-10px_0_18px_-10px_rgba(15,23,42,0.14)] group-hover:bg-slate-50 dark:border-white/10 dark:bg-night-950 dark:shadow-[-10px_0_24px_-10px_rgba(0,0,0,0.45)] dark:group-hover:bg-night-900/95"
+              },
+              (() => {
+                const actionEls = [
+                  ["paid", "processing", "awaiting_vendor_payment"].includes(status) &&
+                    h(Button, {
+                      key: "cxl",
+                      variant: "danger",
+                      className: "!min-h-[34px] w-full !px-2.5 !py-1.5 !text-xs sm:w-auto",
+                      type: "button",
+                      onClick: () => updateStatus(o.id, "cancelled")
+                    }, "Cancel order"),
+                  ["pending_payment", "cancelled"].includes(status) &&
+                    h(Button, {
+                      key: "row-del",
+                      variant: "ghost",
+                      className:
+                        "!min-h-[36px] w-full !px-3 !py-2 !text-xs !font-semibold !text-rose-800 !ring-2 !ring-rose-400/55 !bg-rose-50 hover:!bg-rose-100 hover:!ring-rose-500/70 sm:w-auto dark:!text-rose-200 dark:!ring-rose-500/50 dark:!bg-rose-950/50 dark:hover:!bg-rose-950/70",
+                      type: "button",
+                      onClick: () => deleteOrder(o.id)
+                    }, [h(Trash2, { className: "h-3.5 w-3.5 shrink-0" }), h("span", { className: "ml-1" }, "Delete")])
+                ].filter(Boolean);
+                return actionEls.length
+                  ? h("div", { className: "flex flex-col items-stretch gap-2 sm:items-start" }, actionEls)
+                  : h(
+                      "span",
+                      { className: "block text-xs leading-snug text-slate-500 dark:text-slate-400" },
+                      "No actions for this status."
+                    );
+              })()
             )
           ]);
         })
@@ -1317,7 +1410,7 @@ export function VendorMessagesPage() {
   };
 
   const renderBubble = (m, idx) => {
-    const mine = m.senderRole === "seller";
+    const mine = m.senderLabel === "You";
     return h(
       "div",
       {
@@ -1360,7 +1453,7 @@ export function VendorMessagesPage() {
           "aside",
           {
             key: "conv-list",
-            className: `flex max-h-[40vh] shrink-0 flex-col border-white/10 md:max-h-none md:h-auto md:w-[min(100%,20rem)] md:max-w-[40%] md:border-r ${
+            className: `flex max-h-[40vh] shrink-0 flex-col border-white/10 md:max-h-none md:h-auto md:w-[min(100%,17rem)] md:max-w-[40%] md:border-r ${
               mobileShowChat ? "max-md:hidden" : "max-md:flex min-h-0"
             }`
           },
@@ -1370,7 +1463,7 @@ export function VendorMessagesPage() {
               h(
                 "p",
                 { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" },
-                "One thread per buyer — all orders with them stay together."
+                "Buyers you’ve sold to — plus Campus Mart Support for payouts and policy help."
               )
             ]),
             h(
@@ -1523,7 +1616,7 @@ export function VendorMessagesPage() {
           h(
             "p",
             { className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
-            "Each buyer you share an active order with appears here as one conversation — every message with that buyer stays in the same thread."
+            "Buyer chats appear when you have active orders. Campus Mart Support is always listed first once your admin inbox is set up."
           )
         ]),
       chatShell
@@ -1677,6 +1770,14 @@ export function VendorSettingsPage() {
   const [deleting, setDeleting] = useState(false);
   const [photoLoading, setPhotoLoading] = useState(false);
   const photoFileRef = useRef(null);
+  const [ghanaBanks, setGhanaBanks] = useState([]);
+  /** Format: `ghipss|CODE` or `mobile_money|CODE` (from Paystack list). */
+  const [payoutBankKey, setPayoutBankKey] = useState("");
+  const [banksLoading, setBanksLoading] = useState(false);
+  const [banksLoadErr, setBanksLoadErr] = useState("");
+  const [registeringPayout, setRegisteringPayout] = useState(false);
+  const [payoutErr, setPayoutErr] = useState("");
+  const [payoutOk, setPayoutOk] = useState("");
 
   useEffect(() => {
     if (!accessToken) return;
@@ -1693,6 +1794,38 @@ export function VendorSettingsPage() {
       })
       .catch(() => {});
   }, [accessToken, setUser]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    setBanksLoading(true);
+    setBanksLoadErr("");
+    apiFetch("/api/vendor/paystack/ghana-banks", { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((d) => {
+        if (cancelled) return;
+        setGhanaBanks(Array.isArray(d.banks) ? d.banks : []);
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setGhanaBanks([]);
+          setBanksLoadErr(ex.message || "Could not load Paystack bank list. Check the API and Paystack keys.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setBanksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  useEffect(() => {
+    const ch = user?.ghanaPayoutChannel;
+    const code = (user && user.ghanaBankCode && String(user.ghanaBankCode).trim()) || "";
+    if (ch && code && (ch === "ghipss" || ch === "mobile_money")) {
+      setPayoutBankKey(`${ch}|${code}`);
+    }
+  }, [user?.ghanaPayoutChannel, user?.ghanaBankCode]);
 
   const onPickProfilePhoto = async (e) => {
     const f = e.target.files?.[0];
@@ -1759,6 +1892,67 @@ export function VendorSettingsPage() {
       setErr(ex.message || "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const registerPaystackPayout = async () => {
+    setPayoutErr("");
+    setPayoutOk("");
+    if (!accessToken) return;
+    const p = payoutBankKey.indexOf("|");
+    if (p < 1) {
+      setPayoutErr("Select a bank or mobile money provider from the list.");
+      return;
+    }
+    const recipientType = payoutBankKey.slice(0, p);
+    const bankCode = payoutBankKey.slice(p + 1).trim();
+    if (!bankCode || (recipientType !== "ghipss" && recipientType !== "mobile_money")) {
+      setPayoutErr("Select a valid payout method from the list.");
+      return;
+    }
+    /* Same rules as server: MoMo wallet can live in “Mobile money number” or “Account number”; name can fall back to display name. */
+    const accountNum =
+      bankAccountNumber.trim() ||
+      (recipientType === "mobile_money" ? phone.trim() : "");
+    const accountHolder =
+      bankAccountName.trim() ||
+      displayName.trim();
+    if (!accountNum.trim()) {
+      setPayoutErr(
+        recipientType === "mobile_money"
+          ? "Add your wallet number under “Mobile money number” or “Account number”, then try again."
+          : "Fill in account number under “Account & store contact”, then try again."
+      );
+      return;
+    }
+    if (!accountHolder.trim()) {
+      setPayoutErr("Fill in account name (or set display name), then try again.");
+      return;
+    }
+    setRegisteringPayout(true);
+    try {
+      const data = await apiFetch("/api/vendor/paystack/payout-account", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: {
+          bankCode,
+          recipientType,
+          accountNumber: accountNum
+        }
+      });
+      if (data?.ok) {
+        setPayoutOk(
+          recipientType === "mobile_money"
+            ? "Your mobile money is linked. When buyers pay with Paystack, your share can be sent here automatically (if the platform has this enabled)."
+            : "Your bank is linked. When buyers pay with Paystack, your share can be sent here automatically (if the platform has this enabled)."
+        );
+        const me = await apiFetch("/api/auth/me", { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (me.user) setUser(me.user);
+      }
+    } catch (ex) {
+      setPayoutErr(ex.message || "Could not link bank. Check details with your bank and try again.");
+    } finally {
+      setRegisteringPayout(false);
     }
   };
 
@@ -1850,6 +2044,88 @@ export function VendorSettingsPage() {
           ? h(InlineNotice, { key: "ok", variant: "success", className: "mt-2", onDismiss: () => setOk("") }, ok)
           : null,
         h(Button, { className: "mt-4 w-full sm:w-auto", type: "button", onClick: save, loading: saving }, "Save")
+      ]),
+      h(GlassPanel, { id: "vendor-paystack-payouts", className: "!scroll-mt-28" }, [
+        h("h2", { className: "mb-2 text-lg font-semibold text-slate-900 dark:text-white" }, "Paystack — automatic payouts (bank or MoMo)"),
+        h(
+          "p",
+          { className: "mb-3 text-sm text-slate-600 dark:text-slate-400" },
+          "When a buyer pays with Paystack, the platform can send your share to a Ghanaian bank or mobile money wallet (per Paystack’s Ghana transfer rules). You set this up once. Auto-payouts also require the server option and a valid Paystack key."
+        ),
+        user?.paystackPayoutRegistered
+          ? h(
+              InlineNotice,
+              { key: "pout-ok", variant: "success", className: "mb-3" },
+              "This account is registered for automatic Paystack payouts. Paystack uses the account number and institution you select below."
+            )
+          : h(
+              "p",
+              { className: "mb-3 text-sm font-medium text-amber-800 dark:text-amber-200" },
+              "Not registered yet — for MoMo, your wallet can be under “Mobile money number” or “Account number”; for banks, use account name and number. Then pick the bank or MoMo network and link."
+            ),
+        banksLoadErr
+          ? h(InlineNotice, { key: "banks-err", variant: "error", className: "mb-3", onDismiss: () => setBanksLoadErr("") }, banksLoadErr)
+          : null,
+        !banksLoading && !banksLoadErr && ghanaBanks.length === 0
+          ? h(
+              InlineNotice,
+              { key: "banks-empty", variant: "warning", className: "mb-3" },
+              "No banks or mobile money networks were returned from Paystack. Check that PAYSTACK_SECRET_KEY is set on the server and that your Paystack business supports Ghana transfers, then refresh this page."
+            )
+          : null,
+        h(Field, { label: "Payout destination (Ghana — Paystack list)" }, [
+          banksLoading
+            ? h("p", { className: "text-sm text-slate-500" }, "Loading banks and mobile money networks…")
+            : h(
+                "select",
+                {
+                  className:
+                    "w-full rounded-xl border border-slate-300/70 bg-white/80 px-3 py-2.5 text-sm text-slate-900 dark:border-white/10 dark:bg-night-900/80 dark:text-slate-100",
+                  value: payoutBankKey,
+                  onChange: (e) => setPayoutBankKey(e.target.value)
+                },
+                [
+                  h("option", { value: "" }, "Select bank or mobile money…"),
+                  ghanaBanks.filter((b) => b.channel === "ghipss").length
+                    ? h("optgroup", { key: "og-b", label: "Banks" }, [
+                        ...ghanaBanks
+                          .filter((b) => b.channel === "ghipss")
+                          .map((b) =>
+                            h("option", { key: `g-${b.code}`, value: `ghipss|${b.code}` }, b.name || b.code)
+                          )
+                      ])
+                    : null,
+                  ghanaBanks.filter((b) => b.channel === "mobile_money").length
+                    ? h("optgroup", { key: "og-m", label: "Mobile money" }, [
+                        ...ghanaBanks
+                          .filter((b) => b.channel === "mobile_money")
+                          .map((b) =>
+                            h("option", { key: `m-${b.code}`, value: `mobile_money|${b.code}` }, b.name || b.code)
+                          )
+                      ])
+                    : null
+                ].filter(Boolean)
+              )
+        ]),
+        payoutBankKey.startsWith("mobile_money|")
+          ? h(
+              "p",
+              { key: "momo-hint", className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
+              "For mobile money, use the wallet number as “Account number” and the name registered on that MoMo line as “Account name” above."
+            )
+          : null,
+        payoutErr
+          ? h(InlineNotice, { key: "pout-err", variant: "error", className: "mt-2", onDismiss: () => setPayoutErr("") }, payoutErr)
+          : null,
+        payoutOk
+          ? h(InlineNotice, { key: "pout-done", variant: "success", className: "mt-2", onDismiss: () => setPayoutOk("") }, payoutOk)
+          : null,
+        h(Button, {
+          className: "mt-3 w-full sm:w-auto",
+          type: "button",
+          loading: registeringPayout,
+          onClick: registerPaystackPayout
+        }, user?.paystackPayoutRegistered ? "Update bank for Paystack payouts" : "Link bank for Paystack payouts")
       ]),
       h(GlassPanel, { className: "!border-rose-500/30 !bg-rose-500/[0.05]" }, [
         h("h2", { className: "mb-2 flex items-center gap-2 font-semibold text-rose-700 dark:text-rose-300" }, [

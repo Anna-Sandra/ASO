@@ -2,6 +2,7 @@
   "name": "brewmart-frontend",
   "version": "0.1.0",
   "private": true,
+  "proxy": "http://localhost:4000",
   "dependencies": {
     "lucide-react": "^0.544.0",
     "react": "^18.2.0",

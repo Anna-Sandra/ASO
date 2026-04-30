@@ -11,9 +11,9 @@
   - Access JWT (short-lived) + **rotating refresh tokens** (stored hashed in DB)
   - Logout (revokes refresh)
   - Forgot/reset password (10 min expiry, revokes refresh tokens)
-- **Payments skeleton**:
-  - Create Stripe Checkout Session (server-side)
-  - Stripe webhook endpoint with signature verification (raw body)
+- **Payments**:
+  - **Paystack**: initialize transaction + redirect; webhook verifies HMAC and marks orders `paid` (GHS, pesewas)
+  - **Stripe** (optional): Checkout Session + webhook (legacy)
 
 ## Quick start
 1. Copy env file:
@@ -47,6 +47,8 @@ Health check: `GET /health`
 - `POST /reset-password` { token, newPassword }
 
 ### Payments (`/api/payments`)
-- `POST /create-checkout-session` (requires `Authorization: Bearer <accessToken>`)
-- `POST /stripe/webhook` (Stripe calls this)
+- `POST /paystack/initialize` { orderId } → `{ authorizationUrl, reference }` (requires Bearer; set `PAYSTACK_SECRET_KEY`)
+- `POST /paystack/webhook` (Paystack dashboard → this URL; raw JSON body for signature verification)
+- `POST /create-checkout-session` (Stripe; optional)
+- `POST /stripe/webhook` (Stripe; optional)
 

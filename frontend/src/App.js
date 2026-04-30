@@ -23,7 +23,11 @@ import {
   ProfilePage,
   ShopPage
 } from "./screensBuyer";
+import { VendorApplicationPage } from "./screensVendorApply";
+import { BuyerReportsPage, VendorReportsPage } from "./screensUserReports";
+import { TermsAndConditionsPage, VendorRulesPage } from "./screensLegal";
 import { AdminPage } from "./screensAdmin";
+import { AdminLoginPage, AdminLoginOtpPage } from "./screensAdminLogin";
 import {
   VendorAddProductPage,
   VendorAnalyticsPage,
@@ -88,7 +92,7 @@ function AdminGate({ children }) {
     );
   }
   if (!accessToken) {
-    return h(Navigate, { to: "/login", replace: true, state: { from: "/admin" } });
+    return h(Navigate, { to: "/admin/login", replace: true, state: { from: "/admin" } });
   }
   if (user && user.role !== "admin") {
     return h(Navigate, { to: "/", replace: true });
@@ -123,6 +127,8 @@ function AppRoutes() {
       element: h(BuyerGate, null, h(ProductDetailPage)),
       key: "r-product"
     }),
+    h(Route, { path: "/admin/login", element: h(AdminLoginPage), key: "r-admin-login" }),
+    h(Route, { path: "/admin/login-otp", element: h(AdminLoginOtpPage), key: "r-admin-login-otp" }),
     h(Route, { path: "/admin", element: h(AdminGate, null, h(AdminPage)), key: "r-admin" }),
     h(Route, { path: "/login", element: h(LoginPage), key: "r-login" }),
     h(Route, { path: "/login-otp", element: h(LoginOtpPage), key: "r-login-otp" }),
@@ -130,6 +136,8 @@ function AppRoutes() {
     h(Route, { path: "/verify-email", element: h(VerifyEmailPage), key: "r-verify" }),
     h(Route, { path: "/forgot-password", element: h(ForgotPasswordPage), key: "r-forgot" }),
     h(Route, { path: "/reset-password", element: h(ResetPasswordPage), key: "r-reset" }),
+    h(Route, { path: "/terms", element: h(TermsAndConditionsPage), key: "r-terms" }),
+    h(Route, { path: "/vendor-rules", element: h(VendorRulesPage), key: "r-vendor-rules" }),
     h(Route, {
       path: "/checkout",
       element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(CheckoutPage))),
@@ -141,6 +149,11 @@ function AppRoutes() {
       key: "r-profile"
     }),
     h(Route, {
+      path: "/apply-vendor",
+      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(VendorApplicationPage))),
+      key: "r-apply-vendor"
+    }),
+    h(Route, {
       path: "/orders",
       element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(BuyerOrdersPage))),
       key: "r-orders"
@@ -149,6 +162,11 @@ function AppRoutes() {
       path: "/messages",
       element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(BuyerMessagesPage))),
       key: "r-messages"
+    }),
+    h(Route, {
+      path: "/reports",
+      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(BuyerReportsPage))),
+      key: "r-reports"
     }),
     h(Route, {
       path: "/payment/success",
@@ -170,6 +188,7 @@ function AppRoutes() {
       h(Route, { path: "products/:productId", element: h(VendorEditProductPage), key: "r-v-edit" }),
       h(Route, { path: "orders", element: h(VendorOrdersPage), key: "r-v-orders" }),
       h(Route, { path: "messages", element: h(VendorMessagesPage), key: "r-v-messages" }),
+      h(Route, { path: "reports", element: h(VendorReportsPage), key: "r-v-reports" }),
       h(Route, { path: "analytics", element: h(VendorAnalyticsPage), key: "r-v-analytics" }),
       h(Route, { path: "reviews", element: h(VendorReviewsPage), key: "r-v-reviews" }),
       h(Route, { path: "settings", element: h(VendorSettingsPage), key: "r-v-settings" }),

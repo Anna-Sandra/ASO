@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
-import { env, isEmailTransportConfigured } from "../config/env";
+import { env, getEmailTransportDiagnostics, isEmailTransportConfigured } from "../config/env";
+import { EmailLog } from "../modules/emailLog/emailLog.model";
 
 type Transporter = ReturnType<typeof nodemailer.createTransport>;
 
@@ -36,23 +37,69 @@ function getTransporter(): Transporter | null {
   return cached;
 }
 
+export type SendEmailMeta = { category?: string };
+
+async function recordEmailLog(entry: {
+  to: string;
+  subject: string;
+  category: string;
+  status: "sent" | "failed" | "skipped";
+  errorMessage?: string;
+}) {
+  try {
+    await EmailLog.create(entry);
+  } catch {
+    /* avoid breaking sends if logging fails */
+  }
+}
+
 /**
- * Send HTML email. If mail is not configured, logs a dev line and no-ops.
+ * Send HTML email. If mail is not configured, logs a dev line and no-ops (and writes a skipped EmailLog row).
  * Uses either SMTP (SMTP_*) or Gmail (EMAIL_USER + EMAIL_PASS, SMTP_HOST empty).
- * Set `EMAIL_FROM` to a sender Gmail accepts (usually the same as `EMAIL_USER` for App Password mode).
  */
-export async function sendEmail(to: string, subject: string, html: string) {
+export async function sendEmail(to: string, subject: string, html: string, meta?: SendEmailMeta) {
+  const category = (meta?.category || "general").slice(0, 80);
   const transporter = getTransporter();
   if (!transporter) {
+    const diag = getEmailTransportDiagnostics();
+    const reason =
+      diag.missingVariables.length > 0
+        ? `Not configured — set: ${diag.missingVariables.join(", ")}`
+        : "Not configured — check EMAIL_USER/EMAIL_PASS or SMTP_* in .env";
+    await recordEmailLog({
+      to: to.slice(0, 320),
+      subject: subject.slice(0, 500),
+      category,
+      status: "skipped",
+      errorMessage: reason
+    });
     // eslint-disable-next-line no-console
     console.log("[email:not-configured]", { to, subject, html: html.replace(/\s+/g, " ").slice(0, 200) });
     return;
   }
 
-  await transporter.sendMail({
-    from: env.EMAIL_FROM,
-    to,
-    subject,
-    html
-  });
+  try {
+    await transporter.sendMail({
+      from: env.EMAIL_FROM,
+      to,
+      subject,
+      html
+    });
+    await recordEmailLog({
+      to: to.slice(0, 320),
+      subject: subject.slice(0, 500),
+      category,
+      status: "sent"
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "sendMail failed";
+    await recordEmailLog({
+      to: to.slice(0, 320),
+      subject: subject.slice(0, 500),
+      category,
+      status: "failed",
+      errorMessage: msg.slice(0, 2000)
+    });
+    throw err;
+  }
 }

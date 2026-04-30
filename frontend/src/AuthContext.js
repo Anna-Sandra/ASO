@@ -67,12 +67,28 @@ export function AuthProvider({ children }) {
           const me = await apiFetch("/api/auth/me", {
             headers: { Authorization: `Bearer ${data.accessToken}` }
           });
-          if (!cancelled && me?.user) setUser(me.user);
-          else if (!cancelled) {
+          if (!cancelled && me?.user) {
+            const p = decodeJwtPayload(data.accessToken);
+            setUser({
+              ...me.user,
+              ...(!me.user.adminLevel && me.user.role === "admin" && p?.al && (p.al === "super" || p.al === "normal")
+                ? { adminLevel: p.al }
+                : {})
+            });
+          } else if (!cancelled) {
             const payload = decodeJwtPayload(data.accessToken);
             setUser(
               payload?.sub
-                ? { id: payload.sub, role: payload.role, email: "", displayName: "", phone: "" }
+                ? {
+                    id: payload.sub,
+                    role: payload.role,
+                    email: "",
+                    displayName: "",
+                    phone: "",
+                    ...(payload.role === "admin" && payload.al && (payload.al === "super" || payload.al === "normal")
+                      ? { adminLevel: payload.al }
+                      : {})
+                  }
                 : null
             );
           }
@@ -81,7 +97,16 @@ export function AuthProvider({ children }) {
             const payload = decodeJwtPayload(data.accessToken);
             setUser(
               payload?.sub
-                ? { id: payload.sub, role: payload.role, email: "", displayName: "", phone: "" }
+                ? {
+                    id: payload.sub,
+                    role: payload.role,
+                    email: "",
+                    displayName: "",
+                    phone: "",
+                    ...(payload.role === "admin" && payload.al && (payload.al === "super" || payload.al === "normal")
+                      ? { adminLevel: payload.al }
+                      : {})
+                  }
                 : null
             );
           }
@@ -119,12 +144,26 @@ export function AuthProvider({ children }) {
       });
       if (data.needsOtp) return data;
 
-      if (data.user) setUser(data.user);
-      else {
+      if (data.user) {
+        const p = decodeJwtPayload(data.accessToken);
+        setUser({
+          ...data.user,
+          ...(!data.user.adminLevel && data.user.role === "admin" && p?.al && (p.al === "super" || p.al === "normal")
+            ? { adminLevel: p.al }
+            : {})
+        });
+      } else {
         const payload = decodeJwtPayload(data.accessToken);
         setUser(
           payload?.sub
-            ? { id: payload.sub, role: payload.role, email: identifier }
+            ? {
+                id: payload.sub,
+                role: payload.role,
+                email: identifier,
+                ...(payload.role === "admin" && payload.al && (payload.al === "super" || payload.al === "normal")
+                  ? { adminLevel: payload.al }
+                  : {})
+              }
             : { id: "", role: "buyer", email: identifier }
         );
       }
@@ -140,12 +179,26 @@ export function AuthProvider({ children }) {
         method: "POST",
         json: { email, otp }
       });
-      if (data.user) setUser(data.user);
-      else {
+      if (data.user) {
+        const p = decodeJwtPayload(data.accessToken);
+        setUser({
+          ...data.user,
+          ...(!data.user.adminLevel && data.user.role === "admin" && p?.al && (p.al === "super" || p.al === "normal")
+            ? { adminLevel: p.al }
+            : {})
+        });
+      } else {
         const payload = decodeJwtPayload(data.accessToken);
         setUser(
           payload?.sub
-            ? { id: payload.sub, role: payload.role, email }
+            ? {
+                id: payload.sub,
+                role: payload.role,
+                email,
+                ...(payload.role === "admin" && payload.al && (payload.al === "super" || payload.al === "normal")
+                  ? { adminLevel: payload.al }
+                  : {})
+              }
             : { id: "", role: "buyer", email }
         );
       }

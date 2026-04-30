@@ -1,21 +1,30 @@
 import type { Request, Response } from "express";
-import mongoose from "mongoose";
+import mongoose, { type HydratedDocument } from "mongoose";
 import bcrypt from "bcrypt";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
-import { env } from "../../config/env";
+import { env, getEmailTransportDiagnostics, isEmailTransportConfigured, isSuperUserAdminEmail } from "../../config/env";
+import { sendEmail } from "../../utils/mailer";
+import { EMAIL_TEMPLATE_PREVIEWS } from "../../utils/emailPreviewCatalog";
 import { roundMoney, splitLineGross } from "../../utils/commission";
-import { User, normalizeUserRole, publicPhoneForPaymentRole } from "../auth/user.model";
-import { Order } from "../orders/order.model";
-import { withContacts } from "../orders/orderSerialize";
+import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc } from "../auth/user.model";
+import { Order, type OrderDoc } from "../orders/order.model";
+import { isOrderExcludedFromRevenueMetrics, withContacts } from "../orders/orderSerialize";
 import { Product } from "../products/product.model";
 import { Conversation } from "../conversations/conversation.model";
 import { Report } from "../reports/report.model";
+import { Review } from "../reviews/review.model";
+import { Token } from "../auth/token.model";
+import { VendorAnalyticsEvent } from "../vendor/vendorAnalyticsEvent.model";
+import { VendorApplication } from "../vendorApplications/vendorApplication.model";
+import { adminVendorApplicationsQuerySchema, patchVendorApplicationSchema } from "../vendorApplications/vendorApplication.schemas";
 import { clearCommissionCache, getEffectiveCommissionPercent, getOrCreateSettings } from "../platform/platformSettings.service";
 import {
   adminListQuerySchema,
   adminOrderPatchSchema,
   adminOrdersQuerySchema,
+  adminEmailLogsQuerySchema,
+  adminEmailTestSchema,
   adminPatchUserSchema,
   adminPlatformSettingsSchema,
   adminProductPatchSchema,
@@ -24,11 +33,91 @@ import {
   adminReportPatchSchema,
   adminReportsQuerySchema,
   adminResetPasswordSchema,
-  adminUsersQuerySchema
+  adminUsersQuerySchema,
+  grantAdminBodySchema
 } from "./admin.schemas";
+import { EmailLog } from "../emailLog/emailLog.model";
+import { AdminAuditEvent, recordAdminAuditEvent } from "./adminAuditEvent.model";
+import { createPaystackRefund, getPaystackRefundById } from "../payments/payments.controller";
+import { applyProcessedPaystackRefundToOrder, isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
+import { conversationMessageSchema } from "../conversations/conversation.schemas";
+import { getPrimarySupportAdminId } from "../conversations/supportPeer";
 
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function escapeHtmlEmail(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Plain text only — safe for email body (no HTML injection). */
+function plainTextToEmailHtml(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return trimmed
+    .split(/\n\s*\n/)
+    .map((block) => {
+      const inner = block
+        .split("\n")
+        .map((line) => escapeHtmlEmail(line))
+        .join("<br>");
+      return `<p style="margin:0 0 1em 0;line-height:1.5">${inner}</p>`;
+    })
+    .join("");
+}
+
+function adminRoleGrantedEmailHtml(displayName: string, adminLoginUrl: string): string {
+  const safeName = displayName.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<p>Hi ${safeName || "there"},</p>
+<p><strong>Your Campus Mart account has been granted administrator access.</strong></p>
+<p>You can sign in to the admin dashboard with your existing email and password (and your usual sign-in code if required). Use this link when you’re ready:</p>
+<p><a href="${adminLoginUrl}">${adminLoginUrl}</a></p>
+<p>If you didn’t expect this email, contact your platform owner immediately.</p>
+<p>— Campus Mart</p>`;
+}
+
+type AdminInviteEmailResult =
+  | { status: "sent"; to: string }
+  | { status: "no_recipient_email" }
+  | { status: "mail_not_configured" }
+  | { status: "send_failed" };
+
+async function sendAdminRoleGrantedEmail(u: HydratedDocument<UserDoc>): Promise<AdminInviteEmailResult> {
+  const to = (u.email || "").trim().toLowerCase();
+  if (!to) {
+    // eslint-disable-next-line no-console
+    console.warn("[email] grant admin: user has no email on document", u._id.toString());
+    return { status: "no_recipient_email" };
+  }
+  if (!isEmailTransportConfigured()) {
+    // eslint-disable-next-line no-console
+    console.warn("[email] grant admin: mailer not configured; recipient would be", to);
+    return { status: "mail_not_configured" };
+  }
+  const display = (u.displayName || "").trim() || "there";
+  const adminLoginUrl = `${env.APP_ORIGIN.replace(/\/$/, "")}/admin/login`;
+  try {
+    await sendEmail(
+      to,
+      "You’ve been granted admin access — Campus Mart",
+      adminRoleGrantedEmailHtml(display, adminLoginUrl)
+    );
+    return { status: "sent", to };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[email] grant admin notify failed:", err);
+    return { status: "send_failed" };
+  }
+}
+
+function adminLevelForList(email: string | undefined, role: unknown): "super" | "normal" | undefined {
+  if (normalizeUserRole(role) !== "admin") return undefined;
+  return isSuperUserAdminEmail(email) ? "super" : "normal";
 }
 
 /** Stable key for a user row (lowercased email, else phone, else _id) — for deduping bad data. */
@@ -68,6 +157,33 @@ const BCRYPT_SALT = 12;
 
 const PAID_LIKE = ["paid", "processing", "sent_for_delivery", "delivered"] as const;
 
+/**
+ * Lightweight, polling-friendly counts of items needing admin attention. Used by the admin
+ * shell sidebar to show "you've got mail" badges next to Orders, Vendor requests, Listings,
+ * and Reports — the same affordance vendors already get for incoming orders.
+ */
+export const adminBadges = asyncHandler(async (_req: Request, res: Response) => {
+  const [pendingOrders, pendingVendorApps, pendingProducts, openReports, openDisputes] = await Promise.all([
+    Order.countDocuments({ status: { $in: ["pending_payment", "awaiting_vendor_payment"] } }),
+    VendorApplication.countDocuments({ status: "pending" }),
+    Product.countDocuments({ status: "pending_approval" }),
+    Report.countDocuments({ status: { $in: ["open", "in_review"] } }),
+    Order.countDocuments({ disputeOpen: true })
+  ]);
+
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.json({
+    badges: {
+      orders: pendingOrders,
+      "vendor-apps": pendingVendorApps,
+      listings: pendingProducts,
+      reports: openReports,
+      disputes: openDisputes
+    },
+    fetchedAt: new Date().toISOString()
+  });
+});
+
 export const adminDashboard = asyncHandler(async (_req: Request, res: Response) => {
   const [buyerCount, sellerCount, adminCount, orderCount, productActive, productPending, productDraft, productRejected, openReports] = await Promise.all([
     User.countDocuments({ role: "buyer" }),
@@ -98,22 +214,53 @@ export const adminDashboard = asyncHandler(async (_req: Request, res: Response) 
   platformRevenue = roundMoney(platformRevenue);
   const commissionPercent = await getEffectiveCommissionPercent();
 
+  /** Per-source cap for admin System logs (merged + time-sorted in the UI). */
+  const RECENT_LOG_EACH = 30;
+
   const recentOrders = await Order.find()
     .sort({ createdAt: -1 })
-    .limit(8)
+    .limit(RECENT_LOG_EACH)
     .lean();
   const recentSerialized = await withContacts(recentOrders as unknown as Record<string, unknown>[]);
 
   const recentSignups = await User.find()
     .select("email displayName role createdAt")
     .sort({ createdAt: -1 })
-    .limit(6)
+    .limit(RECENT_LOG_EACH)
     .lean();
   const recentListings = await Product.find()
     .select("name status sellerId createdAt")
     .sort({ createdAt: -1 })
-    .limit(6)
+    .limit(RECENT_LOG_EACH)
     .lean();
+
+  const [recentReports, recentVendorApps, recentAudit] = await Promise.all([
+    Report.find()
+      .select("category status targetType createdAt")
+      .sort({ createdAt: -1 })
+      .limit(RECENT_LOG_EACH)
+      .lean(),
+    VendorApplication.find()
+      .select("shopName status email createdAt")
+      .sort({ createdAt: -1 })
+      .limit(RECENT_LOG_EACH)
+      .lean(),
+    AdminAuditEvent.find().sort({ createdAt: -1 }).limit(RECENT_LOG_EACH).lean()
+  ]);
+  const auditActorIds = [...new Set(recentAudit.map((e) => e.actorId.toString()))];
+  const auditActors = auditActorIds.length
+    ? await User.find({ _id: { $in: auditActorIds.map((x) => new mongoose.Types.ObjectId(x)) } })
+        .select("displayName email")
+        .lean()
+    : [];
+  const auditActorLabel = new Map(
+    auditActors.map((x) => [
+      x._id.toString(),
+      ((x as { displayName?: string; email?: string }).displayName || "").trim() ||
+        (x as { email?: string }).email ||
+        "—"
+    ])
+  );
   const listSellerIds = [...new Set(recentListings.map((p) => p.sellerId.toString()))];
   const listSellers = listSellerIds.length
     ? await User.find({ _id: { $in: listSellerIds.map((x) => new mongoose.Types.ObjectId(x)) } })
@@ -166,6 +313,28 @@ export const adminDashboard = asyncHandler(async (_req: Request, res: Response) 
         status: p.status,
         sellerLabel: bySeller.get(p.sellerId.toString()) || "—",
         createdAt: p.createdAt
+      })),
+      reports: recentReports.map((r) => ({
+        id: r._id.toString(),
+        category: r.category,
+        status: r.status,
+        targetType: r.targetType,
+        createdAt: r.createdAt
+      })),
+      vendorApplications: recentVendorApps.map((a) => ({
+        id: a._id.toString(),
+        shopName: a.shopName,
+        status: a.status,
+        email: a.email,
+        createdAt: a.createdAt
+      })),
+      audit: recentAudit.map((e) => ({
+        id: e._id.toString(),
+        action: e.action,
+        title: e.title,
+        detail: e.detail,
+        actorLabel: auditActorLabel.get(e.actorId.toString()) || "—",
+        createdAt: e.createdAt
       }))
     }
   });
@@ -201,16 +370,20 @@ export const listAdminUsers = asyncHandler(async (req: Request, res: Response) =
   ) as unknown as typeof rows;
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({
-    users: rowsDeduped.map((u) => ({
-      id: u._id.toString(),
-      email: u.email ?? "",
-      phone: publicPhoneForPaymentRole(normalizeUserRole((u as { role: string }).role), (u as { phone?: string }).phone),
-      displayName: (u as { displayName?: string }).displayName ?? "",
-      role: (u as { role: string }).role,
-      accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
-      sellerVerified: Boolean((u as { sellerVerified?: boolean }).sellerVerified),
-      createdAt: u.createdAt
-    })),
+    users: rowsDeduped.map((u) => {
+      const role = (u as { role: string }).role;
+      return {
+        id: u._id.toString(),
+        email: u.email ?? "",
+        phone: publicPhoneForPaymentRole(normalizeUserRole((u as { role: string }).role), (u as { phone?: string }).phone),
+        displayName: (u as { displayName?: string }).displayName ?? "",
+        role,
+        adminLevel: adminLevelForList((u as { email?: string }).email, role),
+        accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
+        sellerVerified: Boolean((u as { sellerVerified?: boolean }).sellerVerified),
+        createdAt: u.createdAt
+      };
+    }),
     total,
     page: q.page,
     limit: q.limit,
@@ -224,6 +397,17 @@ export const patchAdminUser = asyncHandler(async (req: Request, res: Response) =
   const body = adminPatchUserSchema.parse(req.body);
   const u = await User.findById(id);
   if (!u) throw new HttpError(404, "User not found");
+  const isSelf = String(u._id) === String(req.user?.id);
+  if (normalizeUserRole((u as { role: string }).role) === "admin" && !isSelf && req.user?.adminLevel !== "super") {
+    throw new HttpError(403, "Only the platform super admin can change another administrator's account.");
+  }
+  if (
+    body.accountStatus != null &&
+    body.accountStatus !== "active" &&
+    isSuperUserAdminEmail((u as { email?: string }).email)
+  ) {
+    throw new HttpError(403, "Cannot suspend or ban a platform super-admin account.");
+  }
   if (u.role === "admin" && (body as { accountStatus?: string }).accountStatus && (body as { accountStatus: string }).accountStatus !== "active") {
     const admins = await User.countDocuments({ role: "admin" });
     if (admins <= 1) throw new HttpError(400, "Cannot change the only admin account this way");
@@ -231,7 +415,94 @@ export const patchAdminUser = asyncHandler(async (req: Request, res: Response) =
   if (body.accountStatus !== undefined) (u as { accountStatus: string }).accountStatus = body.accountStatus;
   if (body.sellerVerified !== undefined) (u as { sellerVerified: boolean }).sellerVerified = body.sellerVerified;
   await u.save();
+  const parts: string[] = [];
+  if (body.accountStatus !== undefined) parts.push(`accountStatus → ${body.accountStatus}`);
+  if (body.sellerVerified !== undefined) parts.push(`sellerVerified → ${body.sellerVerified}`);
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "user.patch",
+    title: `User updated — ${(((u as { email?: string }).email || (u as { displayName?: string }).displayName || id) + "").slice(0, 60)}`,
+    detail: parts.join(" · ") || "—"
+  });
   res.json({ ok: true, user: { id: u._id.toString(), accountStatus: (u as { accountStatus?: string }).accountStatus, sellerVerified: (u as { sellerVerified?: boolean }).sellerVerified } });
+});
+
+export const grantAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const body = grantAdminBodySchema.parse(req.body);
+  let u: HydratedDocument<UserDoc> | null;
+  if ("userId" in body) {
+    if (!mongoose.isValidObjectId(body.userId)) throw new HttpError(400, "Invalid user id");
+    u = await User.findById(body.userId);
+  } else {
+    u = await User.findOne({ email: body.email.trim().toLowerCase() });
+  }
+  if (!u) throw new HttpError(404, "User not found");
+  if (normalizeUserRole(u.role) === "admin") {
+    res.json({ ok: true, already: true, user: { id: u._id.toString(), role: "admin" } });
+    return;
+  }
+  const acc = (u as { accountStatus?: string }).accountStatus;
+  if (acc && acc !== "active") {
+    throw new HttpError(400, "Only active accounts can be made admin. Restore the account first.");
+  }
+  u.role = "admin";
+  await u.save();
+  const adminInviteEmail = await sendAdminRoleGrantedEmail(u);
+  const targetLabel = ((u.displayName || "").trim() || u.email || u._id.toString()).slice(0, 80);
+  const inviteDetailStr =
+    adminInviteEmail.status === "sent"
+      ? `${adminInviteEmail.status} → ${adminInviteEmail.to}`
+      : adminInviteEmail.status;
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "admin.grant",
+    title: `Granted admin — ${targetLabel}`,
+    detail: `${(u.email || "").trim() || "no email"} · invite ${inviteDetailStr}`
+  });
+  res.json({
+    ok: true,
+    user: { id: u._id.toString(), role: "admin" },
+    adminInviteEmail
+  });
+});
+
+export const revokeAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const body = grantAdminBodySchema.parse(req.body);
+  let u: HydratedDocument<UserDoc> | null;
+  if ("userId" in body) {
+    if (!mongoose.isValidObjectId(body.userId)) throw new HttpError(400, "Invalid user id");
+    u = await User.findById(body.userId);
+  } else {
+    u = await User.findOne({ email: body.email.trim().toLowerCase() });
+  }
+  if (!u) throw new HttpError(404, "User not found");
+  if (String(u._id) === String(req.user?.id)) {
+    throw new HttpError(400, "You cannot remove your own admin access.");
+  }
+  if (normalizeUserRole(u.role) !== "admin") {
+    res.json({ ok: true, already: true, user: { id: u._id.toString(), role: normalizeUserRole(u.role) } });
+    return;
+  }
+  const uEmail = (u as { email?: string }).email;
+  if (isSuperUserAdminEmail(uEmail)) {
+    throw new HttpError(403, "Cannot remove admin from a platform super-admin account.");
+  }
+  const admins = await User.countDocuments({ role: "admin" });
+  if (admins <= 1) {
+    throw new HttpError(400, "Cannot remove the only administrator. Grant another admin first.");
+  }
+  const listingCount = await Product.countDocuments({ sellerId: u._id });
+  const nextRole: UserDoc["role"] = listingCount > 0 ? "seller" : "buyer";
+  u.role = nextRole;
+  await u.save();
+  const who = ((u.displayName || "").trim() || uEmail || u._id.toString()).slice(0, 80);
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "admin.revoke",
+    title: `Removed admin — ${who}`,
+    detail: `Now ${nextRole} · ${(uEmail || "").trim() || "—"}`
+  });
+  res.json({ ok: true, user: { id: u._id.toString(), role: nextRole } });
 });
 
 export const listAdminProducts = asyncHandler(async (req: Request, res: Response) => {
@@ -290,6 +561,12 @@ export const approveProduct = asyncHandler(async (req: Request, res: Response) =
   }
   p.set("rejectionReason", null);
   await p.save();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "product.approve",
+    title: `Listing approved — ${p.name.slice(0, 80)}`,
+    detail: p._id.toString()
+  });
   res.json({ ok: true, product: { id: p._id.toString(), status: p.status } });
 });
 
@@ -302,17 +579,41 @@ export const rejectProduct = asyncHandler(async (req: Request, res: Response) =>
   p.status = "rejected";
   p.set("rejectionReason", reason);
   await p.save();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "product.reject",
+    title: `Listing rejected — ${p.name.slice(0, 80)}`,
+    detail: reason.slice(0, 500)
+  });
   res.json({ ok: true, product: { id: p._id.toString(), status: p.status, rejectionReason: reason } });
 });
 
 export const listAdminOrders = asyncHandler(async (req: Request, res: Response) => {
   const q = adminOrdersQuerySchema.parse(req.query);
   const skip = (q.page - 1) * q.limit;
-  const filter: Record<string, unknown> = {};
-  if (q.status && q.status !== "all") filter.status = q.status;
-  if (q.dispute === "yes") filter.disputeOpen = true;
-  if (q.dispute === "no") filter.disputeOpen = { $ne: true };
-  if (q.refund !== "all") filter.refundStatus = q.refund;
+  const conditions: Record<string, unknown>[] = [];
+
+  if (q.status && q.status !== "all") conditions.push({ status: q.status });
+  if (q.dispute === "yes") conditions.push({ disputeOpen: true });
+  if (q.dispute === "no") conditions.push({ disputeOpen: { $ne: true } });
+
+  if (q.refund !== "all") {
+    if (q.refund === "refunded") {
+      conditions.push({
+        $or: [
+          { paymentMethod: { $ne: "paystack" }, refundStatus: "refunded" },
+          {
+            paymentMethod: "paystack",
+            refundStatus: "refunded",
+            paystackRefundRemoteStatus: "processed"
+          }
+        ]
+      });
+    } else {
+      conditions.push({ refundStatus: q.refund });
+    }
+  }
+
   if (q.search) {
     const s = q.search.trim();
     const re = new RegExp(escapeRegex(s), "i");
@@ -320,8 +621,10 @@ export const listAdminOrders = asyncHandler(async (req: Request, res: Response) 
     if (mongoose.isValidObjectId(s)) {
       or.push({ _id: new mongoose.Types.ObjectId(s) });
     }
-    filter.$or = or;
+    conditions.push({ $or: or });
   }
+
+  const filter: Record<string, unknown> = conditions.length ? { $and: conditions } : {};
   const [rows, total] = await Promise.all([
     Order.find(filter).sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
     Order.countDocuments(filter)
@@ -336,17 +639,66 @@ export const listAdminOrders = asyncHandler(async (req: Request, res: Response) 
   });
 });
 
+function serializePlatformSettingsDoc(doc: Awaited<ReturnType<typeof getOrCreateSettings>>) {
+  const tail = (doc.listingRulesAuditTail || []).map((e) => ({
+    at: e.at instanceof Date ? e.at.toISOString() : String(e.at),
+    actorUserId: e.actorUserId,
+    summary: e.summary
+  }));
+  return {
+    commissionPercent: doc.commissionPercent,
+    momoEnabled: doc.momoEnabled,
+    stripeEnabled: doc.stripeEnabled,
+    bankEnabled: doc.bankEnabled,
+    listingPolicyNote: doc.listingPolicyNote || "",
+    listingAllowedItemsNote: doc.listingAllowedItemsNote || "",
+    listingProhibitedItemsNote: doc.listingProhibitedItemsNote || "",
+    listingModerationGuidelines: doc.listingModerationGuidelines || "",
+    listingAutoRejectKeywords: Array.isArray(doc.listingAutoRejectKeywords) ? doc.listingAutoRejectKeywords : [],
+    listingAutoModerationEnabled: !!doc.listingAutoModerationEnabled,
+    listingKeywordBlockEnabled: !!doc.listingKeywordBlockEnabled,
+    listingDefaultApprovalMode:
+      doc.listingDefaultApprovalMode === "auto_approve" ? "auto_approve" : "require_approval",
+    listingKeywordViolationAction:
+      doc.listingKeywordViolationAction === "reject_auto" ? "reject_auto" : "flag_review",
+    listingRulesVersion: doc.listingRulesVersion ?? 1,
+    listingRulesUpdatedAt: doc.listingRulesUpdatedAt
+      ? (doc.listingRulesUpdatedAt as Date).toISOString()
+      : null,
+    listingRulesAuditTail: tail,
+    siteName: doc.siteName || "Campus Mart",
+    siteDescription: doc.siteDescription || "",
+    supportEmail: (doc.supportEmail || "").trim(),
+    maintenanceMode: !!doc.maintenanceMode,
+    maintenanceMessage: doc.maintenanceMessage || "",
+    allowPublicRegistration: doc.allowPublicRegistration !== false,
+    allowVendorApplications: doc.allowVendorApplications !== false
+  };
+}
+
 export const getAdminPlatformSettings = asyncHandler(async (_req: Request, res: Response) => {
   const doc = await getOrCreateSettings();
+  let listingRulesLastEditor: { id: string; label: string } | null = null;
+  if (doc.listingRulesUpdatedByUserId) {
+    const ed = await User.findById(doc.listingRulesUpdatedByUserId).select("displayName email").lean();
+    if (ed) {
+      const id = (ed as { _id: mongoose.Types.ObjectId })._id.toString();
+      const displayName = String((ed as { displayName?: string }).displayName || "").trim();
+      const email = String((ed as { email?: string }).email || "").trim();
+      listingRulesLastEditor = { id, label: displayName || email || id };
+    }
+  }
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({
-    settings: {
-      commissionPercent: doc.commissionPercent,
-      momoEnabled: doc.momoEnabled,
-      stripeEnabled: doc.stripeEnabled,
-      bankEnabled: doc.bankEnabled,
-      listingPolicyNote: doc.listingPolicyNote
+    settings: serializePlatformSettingsDoc(doc),
+    listingRulesLastEditor,
+    emailDelivery: {
+      from: env.EMAIL_FROM,
+      transport: env.SMTP_HOST ? "smtp" : env.EMAIL_USER ? "gmail" : "none",
+      configured: isEmailTransportConfigured(),
+      diagnostics: getEmailTransportDiagnostics()
     },
+    emailTemplatePreviews: EMAIL_TEMPLATE_PREVIEWS,
     effectiveCommissionPercent: doc.commissionPercent
   });
 });
@@ -359,9 +711,142 @@ export const patchAdminPlatformSettings = asyncHandler(async (req: Request, res:
   if (body.stripeEnabled !== undefined) doc.stripeEnabled = body.stripeEnabled;
   if (body.bankEnabled !== undefined) doc.bankEnabled = body.bankEnabled;
   if (body.listingPolicyNote !== undefined) doc.listingPolicyNote = body.listingPolicyNote;
+  if (body.listingAllowedItemsNote !== undefined) doc.listingAllowedItemsNote = body.listingAllowedItemsNote;
+  if (body.listingProhibitedItemsNote !== undefined) doc.listingProhibitedItemsNote = body.listingProhibitedItemsNote;
+  if (body.listingModerationGuidelines !== undefined) doc.listingModerationGuidelines = body.listingModerationGuidelines;
+  if (body.listingAutoRejectKeywords !== undefined) doc.listingAutoRejectKeywords = body.listingAutoRejectKeywords;
+  if (body.listingAutoModerationEnabled !== undefined) doc.listingAutoModerationEnabled = body.listingAutoModerationEnabled;
+  if (body.listingKeywordBlockEnabled !== undefined) doc.listingKeywordBlockEnabled = body.listingKeywordBlockEnabled;
+  if (body.listingDefaultApprovalMode !== undefined) doc.listingDefaultApprovalMode = body.listingDefaultApprovalMode;
+  if (body.listingKeywordViolationAction !== undefined) doc.listingKeywordViolationAction = body.listingKeywordViolationAction;
+  if (body.siteName !== undefined) doc.siteName = body.siteName.trim();
+  if (body.siteDescription !== undefined) doc.siteDescription = body.siteDescription;
+  if (body.supportEmail !== undefined) doc.supportEmail = body.supportEmail.trim();
+  if (body.maintenanceMode !== undefined) doc.maintenanceMode = body.maintenanceMode;
+  if (body.maintenanceMessage !== undefined) doc.maintenanceMessage = body.maintenanceMessage;
+  if (body.allowPublicRegistration !== undefined) doc.allowPublicRegistration = body.allowPublicRegistration;
+  if (body.allowVendorApplications !== undefined) doc.allowVendorApplications = body.allowVendorApplications;
+
+  const listingRuleKeys = [
+    "listingPolicyNote",
+    "listingAllowedItemsNote",
+    "listingProhibitedItemsNote",
+    "listingModerationGuidelines",
+    "listingAutoRejectKeywords",
+    "listingAutoModerationEnabled",
+    "listingKeywordBlockEnabled",
+    "listingDefaultApprovalMode",
+    "listingKeywordViolationAction"
+  ] as const;
+  const listingRulesTouched = listingRuleKeys.some((k) => body[k] !== undefined);
+  if (listingRulesTouched) {
+    const nextV = (Number(doc.listingRulesVersion) || 1) + 1;
+    doc.listingRulesVersion = nextV;
+    doc.listingRulesUpdatedAt = new Date();
+    doc.listingRulesUpdatedByUserId = req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : null;
+    const kwN = (doc.listingAutoRejectKeywords || []).length;
+    const summary = `Listing rules v${nextV} · autoMod=${doc.listingAutoModerationEnabled} kwBlock=${doc.listingKeywordBlockEnabled} · ${kwN} keywords · ${doc.listingDefaultApprovalMode} · ${doc.listingKeywordViolationAction}`;
+    doc.listingRulesAuditTail = [
+      { at: new Date(), actorUserId: req.user?.id || "unknown", summary: summary.slice(0, 500) },
+      ...(doc.listingRulesAuditTail || [])
+    ].slice(0, 20);
+  }
+
   await doc.save();
   clearCommissionCache();
-  res.json({ ok: true, settings: { commissionPercent: doc.commissionPercent, momoEnabled: doc.momoEnabled, stripeEnabled: doc.stripeEnabled, bankEnabled: doc.bankEnabled, listingPolicyNote: doc.listingPolicyNote } });
+  const parts: string[] = [];
+  if (body.commissionPercent !== undefined) parts.push(`commission ${body.commissionPercent}%`);
+  if (body.momoEnabled !== undefined) parts.push(`momo ${body.momoEnabled ? "on" : "off"}`);
+  if (body.stripeEnabled !== undefined) parts.push(`card ${body.stripeEnabled ? "on" : "off"}`);
+  if (body.bankEnabled !== undefined) parts.push(`bank ${body.bankEnabled ? "on" : "off"}`);
+  if (body.listingPolicyNote !== undefined) parts.push("listing policy note updated");
+  if (listingRulesTouched) parts.push(`listing rules v${doc.listingRulesVersion}`);
+  if (body.siteName !== undefined) parts.push(`site name “${body.siteName.trim().slice(0, 40)}”`);
+  if (body.siteDescription !== undefined) parts.push("site description updated");
+  if (body.supportEmail !== undefined) parts.push(body.supportEmail ? "support email set" : "support email cleared");
+  if (body.maintenanceMode !== undefined) parts.push(`maintenance ${body.maintenanceMode ? "on" : "off"}`);
+  if (body.maintenanceMessage !== undefined) parts.push("maintenance message updated");
+  if (body.allowPublicRegistration !== undefined) parts.push(`signup ${body.allowPublicRegistration ? "open" : "closed"}`);
+  if (body.allowVendorApplications !== undefined) parts.push(`vendor apps ${body.allowVendorApplications ? "open" : "closed"}`);
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "settings.platform",
+    title: "Platform settings saved",
+    detail: parts.join(" · ") || "—"
+  });
+  res.json({ ok: true, settings: serializePlatformSettingsDoc(doc) });
+});
+
+export const postAdminSettingsEmailTest = asyncHandler(async (req: Request, res: Response) => {
+  const { to, subject: subjectRaw, bodyText: bodyRaw } = adminEmailTestSchema.parse(req.body);
+  const diag = getEmailTransportDiagnostics();
+  if (!diag.configured) {
+    const missing =
+      diag.missingVariables.length > 0
+        ? `Missing or empty environment variables: ${diag.missingVariables.join(", ")}. `
+        : "";
+    const hint = diag.hints.length > 0 ? diag.hints.join(" ") : "Edit backend/.env and restart the API.";
+    throw new HttpError(400, `${missing}${hint}`.trim());
+  }
+  const doc = await getOrCreateSettings();
+  const siteName = ((doc.siteName || "Campus Mart").trim() || "Campus Mart").slice(0, 120);
+  const subjectIn = (subjectRaw || "").trim();
+  const bodyIn = (bodyRaw || "").trim();
+  const subject = subjectIn || `${siteName} — outbound mail verification`;
+  const sentAt = new Date().toISOString();
+  const html = bodyIn
+    ? plainTextToEmailHtml(bodyIn)
+    : `<p>This message confirms that <strong>${escapeHtmlEmail(siteName)}</strong> can deliver email from your configured server.</p>
+<p>It was sent from the administrator mail tools. Recipients do not need to take any action.</p>
+<p style="color:#64748b;font-size:12px;margin-top:1.25em">${escapeHtmlEmail(sentAt)}</p>`;
+
+  const safeTo = to.trim().toLowerCase();
+  try {
+    await sendEmail(safeTo, subject.slice(0, 200), html, { category: "admin_outbound" });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Send failed";
+    throw new HttpError(
+      502,
+      `Mail server rejected or failed the send: ${msg}. Check your SMTP/Gmail credentials and that EMAIL_FROM is allowed by your provider.`
+    );
+  }
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "settings.outbound_mail",
+    title: "Sent email from admin",
+    detail: `to ${safeTo} · ${subject.slice(0, 120)}`
+  });
+  res.json({
+    ok: true,
+    sentAt,
+    to: safeTo,
+    subject,
+    message: `Your message was accepted for delivery to ${safeTo}. It may take a few minutes to arrive; check spam or your provider’s logs if it does not show up.`
+  });
+});
+
+export const listAdminEmailLogs = asyncHandler(async (req: Request, res: Response) => {
+  const q = adminEmailLogsQuerySchema.parse(req.query);
+  const skip = (q.page - 1) * q.limit;
+  const [rows, total] = await Promise.all([
+    EmailLog.find().sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
+    EmailLog.countDocuments()
+  ]);
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.json({
+    logs: rows.map((r) => ({
+      id: (r as { _id: mongoose.Types.ObjectId })._id.toString(),
+      to: r.to,
+      subject: r.subject,
+      category: r.category,
+      status: r.status,
+      errorMessage: r.errorMessage || "",
+      createdAt: (r as { createdAt: Date }).createdAt
+    })),
+    total,
+    page: q.page,
+    limit: q.limit
+  });
 });
 
 export const listAdminReports = asyncHandler(async (req: Request, res: Response) => {
@@ -370,45 +855,179 @@ export const listAdminReports = asyncHandler(async (req: Request, res: Response)
   if (q.status && q.status !== "all") {
     filter.status = q.status;
   }
+  if (q.priority && q.priority !== "all") {
+    filter.priority = q.priority;
+  }
   if (q.search) {
     const re = new RegExp(escapeRegex(q.search), "i");
     filter.$or = [{ description: re }, { adminNote: re }, { targetId: re }];
   }
   const skip = (q.page - 1) * q.limit;
-  const [rows, total] = await Promise.all([
+  const [rows, total, statusCounts] = await Promise.all([
     Report.find(filter).sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
-    Report.countDocuments(filter)
+    Report.countDocuments(filter),
+    Report.aggregate<{ _id: string; n: number }>([
+      { $group: { _id: "$status", n: { $sum: 1 } } }
+    ])
   ]);
-  const ids = [
-    ...new Set(rows.map((r) => r.reporterId.toString()).filter(Boolean)),
-    ...new Set(
-      rows
-        .map((r) => r.resolvedById?.toString())
-        .filter((x): x is string => Boolean(x))
-    )
-  ];
-  const users = await User.find({ _id: { $in: ids.map((x) => new mongoose.Types.ObjectId(x)) } })
-    .select("email displayName")
-    .lean();
-  const umap = new Map(users.map((u) => [u._id.toString(), ((u as { displayName?: string; email?: string }).displayName || "").trim() || (u as { email?: string }).email || "—"]));
+
+  /** Pre-fetch reporter, target users, target orders, target products. */
+  const userIds = new Set<string>();
+  for (const r of rows) {
+    if (r.reporterId) userIds.add(r.reporterId.toString());
+    if (r.resolvedById) userIds.add(r.resolvedById.toString());
+    if (r.targetType === "user" && r.targetId && mongoose.isValidObjectId(r.targetId)) {
+      userIds.add(r.targetId);
+    }
+  }
+  const orderIds = rows
+    .filter((r) => r.targetType === "order" && r.targetId && mongoose.isValidObjectId(r.targetId))
+    .map((r) => r.targetId as string);
+  const productIds = rows
+    .filter((r) => r.targetType === "product" && r.targetId && mongoose.isValidObjectId(r.targetId))
+    .map((r) => r.targetId as string);
+
+  const [users, orders, products] = await Promise.all([
+    User.find({ _id: { $in: Array.from(userIds).map((x) => new mongoose.Types.ObjectId(x)) } })
+      .select("email displayName role profileImageUrl businessName")
+      .lean(),
+    orderIds.length
+      ? Order.find({ _id: { $in: orderIds.map((x) => new mongoose.Types.ObjectId(x)) } })
+          .select("items total currency createdAt buyerId")
+          .lean()
+      : Promise.resolve([] as Awaited<ReturnType<typeof Order.find>>),
+    productIds.length
+      ? Product.find({ _id: { $in: productIds.map((x) => new mongoose.Types.ObjectId(x)) } })
+          .select("name imageUrls images sellerId price")
+          .lean()
+      : Promise.resolve([] as Awaited<ReturnType<typeof Product.find>>)
+  ]);
+
+  type UserSummary = {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    avatarUrl: string;
+    businessName: string;
+  };
+  const toUserSummary = (u: {
+    _id: mongoose.Types.ObjectId;
+    email?: string;
+    displayName?: string;
+    role?: string;
+    profileImageUrl?: string;
+    businessName?: string;
+  }): UserSummary => ({
+    id: u._id.toString(),
+    name: (u.displayName || "").trim() || u.email || "—",
+    email: (u.email || "").trim(),
+    role: (u.role || "buyer") as string,
+    avatarUrl: (u.profileImageUrl || "").trim(),
+    businessName: (u.businessName || "").trim()
+  });
+  const umap = new Map<string, UserSummary>();
+  for (const u of users) {
+    umap.set((u as { _id: mongoose.Types.ObjectId })._id.toString(), toUserSummary(u as Parameters<typeof toUserSummary>[0]));
+  }
+  const omap = new Map<string, (typeof orders)[number]>();
+  for (const o of orders) omap.set((o as { _id: mongoose.Types.ObjectId })._id.toString(), o);
+  const pmap = new Map<string, (typeof products)[number]>();
+  for (const p of products) pmap.set((p as { _id: mongoose.Types.ObjectId })._id.toString(), p);
+
+  /** From any product doc, return a single absolute-or-relative URL to use as a thumbnail. */
+  const productThumb = (p: { imageUrls?: string[]; images?: Array<string | { url?: string }> }) => {
+    if (Array.isArray(p.imageUrls) && p.imageUrls.length) return p.imageUrls[0];
+    const first = Array.isArray(p.images) && p.images.length ? p.images[0] : null;
+    if (!first) return "";
+    return typeof first === "object" ? first.url || "" : String(first);
+  };
+
+  const counts = {
+    all: 0,
+    open: 0,
+    in_review: 0,
+    resolved: 0,
+    dismissed: 0
+  } as Record<string, number>;
+  for (const c of statusCounts) {
+    counts[c._id] = c.n;
+    counts.all += c.n;
+  }
+
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({
-    reports: rows.map((r) => ({
-      id: r._id.toString(),
-      reporterId: r.reporterId.toString(),
-      reporterLabel: umap.get(r.reporterId.toString()) || "—",
-      category: r.category,
-      description: r.description,
-      targetType: r.targetType,
-      targetId: r.targetId,
-      status: r.status,
-      adminNote: r.adminNote,
-      createdAt: r.createdAt,
-      resolvedAt: r.resolvedAt,
-      resolvedById: r.resolvedById?.toString(),
-      resolvedByLabel: r.resolvedById ? umap.get(r.resolvedById.toString()) : null
-    })),
+    reports: rows.map((r) => {
+      const reporter = umap.get(r.reporterId.toString()) || null;
+      const targetUser =
+        r.targetType === "user" && r.targetId && umap.get(r.targetId) ? umap.get(r.targetId) : null;
+      let order: {
+        id: string;
+        total: number;
+        currency: string;
+        createdAt: Date;
+        productNames: string;
+        firstThumb: string;
+        buyerId: string;
+      } | null = null;
+      let orderBuyer: UserSummary | null = null;
+      if (r.targetType === "order" && r.targetId && omap.has(r.targetId)) {
+        const o = omap.get(r.targetId)!;
+        const items = (o as { items?: Array<{ name?: string; image?: string; imageUrl?: string }> }).items || [];
+        order = {
+          id: (o as { _id: mongoose.Types.ObjectId })._id.toString(),
+          total: (o as { total?: number }).total || 0,
+          currency: (o as { currency?: string }).currency || "GHS",
+          createdAt: (o as { createdAt: Date }).createdAt,
+          productNames: items.map((it) => it.name || "").filter(Boolean).join(", "),
+          firstThumb: items[0]?.image || items[0]?.imageUrl || "",
+          buyerId: ((o as { buyerId?: mongoose.Types.ObjectId }).buyerId || "").toString()
+        };
+        if (order.buyerId && umap.has(order.buyerId)) orderBuyer = umap.get(order.buyerId)!;
+      }
+      let product: { id: string; name: string; thumb: string; sellerId: string; price: number } | null = null;
+      let productSeller: UserSummary | null = null;
+      if (r.targetType === "product" && r.targetId && pmap.has(r.targetId)) {
+        const p = pmap.get(r.targetId)!;
+        const sellerId = ((p as { sellerId?: mongoose.Types.ObjectId }).sellerId || "").toString();
+        product = {
+          id: (p as { _id: mongoose.Types.ObjectId })._id.toString(),
+          name: (p as { name?: string }).name || "",
+          thumb: productThumb(p as Parameters<typeof productThumb>[0]),
+          sellerId,
+          price: (p as { price?: number }).price || 0
+        };
+        if (sellerId && umap.has(sellerId)) productSeller = umap.get(sellerId)!;
+      }
+      return {
+        id: r._id.toString(),
+        reporterId: r.reporterId.toString(),
+        reporterLabel: reporter?.name || "—",
+        reporter,
+        targetUser,
+        order,
+        orderBuyer,
+        product,
+        productSeller,
+        category: r.category,
+        description: r.description,
+        targetType: r.targetType,
+        targetId: r.targetId,
+        status: r.status,
+        priority: r.priority || "medium",
+        adminNote: r.adminNote,
+        evidenceUrls: Array.isArray((r as { evidenceUrls?: string[] }).evidenceUrls)
+          ? (r as { evidenceUrls: string[] }).evidenceUrls
+          : [],
+        createdAt: r.createdAt,
+        updatedAt: (r as { updatedAt?: Date }).updatedAt || null,
+        resolvedAt: r.resolvedAt,
+        resolvedById: r.resolvedById?.toString(),
+        resolvedByLabel: r.resolvedById ? umap.get(r.resolvedById.toString())?.name || null : null
+      };
+    }),
     total,
+    counts,
     page: q.page,
     limit: q.limit
   });
@@ -420,17 +1039,36 @@ export const patchAdminReport = asyncHandler(async (req: Request, res: Response)
   const body = adminReportPatchSchema.parse(req.body);
   const r = await Report.findById(id);
   if (!r) throw new HttpError(404, "Report not found");
-  r.status = body.status;
+  if (body.status !== undefined) r.status = body.status;
+  if (body.priority !== undefined) r.priority = body.priority;
   if (body.adminNote !== undefined) r.adminNote = body.adminNote;
-  if (body.status === "resolved" || body.status === "dismissed") {
+  if (r.status === "resolved" || r.status === "dismissed") {
     r.resolvedAt = new Date();
-    r.resolvedById = new mongoose.Types.ObjectId(req.user!.id);
+    const adminId = req.user?.id;
+    if (adminId && mongoose.isValidObjectId(adminId)) {
+      r.resolvedById = new mongoose.Types.ObjectId(adminId);
+    } else {
+      r.set("resolvedById", null);
+    }
   } else {
     r.resolvedAt = undefined;
     r.set("resolvedById", null);
   }
   await r.save();
-  res.json({ ok: true, report: { id: r._id.toString(), status: r.status } });
+  const bits: string[] = [];
+  if (body.status !== undefined) bits.push(`status → ${body.status}`);
+  if (body.priority !== undefined) bits.push(`priority → ${body.priority}`);
+  if (body.adminNote !== undefined) bits.push("admin note updated");
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "report.patch",
+    title: `Report ${id.slice(-8)} updated`,
+    detail: bits.join(" · ")
+  });
+  res.json({
+    ok: true,
+    report: { id: r._id.toString(), status: r.status, priority: r.priority, adminNote: r.adminNote }
+  });
 });
 
 export const getAdminRevenue = asyncHandler(async (req: Request, res: Response) => {
@@ -440,7 +1078,9 @@ export const getAdminRevenue = asyncHandler(async (req: Request, res: Response) 
   start.setUTCHours(0, 0, 0, 0);
   start.setUTCDate(start.getUTCDate() - (days - 1));
   const orders = await Order.find({ createdAt: { $gte: start }, status: { $ne: "cancelled" } })
-    .select("items createdAt total status")
+    .select(
+      "items createdAt total status refundStatus paymentMethod paystackRefundId paystackRefundRemoteStatus"
+    )
     .lean();
   const byDay = new Map<string, { platform: number; gross: number; count: number }>();
   for (let i = 0; i < days; i++) {
@@ -452,6 +1092,7 @@ export const getAdminRevenue = asyncHandler(async (req: Request, res: Response) 
   for (const o of orders) {
     const k = o.createdAt ? new Date(o.createdAt as Date).toISOString().slice(0, 10) : "";
     if (!byDay.has(k)) continue;
+    if (isOrderExcludedFromRevenueMetrics(o)) continue;
     const bucket = byDay.get(k)!;
     bucket.count += 1;
     for (const it of o.items) {
@@ -523,26 +1164,63 @@ export const getAdminConversation = asyncHandler(async (req: Request, res: Respo
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid conversation id");
   const c = await Conversation.findById(id).lean();
   if (!c) throw new HttpError(404, "Thread not found");
-  const uids = [c.buyerId, c.sellerId];
-  const users = await User.find({ _id: { $in: uids } })
-    .select("email displayName")
-    .lean();
-  const umap = new Map(users.map((u) => [u._id.toString(), { email: (u as { email?: string }).email ?? "", name: (u as { displayName?: string }).displayName ?? "" }]));
-  const msgs = (c.messages || []) as Array<{ senderId: mongoose.Types.ObjectId; senderRole: string; text: string; createdAt: Date }>;
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
-  res.json({
-    thread: {
-      id: c._id.toString(),
-      buyerId: c.buyerId.toString(),
-      sellerId: c.sellerId.toString(),
-      buyerLabel: (umap.get(c.buyerId.toString())?.name || "").trim() || umap.get(c.buyerId.toString())?.email || "—",
-      sellerLabel: (umap.get(c.sellerId.toString())?.name || "").trim() || umap.get(c.sellerId.toString())?.email || "—",
-      messages: sortMsgs(msgs)
-    }
-  });
+  res.json({ thread: await formatAdminThreadResponse(c) });
 });
 
-function sortMsgs(msgs: Array<{ createdAt: Date }>) {
+async function formatAdminThreadResponse(c: {
+  _id: mongoose.Types.ObjectId;
+  buyerId: mongoose.Types.ObjectId;
+  sellerId: mongoose.Types.ObjectId;
+  kind?: string;
+  messages?: Array<{ senderId: mongoose.Types.ObjectId; senderRole: string; text: string; createdAt: Date }>;
+}) {
+  const kind = (c.kind || "order") as string;
+  const msgs = (c.messages || []) as Array<{
+    senderId: mongoose.Types.ObjectId;
+    senderRole: string;
+    text: string;
+    createdAt: Date;
+  }>;
+  const peerIds = [c.buyerId.toString(), c.sellerId.toString()];
+  const adminSenderIds = [...new Set(msgs.filter((m) => m.senderRole === "admin").map((m) => m.senderId.toString()))];
+  const allIdStrs = [...new Set([...peerIds, ...adminSenderIds])];
+  const users = await User.find({ _id: { $in: allIdStrs.map((s) => new mongoose.Types.ObjectId(s)) } })
+    .select("email displayName")
+    .lean();
+  const umap = new Map(
+    users.map((u) => [
+      u._id.toString(),
+      { email: (u as { email?: string }).email ?? "", name: (u as { displayName?: string }).displayName ?? "" }
+    ])
+  );
+  const labelFor = (id: string) => (umap.get(id)?.name || "").trim() || umap.get(id)?.email || "—";
+  const buyerLabel = labelFor(c.buyerId.toString());
+  const sellerLabel = labelFor(c.sellerId.toString());
+  const messages = sortMsgs(msgs).map((m) => ({
+    senderId: m.senderId.toString(),
+    senderRole: m.senderRole,
+    text: m.text,
+    createdAt: m.createdAt,
+    senderLabel:
+      m.senderRole === "buyer"
+        ? buyerLabel
+        : m.senderRole === "seller"
+          ? sellerLabel
+          : (umap.get(m.senderId.toString())?.name || "").trim() || umap.get(m.senderId.toString())?.email || "Admin"
+  }));
+  return {
+    id: c._id.toString(),
+    kind,
+    buyerId: c.buyerId.toString(),
+    sellerId: c.sellerId.toString(),
+    buyerLabel,
+    sellerLabel,
+    messages
+  };
+}
+
+function sortMsgs<T extends { createdAt: Date }>(msgs: T[]): T[] {
   return [...msgs].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
@@ -573,6 +1251,7 @@ export const listAdminConversations = asyncHandler(async (req: Request, res: Res
       const last = msgs.length ? msgs.reduce((a, b) => (new Date(a.createdAt) > new Date(b.createdAt) ? a : b)) : null;
       return {
         id: c._id.toString(),
+        kind: (c as { kind?: string }).kind || "order",
         buyerId: c.buyerId.toString(),
         sellerId: c.sellerId.toString(),
         buyerLabel: (umap.get(c.buyerId.toString())?.name || "").trim() || umap.get(c.buyerId.toString())?.email || "—",
@@ -588,6 +1267,57 @@ export const listAdminConversations = asyncHandler(async (req: Request, res: Res
     page: q.page,
     limit: q.limit
   });
+});
+
+export const getAdminConversationWithUser = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = req.params;
+  if (!mongoose.isValidObjectId(userId)) throw new HttpError(400, "Invalid user id");
+  const supportId = await getPrimarySupportAdminId();
+  if (!supportId) throw new HttpError(503, "No administrator account is configured for support threads.");
+  const customerOid = new mongoose.Types.ObjectId(userId);
+  if (customerOid.equals(supportId)) throw new HttpError(400, "Invalid user");
+  const c = await Conversation.findOne({ buyerId: customerOid, sellerId: supportId, kind: "support" }).lean();
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  if (!c) {
+    res.json({ thread: null });
+    return;
+  }
+  res.json({ thread: await formatAdminThreadResponse(c) });
+});
+
+export const postAdminMessageToUser = asyncHandler(async (req: Request, res: Response) => {
+  const { userId } = req.params;
+  const { text } = conversationMessageSchema.parse(req.body);
+  if (!mongoose.isValidObjectId(userId)) throw new HttpError(400, "Invalid user id");
+  const customerOid = new mongoose.Types.ObjectId(userId);
+  const supportId = await getPrimarySupportAdminId();
+  if (!supportId) throw new HttpError(503, "No administrator account is configured for support threads.");
+  if (customerOid.equals(supportId)) throw new HttpError(400, "Invalid recipient");
+
+  let conv = await Conversation.findOne({ buyerId: customerOid, sellerId: supportId, kind: "support" });
+  if (!conv) {
+    conv = await Conversation.create({ buyerId: customerOid, sellerId: supportId, kind: "support", messages: [] });
+  }
+  conv.messages.push({
+    senderId: new mongoose.Types.ObjectId(req.user!.id),
+    senderRole: "admin",
+    text,
+    createdAt: new Date()
+  });
+  await conv.save();
+
+  const fresh = await Conversation.findById(conv._id).lean();
+  if (!fresh) throw new HttpError(500, "Could not reload thread");
+
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "conversation.support_reply",
+    title: `Support message → user …${userId.slice(-6)}`,
+    detail: text.slice(0, 200)
+  });
+
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.json({ ok: true, thread: await formatAdminThreadResponse(fresh) });
 });
 
 export const getAdminUserSummary = asyncHandler(async (req: Request, res: Response) => {
@@ -608,16 +1338,20 @@ export const getAdminUserSummary = asyncHandler(async (req: Request, res: Respon
     .select("status total createdAt")
     .lean();
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  const uRole = (u as { role: string }).role;
+  const uEmail = (u as { email?: string }).email;
+  const aLevel = adminLevelForList(uEmail, uRole);
   res.json({
     user: {
       id: u._id.toString(),
-      email: (u as { email?: string }).email ?? "",
+      email: uEmail ?? "",
       phone: publicPhoneForPaymentRole(
         normalizeUserRole((u as { role: string }).role),
         (u as { phone?: string }).phone
       ),
       displayName: (u as { displayName?: string }).displayName ?? "",
-      role: (u as { role: string }).role,
+      role: uRole,
+      ...(aLevel ? { adminLevel: aLevel } : {}),
       accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
       createdAt: u.createdAt
     },
@@ -636,6 +1370,101 @@ export const getAdminUserSummary = asyncHandler(async (req: Request, res: Respon
   });
 });
 
+async function syncPaystackRefundOnOrder(o: HydratedDocument<OrderDoc>): Promise<void> {
+  if (o.paystackRefundId == null) return;
+  const { status } = await getPaystackRefundById(o.paystackRefundId);
+  o.paystackRefundRemoteStatus = status;
+  if (isPaystackRefundRemoteSettled(status)) {
+    await applyProcessedPaystackRefundToOrder(o);
+    return;
+  }
+  if (status === "failed") {
+    o.refundStatus = "requested";
+    o.paystackRefundId = null;
+    o.paystackRefundRemoteStatus = "";
+    return;
+  }
+  o.refundStatus = "refund_processing";
+}
+
+/**
+ * Create or refresh a Paystack refund for an order. Sets `refunded` only when Paystack reports `processed`.
+ */
+export const refundAdminOrderPaystack = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  if (!env.PAYSTACK_SECRET_KEY?.trim()) throw new HttpError(503, "Paystack not configured");
+
+  const o = await Order.findById(id);
+  if (!o) throw new HttpError(404, "Order not found");
+
+  if (o.paymentMethod !== "paystack") {
+    throw new HttpError(
+      400,
+      "This action only applies to Paystack (card / mobile money) payments. For other methods, refund the buyer outside the app."
+    );
+  }
+  if (!PAID_LIKE.includes(o.status as (typeof PAID_LIKE)[number])) {
+    throw new HttpError(400, "Only paid or in‑fulfillment orders can be refunded online.");
+  }
+  if (o.refundStatus === "refunded") {
+    if (
+      o.paymentMethod === "paystack" &&
+      (!isPaystackRefundRemoteSettled(o.paystackRefundRemoteStatus || "") || o.paystackRefundId == null)
+    ) {
+      if (o.paystackRefundId != null) {
+        await syncPaystackRefundOnOrder(o);
+      } else {
+        o.refundStatus = "requested";
+        o.paystackRefundRemoteStatus = "";
+      }
+      await o.save();
+      const [fixed] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+      return res.json({
+        order: fixed,
+        refundMessage:
+          "This order was stored as refunded before Paystack confirmed funds — status was corrected. Use Refund buyer again to start or refresh the Paystack refund."
+      });
+    }
+    const [already] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+    return res.json({
+      order: already,
+      refundMessage: "Already fully refunded (Paystack reports processed)."
+    });
+  }
+
+  const ref = (o.paystackReference || o.paymentReference || "").trim();
+  if (!ref) throw new HttpError(400, "No Paystack transaction reference on this order.");
+
+  if (o.paystackRefundId != null) {
+    await syncPaystackRefundOnOrder(o);
+  } else {
+    const created = await createPaystackRefund(ref, {
+      currency: (o.currency || "GHS").toString().toUpperCase()
+    });
+    o.paystackRefundId = created.id;
+    o.paystackRefundRemoteStatus = created.status;
+    if (o.paystackTransactionId == null) o.paystackTransactionId = created.paystackTransactionId;
+    if (isPaystackRefundRemoteSettled(created.status)) {
+      await applyProcessedPaystackRefundToOrder(o);
+    } else {
+      o.refundStatus = "refund_processing";
+    }
+  }
+
+  await o.save();
+
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "order.refund_paystack",
+    title: `Paystack refund · order …${id.slice(-6)}`,
+    detail: `status ${o.refundStatus} · remote ${o.paystackRefundRemoteStatus || "—"} · id ${o.paystackRefundId ?? "—"}`
+  });
+
+  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+  res.json({ order: out });
+});
+
 export const resetAdminUserPassword = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid user id");
@@ -644,6 +1473,12 @@ export const resetAdminUserPassword = asyncHandler(async (req: Request, res: Res
   if (!u) throw new HttpError(404, "User not found");
   u.passwordHash = await bcrypt.hash(newPassword, BCRYPT_SALT);
   await u.save();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "user.password_reset",
+    title: "Password reset by admin",
+    detail: ((u as { email?: string }).email || "").trim().slice(0, 120) || id
+  });
   res.json({ ok: true });
 });
 
@@ -656,8 +1491,36 @@ export const patchAdminOrder = asyncHandler(async (req: Request, res: Response) 
   if (body.status !== undefined) o.status = body.status;
   if (body.disputeOpen !== undefined) (o as { disputeOpen: boolean }).disputeOpen = body.disputeOpen;
   if (body.adminNote !== undefined) (o as { adminNote: string }).adminNote = body.adminNote;
-  if (body.refundStatus !== undefined) (o as { refundStatus: string }).refundStatus = body.refundStatus;
+  if (body.refundStatus !== undefined) {
+    if (body.refundStatus !== "none" && body.refundStatus !== "requested") {
+      throw new HttpError(
+        400,
+        "Only “none” or “requested” can be set here. Use Refund via Paystack to return money for online payments."
+      );
+    }
+    if (o.refundStatus === "refunded") {
+      throw new HttpError(400, "This order is already fully refunded; do not change the tracking flags here.");
+    }
+    if (o.refundStatus === "refund_processing" && body.refundStatus === "none") {
+      throw new HttpError(
+        400,
+        "A Paystack refund is still in progress. Wait for Paystack to finish or fail before clearing the request."
+      );
+    }
+    (o as { refundStatus: string }).refundStatus = body.refundStatus;
+  }
   await o.save();
+  const bits: string[] = [];
+  if (body.status !== undefined) bits.push(`status → ${body.status}`);
+  if (body.disputeOpen !== undefined) bits.push(`dispute → ${body.disputeOpen}`);
+  if (body.refundStatus !== undefined) bits.push(`refund → ${body.refundStatus}`);
+  if (body.adminNote !== undefined) bits.push("note updated");
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "order.patch",
+    title: `Order ${id.slice(-8)} updated`,
+    detail: bits.join(" · ")
+  });
   const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
   res.json({ order: out });
 });
@@ -676,6 +1539,12 @@ export const patchAdminProduct = asyncHandler(async (req: Request, res: Response
   if (body.status !== undefined) p.status = body.status;
   if (body.flagged !== undefined) (p as { flagged: boolean }).flagged = body.flagged;
   await p.save();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "product.patch",
+    title: `Listing edited (admin) — ${p.name.slice(0, 80)}`,
+    detail: id
+  });
   res.json({ ok: true, product: { id: p._id.toString(), name: p.name, status: p.status, flagged: (p as { flagged?: boolean }).flagged } });
 });
 
@@ -684,6 +1553,291 @@ export const deleteAdminProduct = asyncHandler(async (req: Request, res: Respons
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid product id");
   const p = await Product.findById(id);
   if (!p) throw new HttpError(404, "Product not found");
+  const name = p.name;
+  await Review.deleteMany({ productId: p._id });
   await p.deleteOne();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "delete.product",
+    title: `Listing deleted — ${name.slice(0, 80)}`,
+    detail: id
+  });
   res.status(204).send();
+});
+
+/**
+ * Hard-delete a report. Use to clean up resolved/dismissed cases the team no longer needs.
+ * No status restriction — admins should be trusted to scrub stale reports — but the modal
+ * confirms before sending the request.
+ */
+export const deleteAdminReport = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid report id");
+  const r = await Report.findById(id);
+  if (!r) throw new HttpError(404, "Report not found");
+  await r.deleteOne();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "delete.report",
+    title: "Report deleted",
+    detail: id
+  });
+  res.status(204).send();
+});
+
+/**
+ * Hard-delete an order. Restricted to `cancelled` orders so paid/processing/delivered records
+ * remain intact for audit, refunds, and seller payouts. Admin uses this to clear abandoned carts.
+ */
+export const deleteAdminOrder = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  const o = await Order.findById(id);
+  if (!o) throw new HttpError(404, "Order not found");
+  if (o.status !== "cancelled") {
+    throw new HttpError(
+      400,
+      "Only cancelled orders can be deleted. Cancel the order first or keep it for audit."
+    );
+  }
+  await o.deleteOne();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "delete.order",
+    title: "Cancelled order deleted",
+    detail: id
+  });
+  res.status(204).send();
+});
+
+/**
+ * Hard-delete a vendor application. Restricted to `approved` or `rejected` records so we never
+ * silently drop a pending application without a decision.
+ */
+export const deleteAdminVendorApplication = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid application id");
+  const app = await VendorApplication.findById(id);
+  if (!app) throw new HttpError(404, "Application not found");
+  if (app.status === "pending") {
+    throw new HttpError(
+      400,
+      "Approve or reject this application first — pending records cannot be deleted."
+    );
+  }
+  const shopName = app.shopName;
+  await app.deleteOne();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "delete.vendorApplication",
+    title: `Vendor application removed — ${shopName.slice(0, 60)}`,
+    detail: id
+  });
+  res.status(204).send();
+});
+
+/**
+ * Hard-delete a user and cascade their owned data:
+ *   - Tokens, vendor apps, vendor analytics events
+ *   - Their products and the reviews on those products (if seller)
+ * Refuses for admins, and for any user with active orders (buyer or seller side) — those must
+ * be resolved first to avoid orphaning live commerce.
+ */
+export const deleteAdminUser = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid user id");
+  const u = await User.findById(id);
+  if (!u) throw new HttpError(404, "User not found");
+  const deletedEmail = ((u as { email?: string }).email || "").trim();
+  const deletedRole = normalizeUserRole(u.role);
+  if (normalizeUserRole(u.role) === "admin") {
+    throw new HttpError(403, "Admin accounts cannot be deleted from this panel.");
+  }
+  if (req.user?.id === id) {
+    throw new HttpError(400, "Use Account → Delete to remove your own account.");
+  }
+
+  const ACTIVE = ["pending_payment", "awaiting_vendor_payment", "paid", "processing", "delivered"] as const;
+  const uidObj = u._id;
+
+  if (normalizeUserRole(u.role) === "buyer") {
+    const active = await Order.countDocuments({ buyerId: uidObj, status: { $in: [...ACTIVE] } });
+    if (active > 0) {
+      throw new HttpError(
+        409,
+        `User has ${active} active order${active === 1 ? "" : "s"}. Cancel or complete them first.`
+      );
+    }
+  } else if (normalizeUserRole(u.role) === "seller") {
+    const active = await Order.countDocuments({ "items.sellerId": uidObj, status: { $in: [...ACTIVE] } });
+    if (active > 0) {
+      throw new HttpError(
+        409,
+        `Seller has ${active} active sales order${active === 1 ? "" : "s"}. Cancel or complete them first.`
+      );
+    }
+    const sellerProductIds = await Product.find({ sellerId: uidObj }).distinct("_id");
+    if (sellerProductIds.length > 0) {
+      await Review.deleteMany({ productId: { $in: sellerProductIds } });
+    }
+    await VendorAnalyticsEvent.deleteMany({ sellerId: uidObj });
+    await Product.deleteMany({ sellerId: uidObj });
+  }
+
+  await VendorApplication.deleteMany({ userId: uidObj });
+  await Token.deleteMany({ userId: uidObj });
+  await u.deleteOne();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "delete.user",
+    title: `User deleted — ${deletedEmail || id}`,
+    detail: deletedRole
+  });
+  res.status(204).send();
+});
+
+/**
+ * Bulk cleanup: delete all cancelled orders older than `?days=N` (default 30) and all
+ * resolved/dismissed reports older than the same window. Returns a count of removed rows so
+ * the admin gets feedback on how much DB pressure was relieved.
+ */
+export const adminBulkCleanup = asyncHandler(async (req: Request, res: Response) => {
+  const daysRaw = typeof req.query.days === "string" ? Number.parseInt(req.query.days, 10) : 30;
+  const days = Number.isFinite(daysRaw) && daysRaw >= 1 ? daysRaw : 30;
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const [orders, reports, apps] = await Promise.all([
+    Order.deleteMany({ status: "cancelled", updatedAt: { $lt: cutoff } }),
+    Report.deleteMany({ status: { $in: ["resolved", "dismissed"] }, updatedAt: { $lt: cutoff } }),
+    VendorApplication.deleteMany({ status: { $in: ["approved", "rejected"] }, updatedAt: { $lt: cutoff } })
+  ]);
+
+  const payload = {
+    ok: true,
+    days,
+    cutoff: cutoff.toISOString(),
+    deleted: {
+      cancelledOrders: orders.deletedCount || 0,
+      closedReports: reports.deletedCount || 0,
+      reviewedVendorApps: apps.deletedCount || 0
+    }
+  };
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "system.cleanup",
+    title: `Bulk cleanup (${days}d)`,
+    detail: `orders ${payload.deleted.cancelledOrders} · reports ${payload.deleted.closedReports} · apps ${payload.deleted.reviewedVendorApps}`
+  });
+  res.json(payload);
+});
+
+export const listVendorApplications = asyncHandler(async (req: Request, res: Response) => {
+  const q = adminVendorApplicationsQuerySchema.parse(req.query);
+  const filter: Record<string, unknown> = {};
+  if (q.status !== "all") filter.status = q.status;
+  if (q.search) {
+    const re = new RegExp(escapeRegex(q.search), "i");
+    filter.$or = [
+      { shopName: re },
+      { fullName: re },
+      { email: re },
+      { nearbyArea: re },
+      { sellsDescription: re }
+    ];
+  }
+  const skip = (q.page - 1) * q.limit;
+  const [rows, total] = await Promise.all([
+    VendorApplication.find(filter).sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
+    VendorApplication.countDocuments(filter)
+  ]);
+  const userIds = [...new Set(rows.map((r) => r.userId.toString()))];
+  const users = await User.find({ _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+    .select("displayName email")
+    .lean();
+  const byId = new Map(users.map((u) => [u._id.toString(), u]));
+  res.json({
+    applications: rows.map((r) => ({
+      id: r._id.toString(),
+      userId: r.userId.toString(),
+      fullName: r.fullName,
+      email: r.email,
+      shopName: r.shopName,
+      category: r.category,
+      sellsDescription: r.sellsDescription,
+      phone: r.phone,
+      altPhone: r.altPhone,
+      shopDescription: r.shopDescription,
+      verificationDocUrl: r.verificationDocUrl,
+      locationBase: r.locationBase,
+      nearbyArea: r.nearbyArea,
+      status: r.status,
+      adminNote: r.adminNote,
+      createdAt: r.createdAt,
+      reviewedAt: r.reviewedAt,
+      accountDisplayName: byId.get(r.userId.toString())?.displayName || ""
+    })),
+    total,
+    page: q.page,
+    limit: q.limit
+  });
+});
+
+export const patchAdminVendorApplication = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid application id");
+  const body = patchVendorApplicationSchema.parse(req.body);
+  const app = await VendorApplication.findById(id);
+  if (!app) throw new HttpError(404, "Application not found");
+  if (app.status !== "pending") throw new HttpError(400, "Only pending applications can be reviewed.");
+
+  const applicant = await User.findById(app.userId);
+  if (!applicant) throw new HttpError(404, "Applicant not found");
+
+  if (body.action === "reject") {
+    app.status = "rejected";
+    app.adminNote = body.adminNote;
+    app.reviewedAt = new Date();
+    await app.save();
+    await User.updateOne({ _id: app.userId }, { $set: { vendorStatus: "rejected" } });
+    await recordAdminAuditEvent({
+      actorId: req.user?.id,
+      action: "application.reject",
+      title: `Vendor rejected — ${app.shopName.slice(0, 60)}`,
+      detail: (body.adminNote || "").slice(0, 500)
+    });
+    res.json({ ok: true, status: "rejected" });
+    return;
+  }
+
+  if (normalizeUserRole(applicant.role) !== "buyer") {
+    throw new HttpError(400, "Applicant is not a shopper account; cannot approve.");
+  }
+
+  app.status = "approved";
+  app.adminNote = body.adminNote || "";
+  app.reviewedAt = new Date();
+  await app.save();
+
+  const displayName = (applicant.displayName || "").trim() || app.fullName;
+  await User.updateOne(
+    { _id: app.userId },
+    {
+      $set: {
+        role: "seller",
+        sellerVerified: true,
+        vendorStatus: "approved",
+        businessName: app.shopName,
+        phone: app.phone,
+        displayName
+      }
+    }
+  );
+
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "application.approve",
+    title: `Vendor approved — ${app.shopName.slice(0, 60)}`,
+    detail: app.email
+  });
+  res.json({ ok: true, status: "approved" });
 });

@@ -5,6 +5,7 @@ import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
 import { Order } from "../orders/order.model";
 import { Conversation } from "./conversation.model";
+import { getPrimarySupportAdminId } from "./supportPeer";
 
 function resolveMsgInbox(
   accountRole: "buyer" | "seller" | "admin",
@@ -26,7 +27,7 @@ type LeanOrder = {
 
 type MsgRow = {
   senderId: mongoose.Types.ObjectId;
-  senderRole: "buyer" | "seller";
+  senderRole: "buyer" | "seller" | "admin";
   text: string;
   createdAt: Date;
 };
@@ -76,8 +77,16 @@ function latestOrderSnippetForPair(orders: LeanOrder[], buyerId: string, sellerI
   return { itemSummary, touch };
 }
 
-/** One thread per (buyerId, sellerId): all orders between that pair share the same messages. */
+/** One thread per (buyerId, sellerId) for orders; support row uses `isSupport`. */
 export const listConversations = asyncHandler(async (req: Request, res: Response) => {
+  type ThreadRow = {
+    peerUserId: string;
+    peerDisplayName: string;
+    itemSummary: string;
+    updatedAt: Date;
+    messages: Array<{ senderRole: "buyer" | "seller" | "admin"; text: string; createdAt: Date; senderLabel: string }>;
+    isSupport?: boolean;
+  };
   const accountRole = req.user!.role;
   if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
     throw new HttpError(403, "Messages are only available for buyer or seller accounts");
@@ -100,10 +109,10 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
     }
     const sidList = [...sellerIds].map((s) => new mongoose.Types.ObjectId(s));
     const names = await displayNameMap(sidList);
-    const convs = await Conversation.find({ buyerId: uid, sellerId: { $in: sidList } }).lean();
+    const convs = await Conversation.find({ buyerId: uid, sellerId: { $in: sidList }, kind: "order" }).lean();
     const convBySeller = new Map(convs.map((c) => [c.sellerId.toString(), c]));
 
-    const threads = sidList.map((sellerId) => {
+    const threads: ThreadRow[] = sidList.map((sellerId) => {
       const sid = sellerId.toString();
       const conv = convBySeller.get(sid);
       const { itemSummary, touch } = latestOrderSnippetForPair(orders, uid.toString(), sid);
@@ -126,8 +135,31 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
       };
     });
     threads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+    const supportIdForBuyer = await getPrimarySupportAdminId();
+    const buyerThreads: ThreadRow[] = [...threads];
+    if (supportIdForBuyer && !supportIdForBuyer.equals(uid)) {
+      const sconv = await Conversation.findOne({ buyerId: uid, sellerId: supportIdForBuyer, kind: "support" }).lean();
+      const rawS = sortMessagesAsc((sconv?.messages as MsgRow[]) || []);
+      const sMessages = rawS.map((m) => ({
+        senderRole: m.senderRole,
+        text: m.text,
+        createdAt: m.createdAt,
+        senderLabel: m.senderRole === "buyer" ? "You" : "Support"
+      }));
+      const convTouchS = sconv?.updatedAt ? new Date(sconv.updatedAt).getTime() : 0;
+      buyerThreads.unshift({
+        peerUserId: supportIdForBuyer.toString(),
+        peerDisplayName: "CampusMart Support",
+        itemSummary: "Account help, orders, safety",
+        updatedAt: new Date(convTouchS || 0),
+        messages: sMessages,
+        isSupport: true
+      });
+    }
+
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
-    return res.json({ threads });
+    return res.json({ threads: buyerThreads });
   }
 
   /** seller */
@@ -143,10 +175,10 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
   }
   const bidList = [...buyerIds].map((s) => new mongoose.Types.ObjectId(s));
   const names = await displayNameMap(bidList);
-  const convs = await Conversation.find({ sellerId: uid, buyerId: { $in: bidList } }).lean();
+  const convs = await Conversation.find({ sellerId: uid, buyerId: { $in: bidList }, kind: "order" }).lean();
   const convByBuyer = new Map(convs.map((c) => [c.buyerId.toString(), c]));
 
-  const threads = bidList.map((buyerId) => {
+  const threads: ThreadRow[] = bidList.map((buyerId) => {
     const bid = buyerId.toString();
     const conv = convByBuyer.get(bid);
     const { itemSummary, touch } = latestOrderSnippetForPair(orders, bid, uid.toString());
@@ -169,8 +201,31 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
     };
   });
   threads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  const supportIdForSeller = await getPrimarySupportAdminId();
+  const sellerThreads: ThreadRow[] = [...threads];
+  if (supportIdForSeller && !supportIdForSeller.equals(uid)) {
+    const sconv = await Conversation.findOne({ buyerId: uid, sellerId: supportIdForSeller, kind: "support" }).lean();
+    const rawS = sortMessagesAsc((sconv?.messages as MsgRow[]) || []);
+    const sMessages = rawS.map((m) => ({
+      senderRole: m.senderRole,
+      text: m.text,
+      createdAt: m.createdAt,
+      senderLabel: m.senderRole === "buyer" ? "You" : "Support"
+    }));
+    const convTouchS = sconv?.updatedAt ? new Date(sconv.updatedAt).getTime() : 0;
+    sellerThreads.unshift({
+      peerUserId: supportIdForSeller.toString(),
+      peerDisplayName: "CampusMart Support",
+      itemSummary: "Account help, payouts, safety",
+      updatedAt: new Date(convTouchS || 0),
+      messages: sMessages,
+      isSupport: true
+    });
+  }
+
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
-  res.json({ threads });
+  res.json({ threads: sellerThreads });
 });
 
 export const addMessageByPeer = asyncHandler(async (req: Request, res: Response) => {
@@ -185,6 +240,38 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
   const peerOid = new mongoose.Types.ObjectId(peerUserId);
   const myOid = new mongoose.Types.ObjectId(req.user!.id);
   if (peerOid.equals(myOid)) throw new HttpError(400, "Invalid peer");
+
+  const supportId = await getPrimarySupportAdminId();
+
+  if (supportId && peerOid.equals(supportId)) {
+    const buyerId = myOid;
+    const sellerId = supportId;
+    let conv = await Conversation.findOne({ buyerId, sellerId, kind: "support" });
+    if (!conv) conv = await Conversation.create({ buyerId, sellerId, kind: "support", messages: [] });
+    conv.messages.push({
+      senderId: myOid,
+      senderRole: "buyer",
+      text: String(text).trim(),
+      createdAt: new Date()
+    });
+    await conv.save();
+    const raw = sortMessagesAsc(conv.messages as MsgRow[]);
+    const messages = raw.map((m) => ({
+      senderRole: m.senderRole,
+      text: m.text,
+      createdAt: m.createdAt,
+      senderLabel: m.senderRole === "buyer" ? "You" : "Support"
+    }));
+    res.json({
+      conversation: {
+        peerUserId: supportId.toString(),
+        peerDisplayName: "CampusMart Support",
+        updatedAt: conv.updatedAt,
+        messages
+      }
+    });
+    return;
+  }
 
   let buyerId: mongoose.Types.ObjectId;
   let sellerId: mongoose.Types.ObjectId;
@@ -203,9 +290,9 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
     throw new HttpError(403, "You can only message people you share an active order with");
   }
 
-  let conv = await Conversation.findOne({ buyerId, sellerId });
+  let conv = await Conversation.findOne({ buyerId, sellerId, kind: "order" });
   if (!conv) {
-    conv = await Conversation.create({ buyerId, sellerId, messages: [] });
+    conv = await Conversation.create({ buyerId, sellerId, kind: "order", messages: [] });
   }
   conv.messages.push({
     senderId: myOid,
@@ -244,4 +331,15 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
       messages
     }
   });
+});
+
+export const getSupportPeer = asyncHandler(async (req: Request, res: Response) => {
+  const role = req.user!.role;
+  if (role !== "buyer" && role !== "seller") {
+    throw new HttpError(403, "Support messaging is only for buyers and sellers.");
+  }
+  const id = await getPrimarySupportAdminId();
+  if (!id) throw new HttpError(503, "Support is not available yet. Configure an admin account.");
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.json({ supportUserId: id.toString(), label: "CampusMart Support" });
 });

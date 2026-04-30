@@ -3,7 +3,8 @@ import mongoose from "mongoose";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
-import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
+import { getEffectiveCommissionPercent, getOrCreateSettings } from "../platform/platformSettings.service";
+import { resolveListingPublishOutcome } from "../platform/listingPolicyApply";
 import type { ProductDoc } from "./product.model";
 import { Product } from "./product.model";
 import { listProductsQuerySchema } from "./product.schemas";
@@ -93,7 +94,7 @@ async function attachSellerPayments(products: Record<string, unknown>[]) {
     if (!su) return base;
     return {
       ...base,
-      /** Percent of each line total (price × qty) retained by the marketplace; remainder is the seller’s share. */
+      /** Service fee rate on the seller’s list price; fees are added for the buyer at checkout (v2 orders). */
       platformCommissionPercent: commissionPercent,
       sellerPayment: {
         displayName: su.displayName ?? "",
@@ -156,11 +157,37 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   const body = { ...(req.body as Record<string, unknown>) };
   const existingTags = Array.isArray(body.tags) ? (body.tags as unknown[]).map((t) => String(t)) : [];
   body.tags = [...new Set(["new", ...existingTags])];
-  /** "Publish" from the app sends `active`; sellers can never go live without admin. */
+  /** "Publish" from the app sends `active`; policy may auto-approve, queue, flag, or reject. */
   const wantsPublish = body.status === "active";
-  const status: ProductDoc["status"] = wantsPublish ? "pending_approval" : "draft";
   delete (body as { status?: unknown }).status;
-  const p = await Product.create({ ...body, status, sellerId });
+
+  const settings = await getOrCreateSettings();
+  let status: ProductDoc["status"] = "draft";
+  let flagged = false;
+  let rejectionReason: string | null | undefined;
+
+  if (wantsPublish) {
+    const name = String((body as { name?: string }).name || "");
+    const description = String((body as { description?: string }).description || "");
+    const tags = (body.tags as string[]) || [];
+    const outcome = resolveListingPublishOutcome({
+      settings,
+      name,
+      description,
+      tags,
+      beforeStatus: "draft",
+      modTouched: true
+    });
+    status = outcome.status;
+    flagged = outcome.flagged;
+    rejectionReason = outcome.rejectionReason ?? undefined;
+  }
+
+  const createPayload: Record<string, unknown> = { ...body, status, sellerId };
+  if (flagged) createPayload.flagged = true;
+  if (rejectionReason) createPayload.rejectionReason = rejectionReason;
+
+  const p = await Product.create(createPayload);
   const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>]);
   res.status(201).json({ product: out });
 });
@@ -176,25 +203,47 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   const beforeDoc = p.toObject() as ProductDoc;
   const body = req.body as Record<string, unknown>;
   const modTouched = sellerModerationTouched(beforeDoc, body);
+  const settings = await getOrCreateSettings();
 
   for (const key of SELLER_UPDATE_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
     (p as unknown as Record<string, unknown>)[key] = body[key as SellerUpdateKey];
   }
 
+  const applyOutcome = (outcome: ReturnType<typeof resolveListingPublishOutcome>) => {
+    p.status = outcome.status;
+    p.flagged = outcome.flagged;
+    if (outcome.rejectionReason) p.rejectionReason = outcome.rejectionReason;
+    else if (outcome.status !== "rejected") p.set("rejectionReason", null);
+  };
+
   if (Object.prototype.hasOwnProperty.call(body, "status")) {
     const st = body.status as string;
     if (st === "draft") {
       p.status = "draft";
+      p.flagged = false;
+      p.set("rejectionReason", null);
     } else if (st === "active") {
-      // Sellers cannot set "active" on their own: only "keep live" (no change) or (re)submit for review.
-      p.status = beforeStatus === "active" && !modTouched ? "active" : "pending_approval";
+      const outcome = resolveListingPublishOutcome({
+        settings,
+        name: String(p.name),
+        description: String(p.description || ""),
+        tags: (p.tags as string[]) || [],
+        beforeStatus,
+        modTouched
+      });
+      applyOutcome(outcome);
     }
   } else if (beforeStatus === "active" && modTouched) {
-    p.status = "pending_approval";
-  }
-  if (p.status !== "rejected" && p.rejectionReason) {
-    p.set("rejectionReason", null);
+    const outcome = resolveListingPublishOutcome({
+      settings,
+      name: String(p.name),
+      description: String(p.description || ""),
+      tags: (p.tags as string[]) || [],
+      beforeStatus: "active",
+      modTouched: true
+    });
+    applyOutcome(outcome);
   }
   await p.save();
   const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>]);

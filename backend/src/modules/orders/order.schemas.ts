@@ -20,6 +20,10 @@ export const orderMessageSchema = z.object({
   text: z.string().trim().min(1).max(1000)
 });
 
+export const cancelOrderSchema = z.object({
+  reason: z.string().trim().max(500).optional()
+});
+
 const phoneLike = z
   .string()
   .trim()

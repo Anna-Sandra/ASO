@@ -5,11 +5,11 @@ import { useAuth } from "./AuthContext";
 import { useNotice } from "./NoticeContext";
 import { useTheme } from "./ThemeContext";
 import { h, f } from "./h";
-import { apiFetch } from "./api";
+import { apiFetch, fetchPublicPlatformConfig } from "./api";
 import { Button, Field, GlassPanel, InlineNotice, LogoMark, OtpCodeInput, RefImage, TextInput, ThemeToggleButton } from "./ui";
 
 /** Prefer server message from `apiFetch` errors; avoid empty or generic fallbacks. */
-function apiErrorMessage(ex, fallback) {
+export function apiErrorMessage(ex, fallback) {
   const m = ex && typeof ex.message === "string" ? ex.message.trim() : "";
   if (m && m !== "Validation error") return m;
   if (ex?.status === 400) return fallback || "Check your input and try again.";
@@ -20,7 +20,14 @@ function apiErrorMessage(ex, fallback) {
 function postBuyerAuthRedirectPath(state) {
   const from = state && typeof state.from === "string" ? state.from : null;
   if (!from || !from.startsWith("/")) return "/";
-  if (from.startsWith("/login") || from.startsWith("/login-otp") || from.startsWith("/register")) return "/";
+  if (
+    from.startsWith("/login") ||
+    from.startsWith("/login-otp") ||
+    from.startsWith("/register") ||
+    from.startsWith("/admin/login")
+  ) {
+    return "/";
+  }
   if (from.startsWith("/vendor")) return "/";
   if (from.startsWith("/orders")) return "/";
   if (from === "/shop" || from.startsWith("/shop?")) return "/";
@@ -101,7 +108,11 @@ export function LoginPage() {
       if (data?.needsOtp) {
         nav("/login-otp", {
           replace: true,
-          state: { email: data.email || identifier.trim().toLowerCase(), from: location.state }
+          state: {
+            email: data.email || identifier.trim().toLowerCase(),
+            from: location.state,
+            loginOtpEmailSent: data.loginOtpEmailSent !== false
+          }
         });
         return;
       }
@@ -220,6 +231,7 @@ export function LoginOtpPage() {
   const { verifyLoginOtp } = useAuth();
   const { toast } = useNotice();
   const email = String(location.state?.email || "").trim().toLowerCase();
+  const loginOtpEmailSent = location.state?.loginOtpEmailSent !== false;
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -227,6 +239,7 @@ export function LoginOtpPage() {
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendMsg, setResendMsg] = useState("");
+  const [showResendCard, setShowResendCard] = useState(() => !loginOtpEmailSent);
 
   useEffect(() => {
     if (!email) nav("/login", { replace: true });
@@ -245,6 +258,9 @@ export function LoginOtpPage() {
       const data = await verifyLoginOtp(email, otp);
       routeAfterSession(data, { identifierFallback: email, redirectState: location.state?.from, nav, toast });
     } catch (ex) {
+      if (ex?.code === "LOGIN_OTP_EXPIRED" || ex?.data?.error?.code === "LOGIN_OTP_EXPIRED") {
+        setShowResendCard(true);
+      }
       setErr(apiErrorMessage(ex, "That code did not work. Try again or request a new code."));
     } finally {
       setLoading(false);
@@ -328,32 +344,44 @@ export function LoginOtpPage() {
                 ? h(InlineNotice, { key: "ok", variant: "success", size: "sm", onDismiss: () => setResendMsg("") }, resendMsg)
                 : null,
               h(Button, { key: "sub", type: "submit", className: "w-full", loading }, "Continue"),
-              h("div", { key: "resend", className: "rounded-2xl border border-slate-200/80 bg-white/25 p-4 dark:border-white/10 dark:bg-white/5" }, [
-                h("p", { key: "r1", className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Need a new code?"),
-                h("p", { key: "r2", className: "mt-1 text-xs text-slate-600 dark:text-slate-400" }, "Confirm your password — we will email another code."),
-                h(Field, { key: "pw", label: "Password" }, h("div", { className: "relative" }, [
-                  h(TextInput, {
-                    type: showPw ? "text" : "password",
-                    autoComplete: "current-password",
-                    value: password,
-                    onChange: (e) => setPassword(e.target.value),
-                    className: "pr-12",
-                    placeholder: "••••••••"
-                  }),
-                  h(
-                    "button",
+              !loginOtpEmailSent
+                ? h(
+                    "p",
                     {
-                      key: "eye",
-                      type: "button",
-                      className:
-                        "tap-target absolute right-1 top-1/2 -translate-y-1/2 rounded-xl p-2 text-slate-500 hover:bg-white/40 dark:text-slate-400 dark:hover:bg-white/10",
-                      onClick: () => setShowPw((s) => !s)
+                      key: "dev-mail",
+                      className: "text-xs text-amber-700 dark:text-amber-200/90"
                     },
-                    showPw ? h(EyeOff, { className: "h-5 w-5" }) : h(Eye, { className: "h-5 w-5" })
+                    "Email is not configured on this server, so you will not receive a message. Check the server log for the sign-in code, or ask an admin to set up SMTP."
                   )
-                ])),
-                h(Button, { key: "rs", type: "button", variant: "subtle", className: "mt-3 w-full", loading: resendLoading, onClick: onResend }, "Resend code")
-              ]),
+                : null,
+              showResendCard
+                ? h("div", { key: "resend", className: "rounded-2xl border border-slate-200/80 bg-white/25 p-4 dark:border-white/10 dark:bg-white/5" }, [
+                    h("p", { key: "r1", className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Need a new code?"),
+                    h("p", { key: "r2", className: "mt-1 text-xs text-slate-600 dark:text-slate-400" }, "Confirm your password — we will email another code."),
+                    h(Field, { key: "pw", label: "Password" }, h("div", { className: "relative" }, [
+                      h(TextInput, {
+                        type: showPw ? "text" : "password",
+                        autoComplete: "current-password",
+                        value: password,
+                        onChange: (e) => setPassword(e.target.value),
+                        className: "pr-12",
+                        placeholder: "••••••••"
+                      }),
+                      h(
+                        "button",
+                        {
+                          key: "eye",
+                          type: "button",
+                          className:
+                            "tap-target absolute right-1 top-1/2 -translate-y-1/2 rounded-xl p-2 text-slate-500 hover:bg-white/40 dark:text-slate-400 dark:hover:bg-white/10",
+                          onClick: () => setShowPw((s) => !s)
+                        },
+                        showPw ? h(EyeOff, { className: "h-5 w-5" }) : h(Eye, { className: "h-5 w-5" })
+                      )
+                    ])),
+                    h(Button, { key: "rs", type: "button", variant: "subtle", className: "mt-3 w-full", loading: resendLoading, onClick: onResend }, "Resend code")
+                  ])
+                : null,
               h(
                 Link,
                 { key: "back", to: "/login", className: "block text-center text-sm text-sky-600 hover:underline dark:text-sky-300" },
@@ -376,13 +404,36 @@ export function RegisterPage() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
-  const [role, setRole] = useState("buyer");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [platformCfg, setPlatformCfg] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const c = await fetchPublicPlatformConfig();
+      if (!cancelled) setPlatformCfg(c);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const regBlocked =
+    platformCfg &&
+    (platformCfg.maintenanceMode === true || platformCfg.allowPublicRegistration === false);
 
   const onSubmit = async (e) => {
     e.preventDefault();
     setErr("");
+    if (regBlocked) {
+      setErr(
+        platformCfg?.maintenanceMode
+          ? platformCfg.maintenanceMessage?.trim() || "Registration is temporarily paused."
+          : "New registrations are closed on this marketplace."
+      );
+      return;
+    }
     const trimmedName = name.trim();
     if (!trimmedName) {
       setErr("Enter your name (how you want to be shown).");
@@ -394,7 +445,6 @@ export function RegisterPage() {
       const regData = await register({
         identifier: id,
         password,
-        role,
         displayName: trimmedName,
         username: trimmedName
       });
@@ -410,7 +460,11 @@ export function RegisterPage() {
         if (data?.needsOtp) {
           nav("/login-otp", {
             replace: true,
-            state: { email: data.email || id.toLowerCase(), from: location.state }
+            state: {
+              email: data.email || id.toLowerCase(),
+              from: location.state,
+              loginOtpEmailSent: data.loginOtpEmailSent !== false
+            }
           });
           return;
         }
@@ -435,12 +489,8 @@ export function RegisterPage() {
             loginUser = { ...(loginUser || {}), displayName: trimmedName };
           }
         }
-        const nextRole = loginUser?.role || role;
-        if (nextRole === "seller") {
-          const who = buyerDisplayHandle(loginUser, id);
-          toast(`Welcome, ${who}! Your account is ready.`, { variant: "success" });
-          nav("/vendor/dashboard", { replace: true });
-        } else if (nextRole === "admin") {
+        const nextRole = loginUser?.role || "buyer";
+        if (nextRole === "admin") {
           const who = buyerDisplayHandle(loginUser, id);
           toast(`Welcome, ${who}! Your account is ready.`, { variant: "success" });
           nav("/admin", { replace: true });
@@ -490,12 +540,18 @@ export function RegisterPage() {
         h("div", { key: "topbar", className: "mb-6 flex items-center justify-between" }, [
           h(Link, { key: "home", to: "/", className: "flex items-center gap-2" }, [
             h(LogoMark, { key: "lm" }),
-            h("span", { key: "nm", className: "font-display text-xl font-semibold text-slate-900 dark:text-white" }, "Campus Mart")
+            h("span", { key: "nm", className: "font-display text-xl font-semibold text-slate-900 dark:text-white" }, platformCfg?.siteName || "Campus Mart")
           ]),
         ]),
         h(GlassPanel, { key: "panel", className: "mx-auto w-full max-w-md" }, [
           h("h1", { key: "t1", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Join us"),
-          h("p", { key: "sub", className: "mt-1 text-sm text-slate-600 dark:text-slate-400" }, "Create your account to get started."),
+          h("p", { key: "sub", className: "mt-1 text-sm text-slate-600 dark:text-slate-400" }, "Create a shopper account. You can apply to sell after you sign in."),
+          platformCfg?.maintenanceMode
+            ? h(InlineNotice, { key: "maint", variant: "warning", title: "Maintenance" }, platformCfg.maintenanceMessage?.trim() || "This marketplace is temporarily not accepting new registrations.")
+            : null,
+          platformCfg && platformCfg.allowPublicRegistration === false
+            ? h(InlineNotice, { key: "closed", variant: "warning", title: "Sign-up closed" }, "The operator has disabled new accounts. Contact support if you need access.")
+            : null,
           h(
             "form",
             { key: "frm", className: "mt-6 space-y-4", onSubmit },
@@ -572,43 +628,10 @@ export function RegisterPage() {
                   "8+ characters with upper, lower, number, and a symbol."
                 )
               ])),
-              h("div", { key: "role", className: "space-y-2" }, [
-                h("p", { key: "rl", className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "I am a…"),
-                h("div", { key: "grid", className: "grid grid-cols-2 gap-2 sm:gap-3" }, [
-                  h(
-                    "button",
-                    {
-                      key: "buyer",
-                      type: "button",
-                      onClick: () => setRole("buyer"),
-                      className: `tap-target rounded-2xl border px-3 py-3 text-sm font-medium transition sm:text-base ${
-                        role === "buyer"
-                          ? "border-sky-500/60 bg-sky-500/15 text-slate-900 dark:border-sky-400/50 dark:text-white"
-                          : "border-slate-300/70 bg-white/30 text-slate-700 hover:bg-white/50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10"
-                      }`
-                    },
-                    "Student (Buyer)"
-                  ),
-                  h(
-                    "button",
-                    {
-                      key: "seller",
-                      type: "button",
-                      onClick: () => setRole("seller"),
-                      className: `tap-target rounded-2xl border px-3 py-3 text-sm font-medium transition sm:text-base ${
-                        role === "seller"
-                          ? "border-sky-500/60 bg-sky-500/15 text-slate-900 dark:border-sky-400/50 dark:text-white"
-                          : "border-slate-300/70 bg-white/30 text-slate-700 hover:bg-white/50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10"
-                      }`
-                    },
-                    "Vendor (Seller)"
-                  )
-                ])
-              ]),
               err
                 ? h(InlineNotice, { key: "err", variant: "error", onDismiss: () => setErr("") }, err)
                 : null,
-              h(Button, { key: "sub", type: "submit", className: "w-full", loading }, "Create account"),
+              h(Button, { key: "sub", type: "submit", className: "w-full", loading, disabled: !!regBlocked }, "Create account"),
               h("p", { key: "foot", className: "text-center text-sm text-slate-600 dark:text-slate-400" }, [
                 h("span", { key: "pre" }, "Already have an account? "),
                 h(Link, { key: "ln", to: "/login", state: location.state, className: "font-semibold text-sky-600 hover:underline dark:text-sky-300" }, "Login")

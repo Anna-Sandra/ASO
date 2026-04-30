@@ -9,13 +9,12 @@ const passwordSchema = z
   .refine((v) => /\d/.test(v), "Password must include a number")
   .refine((v) => /[^A-Za-z0-9]/.test(v), "Password must include a special character");
 
-/** Email-only registration (identifier or email field). */
+/** Email-only registration — always creates a shopper (`buyer`). Vendor access is by application after login. */
 export const registerSchema = z
   .object({
     identifier: z.string().optional(),
     email: z.string().optional(),
     password: passwordSchema,
-    role: z.enum(["buyer", "seller"]).default("buyer"),
     displayName: z.string().optional(),
     username: z.string().optional()
   })
@@ -31,7 +30,7 @@ export const registerSchema = z
     return {
       email: email || undefined,
       password: raw.password,
-      role: raw.role,
+      role: "buyer" as const,
       ...(displayName ? { displayName } : {})
     };
   })

@@ -27,6 +27,19 @@ export function getApiBase() {
   return API_BASE;
 }
 
+/** Unauthenticated snapshot for login/register/vendor apply (maintenance, sign-up toggles, branding). */
+export async function fetchPublicPlatformConfig() {
+  const base = getApiBase();
+  if (!base) return null;
+  try {
+    const r = await fetch(`${base}/api/platform/config`, { credentials: "omit" });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
 function emitTokenUpdate(token) {
   if (typeof window === "undefined") return;
   try {
@@ -170,6 +183,7 @@ export async function apiFetch(path, opts = {}) {
     const err = new Error(msg);
     err.status = res.status;
     err.data = data;
+    if (data && data.error && data.error.code) err.code = data.error.code;
     throw err;
   }
   return data;

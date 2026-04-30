@@ -1,9 +1,9 @@
-import type { UserRole } from "../modules/auth/user.model";
+import type { AdminLevel, UserRole } from "../modules/auth/user.model";
 
 declare global {
   namespace Express {
     interface Request {
-      user?: { id: string; role: UserRole };
+      user?: { id: string; role: UserRole; adminLevel?: AdminLevel };
     }
   }
 }

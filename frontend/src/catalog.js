@@ -1,11 +1,12 @@
 export const CATEGORIES = [
   { id: "all", label: "All" },
-  { id: "electronics", label: "Electronics" },
-  { id: "books", label: "Books" },
-  { id: "clothing", label: "Clothing" },
-  { id: "food", label: "Food" },
-  { id: "footwears", label: "Footwears" },
-  { id: "other", label: "Other" }
+  { id: "food_drinks", label: "Food & Drinks" },
+  { id: "fashion_accessories", label: "Fashion & Accessories" },
+  { id: "electronics_gadgets", label: "Electronics & Gadgets" },
+  { id: "beauty_personal_care", label: "Beauty & Personal Care" },
+  { id: "services", label: "Services" },
+  { id: "books_academic", label: "Books & Academic Materials" },
+  { id: "groceries_essentials", label: "Groceries & Essentials" }
 ];
 
 export const FILTERS = [
@@ -14,15 +15,24 @@ export const FILTERS = [
   { id: "under20", label: "Under Ghc 20" }
 ];
 
-export const PRODUCT_CATEGORY_VALUES = ["electronics", "books", "clothing", "food", "footwears", "other"];
+export const PRODUCT_CATEGORY_VALUES = [
+  "food_drinks",
+  "fashion_accessories",
+  "electronics_gadgets",
+  "beauty_personal_care",
+  "services",
+  "books_academic",
+  "groceries_essentials"
+];
 
 export const CATEGORY_LABELS = {
-  electronics: "Electronics",
-  books: "Books",
-  clothing: "Clothing",
-  food: "Food",
-  footwears: "Footwears",
-  other: "Other"
+  food_drinks: "Food & Drinks",
+  fashion_accessories: "Fashion & Accessories",
+  electronics_gadgets: "Electronics & Gadgets",
+  beauty_personal_care: "Beauty & Personal Care",
+  services: "Services",
+  books_academic: "Books & Academic Materials",
+  groceries_essentials: "Groceries & Essentials"
 };
 
 /** @param {Record<string, unknown>} p */
@@ -45,7 +55,7 @@ export function refFromId(id) {
 export function productBadge(p) {
   const tags = /** @type {string[]} */ (p.tags || []);
   if (tags.includes("new")) return "New";
-  if (tags.includes("sale") || (p.compareAtPrice != null && Number(p.compareAtPrice) > Number(p.price))) return "Sale";
+  if (tags.includes("sale")) return "Sale";
   return null;
 }
 
@@ -63,14 +73,11 @@ export function formatSellerPaymentSnippet(sp) {
 }
 
 /** Default platform commission if product payload predates API field. */
-export const DEFAULT_PLATFORM_COMMISSION_PERCENT = 7;
+export const DEFAULT_PLATFORM_COMMISSION_PERCENT = 5;
 
 /**
- * Split one product line the same way as the API (`splitLineGross`): buyer pays `gross`,
- * platform keeps `platformFee`, seller share is `sellerReceives`.
- * @param {number} unitPrice
- * @param {number} quantity
- * @param {unknown} platformCommissionPercent
+ * Match checkout line math: `gross` is the vendor’s list line (unit × qty). Service fee is a percent of that;
+ * `sellerReceives` equals `gross` (fees are on top for the buyer at checkout).
  */
 export function splitLineBuyerPayment(unitPrice, quantity, platformCommissionPercent) {
   const raw = Number(platformCommissionPercent);
@@ -78,7 +85,7 @@ export function splitLineBuyerPayment(unitPrice, quantity, platformCommissionPer
   const rate = pct / 100;
   const gross = Math.round(Number(unitPrice) * Number(quantity) * 100) / 100;
   const platformFee = Math.round(gross * rate * 100) / 100;
-  const sellerReceives = Math.round((gross - platformFee) * 100) / 100;
+  const sellerReceives = gross;
   return { gross, platformFee, sellerReceives, platformCommissionPercent: pct };
 }
 
@@ -93,7 +100,7 @@ export function aggregateCartSplits(items) {
   }
   gross = Math.round(gross * 100) / 100;
   platformFee = Math.round(platformFee * 100) / 100;
-  const sellerReceives = Math.round((gross - platformFee) * 100) / 100;
+  const sellerReceives = gross;
   return { gross, platformFee, sellerReceives };
 }
 
@@ -120,7 +127,7 @@ export function sellerGroupSellerReceives(groupItems) {
   return Math.round(s * 100) / 100;
 }
 
-/** List-price total for a seller’s cart lines (what the buyer pays for those items; no fee breakdown). */
+/** List-price total for a seller’s cart lines (vendor listing subtotal; buyer sees extra fees at checkout). */
 export function sellerGroupGross(groupItems) {
   let s = 0;
   for (const p of groupItems) {

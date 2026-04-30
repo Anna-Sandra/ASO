@@ -2,8 +2,9 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
+import { env, isPaystackMoneyRailEnabled } from "../../config/env";
 import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
-import { roundMoney, splitLineGross } from "../../utils/commission";
+import { buyerTotalForMerchantNetGhs, roundMoney, serviceFeeOnVendorGross } from "../../utils/commission";
 import { Order } from "./order.model";
 import { Product } from "../products/product.model";
 import { withContacts } from "./orderSerialize";
@@ -31,8 +32,9 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     if (!p || p.status !== "active") throw new HttpError(400, `Product unavailable: ${row.productId}`);
     if (p.stock < row.quantity) throw new HttpError(400, `Insufficient stock for ${p.name}`);
 
-    const gross = roundMoney(p.price * row.quantity);
-    const { platformFee, sellerProceeds } = splitLineGross(gross, commissionPct);
+    const vendorGross = roundMoney(p.price * row.quantity);
+    const platformFee = serviceFeeOnVendorGross(vendorGross, commissionPct);
+    const sellerProceeds = vendorGross;
     lineItems.push({
       productId: p._id,
       sellerId: p.sellerId,
@@ -44,13 +46,24 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     });
   }
 
-  const subtotal = lineItems.reduce((s, it) => s + it.unitPrice * it.quantity, 0);
+  const subtotal = roundMoney(lineItems.reduce((s, it) => s + it.unitPrice * it.quantity, 0));
+  const serviceFeeTotal = roundMoney(lineItems.reduce((s, it) => s + it.platformFee, 0));
+  const baseBeforeProcessing = roundMoney(subtotal + serviceFeeTotal);
+  const total = buyerTotalForMerchantNetGhs(
+    baseBeforeProcessing,
+    env.PAYSTACK_CHECKOUT_FEE_PERCENT,
+    env.PAYSTACK_CHECKOUT_FEE_FIXED_GHS
+  );
+  const processingFeeTotal = roundMoney(total - baseBeforeProcessing);
+
   const order = await Order.create({
     buyerId,
     items: lineItems,
     currency: "ghs",
     subtotal,
-    total: subtotal,
+    total,
+    pricingVersion: 2,
+    processingFeeTotal,
     status: "pending_payment"
   });
 
@@ -190,6 +203,97 @@ export const addOrderMessage = asyncHandler(async (req: Request, res: Response) 
   res.json({ order: serialized });
 });
 
+/**
+ * Hard delete: buyers may remove only their own `cancelled` orders. Sellers on an order may
+ * remove `pending_payment` (abandoned checkout) or `cancelled` without a separate cancel step.
+ * Admins: same as buyers on this route (`cancelled` only); other admin tools may apply elsewhere.
+ */
+export const deleteMyOrder = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  const order = await Order.findById(id);
+  if (!order) throw new HttpError(404, "Order not found");
+  const uid = req.user!.id;
+  const isBuyer = order.buyerId.toString() === uid;
+  const isAdmin = req.user!.role === "admin";
+  const sid = new mongoose.Types.ObjectId(uid);
+  const sellerTouchesLine = order.items.some((it) => it.sellerId.equals(sid));
+  const isOrderSeller = req.user!.role === "seller" && sellerTouchesLine;
+  if (!isBuyer && !isAdmin && !isOrderSeller) {
+    throw new HttpError(403, "Forbidden");
+  }
+
+  if (isOrderSeller && !isAdmin) {
+    if (!["pending_payment", "cancelled"].includes(order.status)) {
+      throw new HttpError(
+        400,
+        "Only pending payment or cancelled orders can be deleted. This order is still active."
+      );
+    }
+  } else if (isBuyer) {
+    if (order.status !== "cancelled") {
+      throw new HttpError(400, "Only cancelled orders can be removed. Cancel the order first if needed.");
+    }
+  } else if (isAdmin) {
+    if (order.status !== "cancelled") {
+      throw new HttpError(400, "Only cancelled orders can be removed from this endpoint.");
+    }
+  }
+
+  await order.deleteOne();
+  res.status(204).send();
+});
+
+/**
+ * Buyer-initiated cancellation. Allowed only while no vendor has acted on the order:
+ *   - `pending_payment`         — buyer never submitted off-platform details
+ *   - `awaiting_vendor_payment` — buyer submitted MoMo/bank details, but no seller has confirmed receipt yet
+ * Once any seller confirms (status becomes `paid` and stock is reduced), the buyer must work with
+ * the seller / admin to resolve. Vendor-side cancel still uses `updateVendorOrderStatus`.
+ */
+export const cancelMyOrder = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  const order = await Order.findById(id);
+  if (!order) throw new HttpError(404, "Order not found");
+  if (order.buyerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
+
+  if (!["pending_payment", "awaiting_vendor_payment"].includes(order.status)) {
+    throw new HttpError(
+      400,
+      order.status === "cancelled"
+        ? "This order is already cancelled"
+        : "This order can no longer be cancelled — please contact the seller or open a report"
+    );
+  }
+
+  const reason = typeof (req.body as { reason?: unknown })?.reason === "string"
+    ? String((req.body as { reason: string }).reason).trim().slice(0, 500)
+    : "";
+
+  order.status = "cancelled";
+  order.confirmedSellerIds = [];
+  if (reason) {
+    order.messages.push({
+      senderId: new mongoose.Types.ObjectId(req.user!.id),
+      senderRole: "buyer",
+      text: `Order cancelled by buyer. Reason: ${reason}`,
+      createdAt: new Date()
+    });
+  } else {
+    order.messages.push({
+      senderId: new mongoose.Types.ObjectId(req.user!.id),
+      senderRole: "buyer",
+      text: "Order cancelled by buyer.",
+      createdAt: new Date()
+    });
+  }
+  await order.save();
+
+  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  res.json({ order: serialized });
+});
+
 const AMOUNT_EPS = 0.02;
 
 export const markManualPayment = asyncHandler(async (req: Request, res: Response) => {
@@ -209,6 +313,13 @@ export const markManualPayment = asyncHandler(async (req: Request, res: Response
   if (!order) throw new HttpError(404, "Order not found");
   if (order.buyerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
   if (order.status !== "pending_payment") throw new HttpError(400, "Order is not payable");
+
+  if (isPaystackMoneyRailEnabled()) {
+    throw new HttpError(
+      400,
+      "All payments on this marketplace go through Paystack. Open Pay now from checkout to pay with card or Ghana mobile money on Paystack."
+    );
+  }
 
   const reference = "reference" in body && body.reference ? String(body.reference).trim() : "";
 

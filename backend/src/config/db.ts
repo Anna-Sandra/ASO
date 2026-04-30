@@ -1,27 +1,58 @@
 import mongoose from "mongoose";
 import { ensureBootstrapAdmin } from "./bootstrapAdmin";
 import { env } from "./env";
+import { PRODUCT_CATEGORIES } from "../modules/products/product.model";
+import { PlatformSettings } from "../modules/platform/platformSettings.model";
+import { Order } from "../modules/orders/order.model";
 
-/** Map legacy shop categories to current PRODUCT_CATEGORIES (raw collection). */
+async function syncPlatformCommissionSevenToFive() {
+  try {
+    const r = await PlatformSettings.updateMany({ commissionPercent: 7 }, { $set: { commissionPercent: 5 } });
+    if (r.modifiedCount > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[db] Updated platform commission from 7% to 5% on ${r.modifiedCount} settings row(s)`);
+    }
+  } catch {
+    /* collection may not exist yet */
+  }
+}
+
+/** Map legacy / old slug categories to current PRODUCT_CATEGORIES (raw Mongo collections). */
 async function migrateLegacyProductCategories() {
   const db = mongoose.connection.db;
   if (!db) return;
-  const col = db.collection("products");
-  const map: Record<string, string> = {
-    coffee: "food",
-    beans: "food",
-    snacks: "food",
-    gear: "electronics",
-    mugs: "other",
-    materials: "clothing",
-    equipment: "electronics",
-    food: "food"
+
+  const slugMap: Record<string, string> = {
+    // v1 shop slugs → current
+    coffee: "food_drinks",
+    beans: "food_drinks",
+    snacks: "food_drinks",
+    gear: "electronics_gadgets",
+    mugs: "groceries_essentials",
+    materials: "fashion_accessories",
+    equipment: "electronics_gadgets",
+    food: "food_drinks",
+    // previous enum (pre campus categories)
+    electronics: "electronics_gadgets",
+    books: "books_academic",
+    clothing: "fashion_accessories",
+    footwears: "fashion_accessories",
+    other: "groceries_essentials"
   };
-  for (const [from, to] of Object.entries(map)) {
-    await col.updateMany({ category: from }, { $set: { category: to } });
-  }
-  const allowed = new Set(["electronics", "books", "clothing", "food", "footwears", "other"]);
-  await col.updateMany({ category: { $nin: [...allowed] } }, { $set: { category: "other" } });
+
+  const allowed = new Set<string>(PRODUCT_CATEGORIES);
+
+  const normalizeCollection = async (name: string) => {
+    const col = db.collection(name);
+    for (const [from, to] of Object.entries(slugMap)) {
+      if (from === to) continue;
+      await col.updateMany({ category: from }, { $set: { category: to } });
+    }
+    await col.updateMany({ category: { $nin: [...allowed] } }, { $set: { category: "groceries_essentials" } });
+  };
+
+  await normalizeCollection("products");
+  await normalizeCollection("vendorapplications");
 }
 
 /**
@@ -38,6 +69,68 @@ async function backfillActiveZeroStockIfSmallCatalog() {
   if (r.modifiedCount > 0) {
     // eslint-disable-next-line no-console
     console.log(`[db] Set stock to 30 for ${r.modifiedCount} active products with zero stock (catalog size ${n})`);
+  }
+}
+
+/**
+ * Legacy UI allowed marking Paystack orders “refunded” without calling Paystack.
+ * Real money movement is tracked via paystackRefundId; downgrade bogus rows to requested.
+ */
+async function migrateLegacyManualPaystackRefundFlags() {
+  try {
+    const r = await Order.updateMany(
+      {
+        paymentMethod: "paystack",
+        refundStatus: "refunded",
+        $or: [{ paystackRefundId: { $exists: false } }, { paystackRefundId: null }]
+      },
+      { $set: { refundStatus: "requested" } }
+    );
+    if (r.modifiedCount > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[db] Set ${r.modifiedCount} Paystack order(s) from “refunded” (no Paystack refund id) → requested`
+      );
+    }
+  } catch {
+    /* collection may not exist yet */
+  }
+}
+
+/**
+ * Paystack sets `refunded` in admin only after remote `processed`. Rows marked refunded without that
+ * confirmation are legacy mistakes — move back to refund_processing (sync) or requested.
+ */
+async function migratePaystackRefundedWithoutProcessedConfirmation() {
+  try {
+    const rProc = await Order.updateMany(
+      {
+        paymentMethod: "paystack",
+        refundStatus: "refunded",
+        paystackRefundRemoteStatus: { $ne: "processed" },
+        paystackRefundId: { $gt: 0 }
+      },
+      { $set: { refundStatus: "refund_processing" } }
+    );
+    const rReq = await Order.updateMany(
+      {
+        paymentMethod: "paystack",
+        refundStatus: "refunded",
+        paystackRefundRemoteStatus: { $ne: "processed" },
+        $or: [{ paystackRefundId: { $exists: false } }, { paystackRefundId: null }]
+      },
+      { $set: { refundStatus: "requested" } }
+    );
+    const n = rProc.modifiedCount + rReq.modifiedCount;
+    if (n > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[db] Corrected ${rProc.modifiedCount} Paystack order(s) (refund not processed → refund_processing), ` +
+          `${rReq.modifiedCount} (→ requested)`
+      );
+    }
+  } catch {
+    /* collection may not exist yet */
   }
 }
 
@@ -62,12 +155,36 @@ async function ensureUserContactIndexes() {
   await users.createIndex({ phone: 1 }, { name: "phone_1", unique: true, sparse: true });
 }
 
+async function migrateConversationKindAndIndex() {
+  const db = mongoose.connection.db;
+  if (!db) return;
+  const col = db.collection("conversations");
+  try {
+    await col.updateMany({ kind: { $exists: false } }, { $set: { kind: "order" } });
+  } catch {
+    /* collection may not exist */
+  }
+  try {
+    await col.dropIndex("buyerId_1_sellerId_1");
+  } catch {
+    /* already migrated or different name */
+  }
+  try {
+    await col.createIndex({ buyerId: 1, sellerId: 1, kind: 1 }, { unique: true, name: "buyerId_1_sellerId_1_kind_1" });
+  } catch {
+    /* may already exist */
+  }
+}
+
 export async function connectDb() {
   mongoose.set("strictQuery", true);
   await mongoose.connect(env.MONGODB_URI);
+  await migrateConversationKindAndIndex();
   await migrateLegacyProductCategories();
+  await migrateLegacyManualPaystackRefundFlags();
+  await migratePaystackRefundedWithoutProcessedConfirmation();
+  await syncPlatformCommissionSevenToFive();
   await backfillActiveZeroStockIfSmallCatalog();
   await ensureUserContactIndexes();
   await ensureBootstrapAdmin();
 }
-

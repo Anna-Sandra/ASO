@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { User } from "../auth/user.model";
 import { roundMoney, splitLineGross } from "../../utils/commission";
+import { isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
 
 export function serializePaymentDetails(p: unknown): Record<string, unknown> | null {
   if (!p || typeof p !== "object") return null;
@@ -12,6 +13,62 @@ export function serializePaymentDetails(p: unknown): Record<string, unknown> | n
   if (typeof r.cardholderName === "string") out.cardholderName = r.cardholderName;
   if (typeof r.cardExpiry === "string") out.cardExpiry = r.cardExpiry;
   return Object.keys(out).length ? out : null;
+}
+
+/** True when buyer reimbursement is complete (same rules as serialized `refundStatus`). */
+export function isOrderNetRevenueZeroedByRefund(o: {
+  refundStatus?: unknown;
+  paymentMethod?: unknown;
+  paystackRefundId?: unknown;
+  paystackRefundRemoteStatus?: unknown;
+}): boolean {
+  return (
+    normalizeRefundStatus(
+      o.refundStatus,
+      o.paymentMethod,
+      o.paystackRefundId,
+      o.paystackRefundRemoteStatus
+    ) === "refunded"
+  );
+}
+
+/**
+ * Orders to omit from admin gross / platform-fee totals. Slightly broader than {@link isOrderNetRevenueZeroedByRefund}:
+ * Paystack refunds often stay `refund_processing` in the UI until webhooks sync, but finance should not keep commission
+ * once `refundStatus` is `refunded` and Paystack has a refund id.
+ */
+export function isOrderExcludedFromRevenueMetrics(o: {
+  refundStatus?: unknown;
+  paymentMethod?: unknown;
+  paystackRefundId?: unknown;
+  paystackRefundRemoteStatus?: unknown;
+}): boolean {
+  if (isOrderNetRevenueZeroedByRefund(o)) return true;
+  if (o.refundStatus !== "refunded") return false;
+  if (o.paymentMethod !== "paystack") return true;
+  const idNum = o.paystackRefundId != null && o.paystackRefundId !== "" ? Number(o.paystackRefundId) : NaN;
+  return Number.isFinite(idNum) && idNum > 0;
+}
+
+function normalizeRefundStatus(
+  raw: unknown,
+  paymentMethod: unknown,
+  paystackRefundId: unknown,
+  paystackRefundRemoteStatus?: unknown
+): "none" | "requested" | "refund_processing" | "refunded" {
+  let s: "none" | "requested" | "refund_processing" | "refunded" =
+    raw === "requested" || raw === "refund_processing" || raw === "refunded" ? raw : "none";
+  if (s === "refunded" && paymentMethod === "paystack") {
+    const idNum = paystackRefundId != null && paystackRefundId !== "" ? Number(paystackRefundId) : NaN;
+    const hasId = Number.isFinite(idNum) && idNum > 0;
+    const remote = String(paystackRefundRemoteStatus ?? "").toLowerCase();
+    if (!hasId) {
+      s = "requested";
+    } else if (!isPaystackRefundRemoteSettled(remote)) {
+      s = "refund_processing";
+    }
+  }
+  return s;
 }
 
 function serializeLineItem(it: Record<string, unknown>) {
@@ -44,6 +101,17 @@ export function serializeOrder(o: Record<string, unknown>) {
   const items = ((o.items as Array<Record<string, unknown>>) || []).map(serializeLineItem);
   const platformFeeTotal = roundMoney(items.reduce((s, it) => s + it.platformFee, 0));
   const sellerProceedsTotal = roundMoney(items.reduce((s, it) => s + it.sellerProceeds, 0));
+  const pricingVersion = Number((o as { pricingVersion?: number }).pricingVersion) || 1;
+  const subtotalNum = roundMoney(Number(o.subtotal));
+  const totalNum = roundMoney(Number(o.total));
+  const storedProc = (o as { processingFeeTotal?: number }).processingFeeTotal;
+  let processingFeeTotal = 0;
+  if (pricingVersion >= 2) {
+    processingFeeTotal = roundMoney(
+      typeof storedProc === "number" ? storedProc : Math.max(0, totalNum - subtotalNum - platformFeeTotal)
+    );
+  }
+  const paystackRefundIdRaw = (o as { paystackRefundId?: number | null }).paystackRefundId;
   return {
     id: (o._id as mongoose.Types.ObjectId).toString(),
     buyerId: (o.buyerId as mongoose.Types.ObjectId).toString(),
@@ -51,8 +119,11 @@ export function serializeOrder(o: Record<string, unknown>) {
     currency: o.currency,
     subtotal: o.subtotal,
     total: o.total,
+    pricingVersion,
     platformFeeTotal,
     sellerProceedsTotal,
+    serviceFeeTotal: platformFeeTotal,
+    processingFeeTotal,
     status: o.status,
     paymentMethod: o.paymentMethod ?? null,
     paymentReference: o.paymentReference ?? null,
@@ -67,9 +138,19 @@ export function serializeOrder(o: Record<string, unknown>) {
       createdAt: m.createdAt
     })),
     stripeCheckoutSessionId: o.stripeCheckoutSessionId,
+    paystackReference: (o as { paystackReference?: string | null }).paystackReference ?? null,
+    paystackTransactionId: (o as { paystackTransactionId?: number | null }).paystackTransactionId ?? null,
     disputeOpen: Boolean((o as { disputeOpen?: boolean }).disputeOpen),
     adminNote: (o as { adminNote?: string }).adminNote ?? "",
-    refundStatus: (o as { refundStatus?: string }).refundStatus ?? "none",
+    refundStatus: normalizeRefundStatus(
+      (o as { refundStatus?: unknown }).refundStatus,
+      o.paymentMethod,
+      paystackRefundIdRaw,
+      (o as { paystackRefundRemoteStatus?: string }).paystackRefundRemoteStatus
+    ),
+    paystackRefundId: paystackRefundIdRaw ?? null,
+    paystackRefundRemoteStatus: String((o as { paystackRefundRemoteStatus?: string }).paystackRefundRemoteStatus || ""),
+    refundStockRestored: Boolean((o as { refundStockRestored?: boolean }).refundStockRestored),
     createdAt: o.createdAt,
     updatedAt: o.updatedAt
   };

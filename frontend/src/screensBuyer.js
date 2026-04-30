@@ -1,16 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
   ChevronRight,
   Cpu,
-  Footprints,
+  Flag,
   Heart,
-  HelpCircle,
   LayoutGrid,
   Lock,
-  Menu,
   MessageSquare,
   Minus,
   Package,
@@ -18,6 +17,8 @@ import {
   ReceiptText,
   Search,
   Send,
+  ShoppingBasket,
+  Sparkles,
   Camera,
   Shirt,
   ShoppingCart,
@@ -27,6 +28,7 @@ import {
   User,
   Utensils,
   Wallet,
+  Wrench,
   X
 } from "lucide-react";
 import { useAuth } from "./AuthContext";
@@ -46,6 +48,7 @@ import {
   sellerGroupGross
 } from "./catalog";
 import { formatGhc } from "./money";
+import { computeCheckoutBreakdown, useCheckoutPricingOptions } from "./checkoutPricing";
 import { h, f } from "./h";
 import {
   Button,
@@ -63,25 +66,30 @@ import {
 
 function buyerPricePanel(product) {
   return h(GlassPanel, { key: "price-info", className: "!border-sky-500/20" }, [
-    h("h3", { className: "text-sm font-semibold text-slate-900 dark:text-white" }, "What you pay"),
+    h("h3", { className: "text-sm font-semibold text-slate-900 dark:text-white" }, "Seller’s list price"),
     h(
       "p",
       { className: "mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400" },
-      `The price shown (${formatGhc(product.price)}) is what you pay at checkout.`
+      `Listed at ${formatGhc(product.price)}. Checkout adds a service fee; your total also includes payment fees, which can vary slightly by how you pay.`
     )
   ]);
 }
 
-/** @param {Record<string, unknown> | null | undefined} sellerPayment */
-function buyerVendorPayPanel(sellerPayment) {
+/** @param {Record<string, unknown> | null | undefined} sellerPayment @param {{ paystackOnly?: boolean } | null | undefined} opts */
+function buyerVendorPayPanel(sellerPayment, opts) {
+  const paystackOnly = Boolean(opts?.paystackOnly);
   if (!sellerPayment || typeof sellerPayment !== "object") {
     return h(
       GlassPanel,
-      { key: "vend-pay", className: "!border-amber-500/30 !bg-amber-500/10" },
+      { key: "vend-pay", className: !paystackOnly ? "!border-amber-500/30 !bg-amber-500/10" : "!border-sky-500/20" },
       h(
         "p",
-        { className: "text-sm text-amber-950 dark:text-amber-100" },
-        "This seller has not added a MoMo number or bank payout details yet. You can still order; use your order messages if you need payment help."
+        {
+          className: !paystackOnly ? "text-sm text-amber-950 dark:text-amber-100" : "text-sm text-slate-700 dark:text-slate-200"
+        },
+        paystackOnly
+          ? "This seller has not finished payout registration yet. You still pay with Paystack at checkout; the platform pays the vendor from there after your order succeeds."
+          : "This seller has not added a MoMo number or bank payout details yet. You can still order; use your order messages if you need payment help."
       )
     );
   }
@@ -120,8 +128,14 @@ function buyerVendorPayPanel(sellerPayment) {
     );
   }
   return h(GlassPanel, { key: "vend-pay", className: "!border-sky-500/25" }, [
-    h("h3", { className: "text-xs font-bold uppercase tracking-wide text-sky-800 dark:text-sky-200" }, "Vendor payment details"),
-    h("p", { className: "mt-1 text-xs text-slate-600 dark:text-slate-400" }, "Use these details to pay the seller if your checkout method asks for them."),
+    h("h3", { className: "text-xs font-bold uppercase tracking-wide text-sky-800 dark:text-sky-200" }, "Seller contact & payout details"),
+    paystackOnly
+      ? h(
+          "p",
+          { className: "mt-1 text-xs text-slate-600 dark:text-slate-400" },
+          "You pay at checkout through Paystack only. The MoMo or bank details here are for seller payouts from the platform — do not pay your order total to these accounts."
+        )
+      : h("p", { className: "mt-1 text-xs text-slate-600 dark:text-slate-400" }, "Use these details to pay the seller if your checkout method asks for them."),
     ...rows
   ]);
 }
@@ -439,10 +453,7 @@ export function ProductDetailPage() {
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [reviewMsg, setReviewMsg] = useState("");
-  const [reportOpen, setReportOpen] = useState(false);
-  const [reportCategory, setReportCategory] = useState("bad_product");
-  const [reportDesc, setReportDesc] = useState("");
-  const [reportSend, setReportSend] = useState(false);
+  const pricingOpts = useCheckoutPricingOptions();
 
   useEffect(() => {
     if (!productId) return;
@@ -508,30 +519,6 @@ export function ProductDetailPage() {
     add(product, 1);
   };
 
-  const submitReport = async () => {
-    if (!accessToken || !productId) return;
-    const d = reportDesc.trim();
-    if (d.length < 10) {
-      toast("Please describe the issue in at least 10 characters.", { variant: "warning" });
-      return;
-    }
-    setReportSend(true);
-    try {
-      await apiFetch("/api/reports", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        json: { category: reportCategory, description: d, targetType: "product", targetId: productId }
-      });
-      toast("Thanks — we received your report.", { variant: "success" });
-      setReportOpen(false);
-      setReportDesc("");
-    } catch (ex) {
-      toast(ex.message || "Could not send report", { variant: "error" });
-    } finally {
-      setReportSend(false);
-    }
-  };
-
   const submitReview = async () => {
     setReviewMsg("");
     if (!accessToken || !productId || !reviewStatus?.canSubmit) return;
@@ -595,7 +582,7 @@ export function ProductDetailPage() {
       h(
         BuyerLayout,
         { key: "layout", onOpenCart: () => setCartOpen(true), hideSearch: true, title: "Product" },
-        h("p", { key: "ld", className: "mx-auto max-w-7xl px-4 py-10 text-slate-500" }, "Loading product…")
+        h("p", { key: "ld", className: "w-full px-4 py-10 text-slate-500 sm:px-6 lg:px-8" }, "Loading product…")
       ),
       h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })
     ]);
@@ -606,7 +593,7 @@ export function ProductDetailPage() {
       h(
         BuyerLayout,
         { key: "layout", onOpenCart: () => setCartOpen(true), hideSearch: true, title: "Product" },
-        h("div", { key: "em", className: "mx-auto max-w-3xl px-4 py-10" }, [
+        h("div", { key: "em", className: "w-full px-4 py-10 sm:px-6 lg:px-8" }, [
         h(
           InlineNotice,
           { variant: "error", className: "mt-2", title: "Oops", onDismiss: () => setErr("") },
@@ -631,7 +618,7 @@ export function ProductDetailPage() {
         hideSearch: true,
         title: titleShort
       },
-      h("div", { key: "main", className: "mx-auto max-w-5xl px-4 py-6 pb-28 sm:px-6" }, [
+      h("div", { key: "main", className: "w-full px-4 py-6 pb-28 sm:px-6 lg:px-8" }, [
       h(Link, { key: "back", to: "/", className: "mb-6 inline-flex items-center gap-2 text-sm font-medium text-sky-600 hover:underline dark:text-sky-300" }, [
         h(ArrowLeft, { className: "h-4 w-4" }),
         h("span", null, "Back to shop")
@@ -691,10 +678,7 @@ export function ProductDetailPage() {
               ])
           ]),
           h("div", { key: "pr", className: "flex flex-wrap items-baseline gap-3" }, [
-            h("span", { className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(product.price)),
-            product.compareAtPrice != null &&
-              product.compareAtPrice > 0 &&
-              h("span", { className: "text-lg text-slate-400 line-through" }, formatGhc(product.compareAtPrice))
+            h("span", { className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(product.price))
           ]),
           h("p", { className: "text-sm text-slate-600 dark:text-slate-300" }, `${product.stock ?? 0} in stock`),
           (product.tags || []).length > 0 &&
@@ -713,7 +697,7 @@ export function ProductDetailPage() {
               )
             ),
           buyerPricePanel(product),
-          buyerVendorPayPanel(product.sellerPayment),
+          buyerVendorPayPanel(product.sellerPayment, { paystackOnly: pricingOpts?.paystackOnly }),
           h(
             Button,
             {
@@ -733,39 +717,28 @@ export function ProductDetailPage() {
               )
             ]
           ),
-          accessToken &&
-            h(f, { key: "rep-line" }, [
-              h(
-                "button",
-                {
-                  type: "button",
-                  onClick: () => setReportOpen((v) => !v),
-                  className: "text-sm font-medium text-amber-600 underline-offset-2 hover:underline dark:text-amber-300"
-                },
-                "Report this listing"
-              ),
-              reportOpen &&
-                h(GlassPanel, { key: "rep-form", className: "mt-3 !border-amber-500/20" }, [
-                  h("p", { className: "text-xs text-slate-500" }, "Reports are reviewed by admins. Be specific (min. 10 characters)."),
-                  h(Field, { className: "mt-2", label: "Category" }, h(SelectInput, { value: reportCategory, onChange: (e) => setReportCategory(e.target.value) }, [
-                    h("option", { value: "bad_product" }, "Bad product / misleading listing"),
-                    h("option", { value: "fake_seller" }, "Fake or misleading seller"),
-                    h("option", { value: "scam" }, "Scam"),
-                    h("option", { value: "chat_abuse" }, "Abuse in messages"),
-                    h("option", { value: "other" }, "Other")
-                  ])),
-                  h(Field, { className: "mt-2", label: "What happened?" }, h(TextArea, { value: reportDesc, onChange: (e) => setReportDesc(e.target.value), rows: 4, placeholder: "Describe the issue…" })),
-                  h(
-                    Button,
-                    { className: "mt-3", type: "button", loading: reportSend, onClick: submitReport },
-                    "Submit report"
-                  )
-                ])
-            ]),
           h(GlassPanel, { key: "desc", className: "!border-white/10" }, [
             h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Description"),
             h("p", { className: "mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200" }, product.description || "No description provided.")
-          ])
+          ]),
+          accessToken
+            ? h(
+                "div",
+                { key: "rep", className: "flex justify-end" },
+                h(
+                  Link,
+                  {
+                    to: `/reports?product=${encodeURIComponent(product.id)}`,
+                    className:
+                      "inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/60 px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:border-rose-200 hover:bg-rose-50/70 hover:text-rose-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-400 dark:hover:border-rose-500/30 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
+                  },
+                  [
+                    h(Flag, { key: "i", className: "h-3.5 w-3.5" }),
+                    h("span", { key: "l" }, "Report this listing")
+                  ]
+                )
+              )
+            : null
         ])
       ]),
       h("section", { key: "reviews", className: "mt-12 border-t border-white/10 pt-10" }, [
@@ -877,157 +850,115 @@ function buyerNavbarHandle(u) {
   return label || "Your account";
 }
 
-function BuyerSidebarNavLink({ to, end, icon: Icon, onClose, children }) {
+/**
+ * Compact top nav link (buyer / guest shell — no sidebar).
+ * Optional `activeWhen` resolves highlight when pathname match alone is not enough (e.g. `/` vs `/#buyer-shop-grid`).
+ */
+function BuyerNavbarNavLink({ to, end, icon: Icon, label, activeWhen }) {
+  const loc = useLocation();
+  const resolveActive = (pathActive) =>
+    typeof activeWhen === "function" ? activeWhen({ pathActive, loc }) : pathActive;
   return h(NavLink, {
     to,
     end: Boolean(end),
-    onClick: onClose,
-    className: ({ isActive }) =>
-      `flex items-center gap-2 rounded-2xl px-3 py-2.5 text-sm font-medium transition sm:px-4 sm:text-base ${
-        isActive
-          ? "bg-gradient-to-r from-sky-600/90 to-blue-700/90 text-white shadow-lg shadow-sky-900/30"
-          : "text-slate-700 hover:bg-white/40 dark:text-slate-200 dark:hover:bg-white/10"
-      }`,
-    children: ({ isActive }) =>
-      h(f, null, [
-        h(Icon, { key: "ic", className: `h-4 w-4 shrink-0 sm:h-5 sm:w-5 ${isActive ? "text-white" : ""}` }),
-        h("span", { key: "tx" }, children)
-      ])
+    title: label,
+    "aria-label": label,
+    className: ({ isActive }) => {
+      const on = resolveActive(isActive);
+      return `inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1.5 text-[11px] font-medium transition sm:gap-1.5 sm:px-2.5 sm:text-xs ${
+        on
+          ? "bg-sky-600 text-white shadow-sm dark:bg-sky-600"
+          : "text-slate-700 hover:bg-white/45 dark:text-slate-200 dark:hover:bg-white/10"
+      }`;
+    },
+    children: ({ isActive }) => {
+      const on = resolveActive(isActive);
+      return h(f, null, [
+        h(Icon, {
+          key: "ic",
+          className: `h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4 ${on ? "text-white" : "opacity-85"}`
+        }),
+        h("span", { key: "tx", className: "hidden sm:inline" }, label)
+      ]);
+    }
   });
 }
 
-function BuyerLayout({ children, onOpenCart, title, hideSearch, searchValue, onSearchChange, onSearchSubmit }) {
+export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchValue, onSearchChange, onSearchSubmit }) {
   const { dark, toggle } = useTheme();
   const { count } = useCart();
   const { accessToken, logout, user } = useAuth();
   const nav = useNavigate();
-  const loc = useLocation();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  useEffect(() => {
-    setSidebarOpen(false);
-  }, [loc.pathname]);
 
   const onLogout = async () => {
     await logout();
-    nav("/", { replace: true });
+    nav("/login", { replace: true });
   };
 
   const submitSearch = () => {
     onSearchSubmit?.();
   };
 
-  const closeSb = () => setSidebarOpen(false);
   const cartNavInactive =
-    "text-slate-700 hover:bg-white/40 dark:text-slate-200 dark:hover:bg-white/10";
+    "text-slate-700 hover:bg-white/45 dark:text-slate-200 dark:hover:bg-white/10";
 
-  const sidebar = h(
-    "aside",
-    {
-      className: `fixed inset-y-0 left-0 z-40 flex h-[100dvh] max-h-[100dvh] w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-white/10 bg-white/35 p-4 shadow-2xl backdrop-blur-2xl transition-transform dark:bg-night-900/50 lg:max-w-none lg:translate-x-0 ${
-        sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-      }`
-    },
-    [
-      h("div", { key: "sb-mob", className: "mb-6 flex items-center justify-between gap-2 lg:hidden" }, [
-        h("span", { key: "lbl", className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "Menu"),
-        h(
-          "button",
-          {
-            key: "close",
-            type: "button",
-            className: "tap-target rounded-xl p-2 hover:bg-white/10",
-            onClick: () => setSidebarOpen(false),
-            "aria-label": "Close menu"
-          },
-          h(X, { className: "h-5 w-5" })
-        )
-      ]),
-      h("div", { key: "main-title", className: "mb-6 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400" }, "Main"),
-      h("nav", { key: "sb-nav-main", className: "space-y-1" }, [
-        h(BuyerSidebarNavLink, { key: "dash", to: "/", end: true, icon: LayoutGrid, onClose: closeSb }, "Dashboard"),
-        h(BuyerSidebarNavLink, { key: "ord", to: "/orders", icon: Package, onClose: closeSb }, "Orders"),
-        accessToken && h(BuyerSidebarNavLink, { key: "msg", to: "/messages", icon: MessageSquare, onClose: closeSb }, "Messages"),
-        h(BuyerSidebarNavLink, { key: "prof", to: "/profile", icon: User, onClose: closeSb }, "Profile")
-      ].filter(Boolean)),
-      h("div", { key: "shop-title", className: "mb-2 mt-6 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400" }, "Shop"),
-      h("nav", { key: "sb-nav-shop", className: "space-y-1" }, [
-        h(
-          "button",
-          {
-            key: "sb-cart",
-            type: "button",
-            className: `relative flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-left text-sm font-medium transition sm:px-4 sm:text-base ${cartNavInactive}`,
-            onClick: () => {
-              onOpenCart();
-              setSidebarOpen(false);
-            }
-          },
-          [
-            h(ShoppingCart, { key: "i", className: "h-4 w-4 shrink-0 sm:h-5 sm:w-5" }),
-            h("span", { key: "t" }, "Cart"),
-            count > 0 &&
-              h(
-                "span",
-                {
-                  key: "c",
-                  className:
-                    "ml-auto flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-sky-500 px-2 text-xs font-bold text-white"
-                },
-                String(count)
-              )
-          ]
-        )
-      ]),
-      h("div", { key: "sidebar-spacer", className: "min-h-0 flex-1" }),
-      !accessToken &&
-        h("div", { key: "sb-foot", className: "space-y-3 border-t border-white/10 pt-5" }, [
+  const topNavLinks = [
+    h(BuyerNavbarNavLink, {
+      key: "dash",
+      to: "/",
+      end: true,
+      icon: LayoutGrid,
+      label: "Dashboard",
+      activeWhen: ({ pathActive, loc }) => pathActive && !loc.hash
+    }),
+    h(BuyerNavbarNavLink, { key: "ord", to: "/orders", icon: Package, label: "Orders" }),
+    accessToken && h(BuyerNavbarNavLink, { key: "msg", to: "/messages", icon: MessageSquare, label: "Messages" }),
+    accessToken && h(BuyerNavbarNavLink, { key: "rep", to: "/reports", icon: AlertTriangle, label: "Reports" }),
+    h(BuyerNavbarNavLink, { key: "prof", to: "/profile", icon: User, label: "Profile" }),
+    accessToken &&
+      user?.role === "buyer" &&
+      !["pending", "approved"].includes(user?.vendorStatus) &&
+      h(BuyerNavbarNavLink, { key: "apply", to: "/apply-vendor", icon: Store, label: "Become a vendor" }),
+    h(
+      "button",
+      {
+        key: "cart",
+        type: "button",
+        title: "Cart",
+        "aria-label": `Cart${count > 0 ? `, ${count} items` : ""}`,
+        className: `relative inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1.5 text-[11px] font-medium transition sm:gap-1.5 sm:px-2.5 sm:text-xs ${cartNavInactive}`,
+        onClick: () => onOpenCart()
+      },
+      [
+        h(ShoppingCart, { key: "i", className: "h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" }),
+        h("span", { key: "t", className: "hidden sm:inline" }, "Cart"),
+        count > 0 &&
           h(
-            Button,
+            "span",
             {
-              key: "sb-sell",
-              variant: "ghost",
-              className: "w-full !justify-start !rounded-2xl",
-              type: "button",
-              onClick: () => {
-                nav("/login", { state: { from: "vendor" } });
-                setSidebarOpen(false);
-              }
+              key: "c",
+              className:
+                "ml-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-sky-500 px-1 text-[10px] font-bold text-white sm:h-5 sm:min-w-[1.25rem] sm:text-xs"
             },
-            [h(Store, { key: "i", className: "h-5 w-5" }), h("span", { key: "t" }, "Seller sign in")]
-          ),
-          h(
-            Button,
-            {
-              key: "sb-login",
-              variant: "primary",
-              className: "w-full !rounded-2xl",
-              type: "button",
-              onClick: () => {
-                nav("/login");
-                setSidebarOpen(false);
-              }
-            },
-            "Login"
+            String(count)
           )
-        ]),
-      h(
-        GlassCard,
-        {
-          key: "shop-hub",
-          className: "mt-3 !border-sky-500/20 !bg-gradient-to-br !from-sky-900/80 !to-night-950 !p-4"
-        },
-        [
-          h("p", { key: "t", className: "text-xs font-bold uppercase tracking-wide text-sky-200" }, "Campus Mart"),
-          h(
-            "p",
-            { key: "d", className: "mt-1 text-xs text-white/80" },
-            "Browse sellers, track orders, and check out with MoMo or card — all in one place."
-          )
-        ]
-      )
-    ]
-  );
+      ].filter(Boolean)
+    )
+  ].filter(Boolean);
+
+  const vendorPendingBanner =
+    accessToken &&
+    user?.role === "buyer" &&
+    user?.vendorStatus === "pending" &&
+    h(
+      "div",
+      {
+        key: "vpend",
+        className:
+          "rounded-lg border border-amber-400/35 bg-amber-500/10 px-2 py-1 text-center text-[10px] font-medium text-amber-950 dark:text-amber-100 sm:text-xs"
+      },
+      "Vendor application pending review"
+    );
 
   const profileChip =
     accessToken &&
@@ -1056,19 +987,6 @@ function BuyerLayout({ children, onOpenCart, title, hideSearch, searchValue, onS
   const headerActions = [
     h(ThemeToggleButton, { key: "th", dark, onToggle: toggle }),
     profileChip,
-    !accessToken &&
-      h(
-        Button,
-        {
-          key: "sell",
-          variant: "ghost",
-          className: "!hidden !min-h-[44px] !rounded-full !px-2 sm:!inline-flex",
-          type: "button",
-          onClick: () => nav("/login", { state: { from: "vendor" } }),
-          title: "Vendor sign in"
-        },
-        [h(Store, { key: "si", className: "h-4 w-4" }), h("span", { key: "st", className: "hidden lg:inline" }, "Seller")]
-      ),
     h(
       Button,
       {
@@ -1082,17 +1000,7 @@ function BuyerLayout({ children, onOpenCart, title, hideSearch, searchValue, onS
     )
   ].filter(Boolean);
 
-  return h("div", { className: "flex min-h-screen bg-slate-100 dark:bg-night-950 dark:bg-mesh-dark" }, [
-    sidebarOpen &&
-      h("button", {
-        key: "overlay",
-        type: "button",
-        className: "fixed inset-0 z-30 bg-slate-950/50 backdrop-blur-sm lg:hidden",
-        onClick: () => setSidebarOpen(false),
-        "aria-label": "Close menu"
-      }),
-    h("div", { key: "sidebar-gutter", className: "w-0 shrink-0 lg:w-72", "aria-hidden": true }),
-    sidebar,
+  return h("div", { className: "flex min-h-screen flex-col bg-slate-100 dark:bg-night-950 dark:bg-mesh-dark" }, [
     h("div", { key: "main-wrap", className: "flex min-h-screen min-w-0 flex-1 flex-col" }, [
       h(
         "header",
@@ -1101,38 +1009,51 @@ function BuyerLayout({ children, onOpenCart, title, hideSearch, searchValue, onS
           className:
             "sticky top-0 z-40 border-b border-white/10 bg-white/30 shadow-sm backdrop-blur-xl dark:bg-night-900/40"
         },
-        h("div", { className: "mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6" }, [
-          h("div", { key: "row-1", className: "flex items-center gap-2 sm:gap-3" }, [
-            h(
-              "button",
-              {
-                key: "menu",
-                type: "button",
-                className: "tap-target shrink-0 rounded-2xl border border-white/15 p-2 lg:hidden",
-                onClick: () => setSidebarOpen(true),
-                "aria-label": "Open menu"
-              },
-              h(Menu, { className: "h-5 w-5" })
-            ),
-            h(Link, { key: "brand", to: "/", className: "flex shrink-0 items-center gap-2" }, [
-              h(LogoMark, { key: "lm", className: "h-9 w-9" }),
+        h("div", { className: "flex w-full flex-col gap-2 px-4 py-2 sm:gap-3 sm:px-6 sm:py-3 lg:px-8" }, [
+          h("div", {
+            key: "row-1",
+            className: "grid w-full min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)_auto] items-center gap-2 sm:gap-3"
+          }, [
+            h(Link, { key: "brand", to: "/", className: "flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-2" }, [
+              h(LogoMark, { key: "lm", className: "h-8 w-8 sm:h-9 sm:w-9" }),
               h("div", { key: "titles", className: "min-w-0 leading-tight" }, [
-                h("span", { key: "brand", className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "Campus Mart"),
+                h(
+                  "span",
+                  { key: "brand", className: "font-display text-base font-bold text-slate-900 dark:text-white sm:text-lg" },
+                  "Campus Mart"
+                ),
                 title
                   ? h(
                       "span",
                       {
                         key: "subtitle",
                         className:
-                          "ml-2 inline-block max-w-[10rem] truncate align-middle rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300 sm:max-w-[14rem]"
+                          "ml-1 inline-block max-w-[8rem] truncate align-middle rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300 sm:ml-2 sm:max-w-[14rem] sm:px-2 sm:text-[10px]"
                       },
                       title
                     )
                   : null
               ])
             ]),
-            h("div", { key: "actions", className: "ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:gap-2" }, headerActions)
+            h(
+              "nav",
+              {
+                key: "topnav",
+                className: "min-w-0 flex justify-center self-center",
+                "aria-label": "Main"
+              },
+              h(
+                "div",
+                {
+                  className:
+                    "no-scrollbar flex max-w-full items-center justify-center gap-1 overflow-x-auto px-0.5 pb-0.5 [-webkit-overflow-scrolling:touch] sm:gap-1.5"
+                },
+                topNavLinks
+              )
+            ),
+            h("div", { key: "actions", className: "flex shrink-0 flex-wrap items-center justify-end justify-self-end gap-1 sm:gap-2" }, headerActions)
           ]),
+          vendorPendingBanner,
           !hideSearch &&
             h("div", { key: "row-search", className: "flex flex-1 items-center gap-2" }, [
               h("div", { key: "search-wrap", className: "relative flex flex-1 items-center" }, [
@@ -1176,12 +1097,13 @@ function BuyerLayout({ children, onOpenCart, title, hideSearch, searchValue, onS
 function CategoryRow({ active, onSelect }) {
   const icons = {
     all: Store,
-    electronics: Cpu,
-    books: BookOpen,
-    clothing: Shirt,
-    food: Utensils,
-    footwears: Footprints,
-    other: Package
+    food_drinks: Utensils,
+    fashion_accessories: Shirt,
+    electronics_gadgets: Cpu,
+    beauty_personal_care: Sparkles,
+    services: Wrench,
+    books_academic: BookOpen,
+    groceries_essentials: ShoppingBasket
   };
   return h(
     "div",
@@ -1224,8 +1146,19 @@ export function CartDrawer({ open, onClose }) {
   const { accessToken } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  const pricingOpts = useCheckoutPricingOptions();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+
+  const breakdown =
+    pricingOpts && subtotal > 0
+      ? computeCheckoutBreakdown(
+          subtotal,
+          pricingOpts.commissionPercent,
+          pricingOpts.paystackFeePercent,
+          pricingOpts.paystackFeeFixedGhs
+        )
+      : null;
 
   const checkout = async () => {
     setErr("");
@@ -1340,46 +1273,67 @@ export function CartDrawer({ open, onClose }) {
           err
             ? h(InlineNotice, { key: "err", variant: "error", className: "mt-3", onDismiss: () => setErr("") }, err)
             : null,
-          h("div", { key: "totals", className: "mt-6 space-y-2 border-t border-white/10 pt-4 text-sm" }, [
-            h("div", { key: "subtotal", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
-              h("span", { key: "l" }, "Subtotal"),
-              h("span", { key: "v", className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(subtotal))
-            ]),
-            h("div", { key: "delivery", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
-              h("span", { key: "l" }, "Delivery"),
-              h("span", { key: "v", className: "font-semibold text-emerald-400" }, "Free")
-            ]),
-            h("div", { key: "total", className: "flex justify-between text-lg font-bold text-slate-900 dark:text-white" }, [
-              h("span", { key: "l" }, "Total"),
-              h("span", { key: "v" }, formatGhc(subtotal))
-            ]),
-            h(
-              Button,
-              {
-                key: "checkout",
-                className: "mt-3 w-full !rounded-2xl",
-                onClick: checkout,
-                loading,
-                disabled: items.length === 0
-              },
-              [h("span", { key: "tx" }, "Proceed to checkout "), h(ChevronRight, { key: "ic", className: "h-4 w-4" })]
-            )
-          ])
+          (() => {
+            const feeRows = [];
+            if (breakdown && pricingOpts) {
+              feeRows.push(
+                h("div", { key: "items", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
+                  h("span", { key: "l" }, "Items (seller price)"),
+                  h("span", { key: "v", className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(breakdown.subtotal))
+                ])
+              );
+              feeRows.push(
+                h("div", { key: "svc", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
+                  h("span", { key: "l" }, "Service fee"),
+                  h("span", { key: "v", className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(breakdown.serviceFee))
+                ])
+              );
+            } else {
+              feeRows.push(
+                h("div", { key: "subtotal", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
+                  h("span", { key: "l" }, "Subtotal"),
+                  h("span", { key: "v", className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(subtotal))
+                ])
+              );
+            }
+            feeRows.push(
+              h("div", { key: "delivery", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
+                h("span", { key: "l" }, "Delivery"),
+                h("span", { key: "v", className: "font-semibold text-emerald-400" }, "Free")
+              ])
+            );
+            feeRows.push(
+              h("div", { key: "total", className: "flex justify-between text-lg font-bold text-slate-900 dark:text-white" }, [
+                h("span", { key: "l" }, "Total"),
+                h("span", { key: "v" }, formatGhc(breakdown ? breakdown.total : subtotal))
+              ])
+            );
+            if (breakdown && breakdown.processingFee > 0.005) {
+              feeRows.push(
+                h(
+                  "p",
+                  { key: "paynote", className: "text-xs leading-snug text-slate-500 dark:text-slate-400" },
+                  "Total includes payment fees; the exact amount may vary slightly by payment method."
+                )
+              );
+            }
+            return h("div", { key: "totals", className: "mt-6 space-y-2 border-t border-white/10 pt-4 text-sm" }, feeRows);
+          })(),
+          h(
+            Button,
+            {
+              key: "checkout",
+              className: "mt-3 w-full !rounded-2xl",
+              onClick: checkout,
+              loading,
+              disabled: items.length === 0
+            },
+            [h("span", { key: "tx" }, "Proceed to checkout "), h(ChevronRight, { key: "ic", className: "h-4 w-4" })]
+          )
         ]
       )
     ]
   );
-}
-
-function formatCardNumberInput(raw) {
-  const d = String(raw).replace(/\D/g, "").slice(0, 19);
-  return d.replace(/(\d{4})(?=\d)/g, "$1 ").trim();
-}
-
-function formatExpiryInput(raw) {
-  const d = String(raw).replace(/\D/g, "").slice(0, 4);
-  if (d.length <= 2) return d;
-  return `${d.slice(0, 2)}/${d.slice(2, 4)}`;
 }
 
 function buildGhanaMomoPhone(localDigits) {
@@ -1417,82 +1371,42 @@ function validateMomoByProvider(provider, localRaw) {
   return "";
 }
 
-const segBtn =
-  "relative z-10 flex-1 rounded-xl py-2.5 text-center text-xs font-semibold transition sm:text-sm";
-const segBtnOn =
-  "bg-white text-slate-900 shadow-sm dark:bg-night-700 dark:text-white dark:shadow-black/20";
-const segBtnOff = "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200";
-
 export function CheckoutPage() {
-  const { accessToken } = useAuth();
-  const { items, subtotal, clear } = useCart();
+  const { user, accessToken } = useAuth();
+  const { items, subtotal } = useCart();
   const nav = useNavigate();
-  const cartBySeller = useMemo(() => groupCartItemsBySeller(items), [items]);
-  const [method, setMethod] = useState("bank");
-  const [reference, setReference] = useState("");
-  const [momoProvider, setMomoProvider] = useState(null);
-  const [momoLocal, setMomoLocal] = useState("");
-  const [momoAmount, setMomoAmount] = useState("");
-  const [saveCard, setSaveCard] = useState(false);
-  const [cardholderName, setCardholderName] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvv, setCardCvv] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const momoPhoneError = useMemo(
-    () => (method === "momo" ? validateMomoByProvider(momoProvider, momoLocal) : ""),
-    [method, momoProvider, momoLocal]
-  );
+  const pricingOpts = useCheckoutPricingOptions();
+  const breakdown =
+    pricingOpts && subtotal > 0
+      ? computeCheckoutBreakdown(
+          subtotal,
+          pricingOpts.commissionPercent,
+          pricingOpts.paystackFeePercent,
+          pricingOpts.paystackFeeFixedGhs
+        )
+      : null;
+  const totalStr = formatGhc(breakdown ? breakdown.total : subtotal);
 
-  useEffect(() => {
-    setMomoAmount(subtotal > 0 ? subtotal.toFixed(2) : "");
-  }, [subtotal]);
-
-  const placeOrderAndPay = async () => {
+  /**
+   * Paystack guide flow: backend creates the session; frontend only POSTs { email, amount, orderId } then redirects.
+   */
+  const handlePayNow = async () => {
     setErr("");
     if (!accessToken) {
       nav("/login");
+      return;
+    }
+    const email = (user && user.email && String(user.email).trim()) || "";
+    if (!email) {
+      setErr("Add an email to your account before paying, or sign in with email.");
       return;
     }
     if (!items.length) {
       setErr("Your cart is empty.");
       return;
     }
-    if (method === "momo") {
-      if (!momoProvider) {
-        setErr("Choose your mobile money provider.");
-        return;
-      }
-      if (momoPhoneError) {
-        setErr(momoPhoneError);
-        return;
-      }
-      const amt = parseFloat(momoAmount);
-      if (!Number.isFinite(amt) || amt <= 0) {
-        setErr("Enter a valid amount.");
-        return;
-      }
-    } else {
-      const digits = cardNumber.replace(/\D/g, "");
-      if (digits.length < 13) {
-        setErr("Enter a valid card number.");
-        return;
-      }
-      if (!/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardExpiry)) {
-        setErr("Expiry must be MM/YY.");
-        return;
-      }
-      if (!/^\d{3,4}$/.test(cardCvv)) {
-        setErr("Enter a valid CVV.");
-        return;
-      }
-      if (cardholderName.trim().length < 2) {
-        setErr("Enter the name on the card.");
-        return;
-      }
-    }
-
     setLoading(true);
     try {
       const checkoutBody = { items: items.map((p) => ({ productId: p.id, quantity: p.qty })) };
@@ -1501,42 +1415,22 @@ export function CheckoutPage() {
         headers: { Authorization: `Bearer ${accessToken}` },
         json: checkoutBody
       });
-
-      let payJson;
-      if (method === "momo") {
-        const amt = parseFloat(momoAmount);
-        if (Math.abs(amt - order.total) > 0.02) {
-          setErr("Amount must match the order total.");
-          setLoading(false);
-          return;
-        }
-        const providerLabel =
-          momoProvider === "mtn" ? "MTN MoMo" : momoProvider === "telecel" ? "Telecel Cash" : "AirtelTigo Money";
-        const refMerged = [providerLabel, reference.trim()].filter(Boolean).join(" · ");
-        payJson = {
-          method: "momo",
-          momoPhone: buildGhanaMomoPhone(momoLocal),
-          momoAmount: amt,
-          ...(refMerged ? { reference: refMerged } : {})
-        };
-      } else {
-        payJson = {
-          method: "bank",
-          cardholderName: cardholderName.trim(),
-          cardNumber: cardNumber.replace(/\s/g, ""),
-          cardExpiry,
-          cvv: cardCvv.trim(),
-          ...(reference.trim() ? { reference: reference.trim() } : {})
-        };
-      }
-
-      await apiFetch(`/api/orders/${order.id}/pay-manual`, {
+      const data = await apiFetch("/api/paystack/init", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        json: payJson
+        json: {
+          email,
+          amount: Number(order.total),
+          orderId: order.id
+        }
       });
-      clear();
-      nav(`/payment/success?orderId=${order.id}`, { replace: true });
+      const url = data.authorization_url || data.authorizationUrl;
+      if (!url) {
+        setErr("Paystack did not return a payment link.");
+        setLoading(false);
+        return;
+      }
+      window.location.href = url;
     } catch (ex) {
       const st = ex && typeof ex.status === "number" ? ex.status : 0;
       if (st === 403) {
@@ -1544,16 +1438,11 @@ export function CheckoutPage() {
           "You don’t have permission to check out with this login. Log out and sign in again, or use a buyer account."
         );
       } else {
-        setErr(ex.message || "Could not complete payment.");
+        setErr(ex.message || "Could not start payment.");
       }
-    } finally {
       setLoading(false);
     }
   };
-
-  const cardDigitsPreview = cardNumber.replace(/\D/g, "");
-  const cardDisplay = cardDigitsPreview.length > 0 ? formatCardNumberInput(cardDigitsPreview) : "•••• •••• •••• ••••";
-  const totalStr = formatGhc(subtotal);
 
   const modalShell = (inner) =>
     h("div", { className: "relative min-h-screen bg-slate-100 dark:bg-night-950" }, [
@@ -1588,7 +1477,7 @@ export function CheckoutPage() {
           h(
             "h1",
             { key: "h1", className: "font-display text-xl font-bold text-slate-900 dark:text-white sm:text-2xl" },
-            "Complete Your Payment"
+            "Checkout"
           ),
           h("p", { key: "tot", className: "mt-1 text-sm text-slate-600 dark:text-slate-400" }, `Total: ${totalStr}`)
         ]),
@@ -1613,19 +1502,17 @@ export function CheckoutPage() {
   return modalShell([
     h("div", { key: "hdr", className: "flex items-start justify-between gap-3" }, [
       h("div", { key: "titles" }, [
-        h(
-          "h1",
-          { key: "h1", className: "font-display text-xl font-bold text-slate-900 dark:text-white sm:text-2xl" },
-          "Complete Your Payment"
-        ),
+        h("h1", { key: "h1", className: "font-display text-xl font-bold text-slate-900 dark:text-white sm:text-2xl" }, "Checkout"),
         h("p", { key: "tot", className: "mt-1 text-sm font-medium text-slate-600 dark:text-slate-400" }, [
           "Total: ",
           h("span", { key: "amt", className: "text-slate-900 dark:text-white" }, totalStr)
         ]),
         h(
           "p",
-          { key: "fee-note", className: "mt-2 max-w-sm text-xs text-slate-500 dark:text-slate-400" },
-          "You pay the cart total below. Vendor contact details follow where applicable."
+          { key: "note", className: "mt-2 max-w-sm text-xs text-slate-500 dark:text-slate-400" },
+          pricingOpts?.paystackOnly
+            ? "You’ll pay on Paystack (card or Ghana mobile money). Checkout uses Paystack for all money movement."
+            : "You’ll complete payment on the next screen."
         )
       ]),
       h(
@@ -1642,399 +1529,54 @@ export function CheckoutPage() {
       )
     ]),
 
-    items.length > 0 &&
-      h(
-        "div",
-        {
-          key: "pay-summary",
-          className: "mt-5 space-y-3 rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.07] p-4 text-sm text-slate-700 dark:text-slate-200"
-        },
-        [
-          h("p", { key: "t", className: "text-xs font-bold uppercase tracking-wide text-emerald-900 dark:text-emerald-100" }, "Order total"),
-          h("div", { key: "row1", className: "flex justify-between gap-2" }, [
-            h("span", null, "You pay"),
-            h("span", { className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(subtotal))
-          ]),
-          h("div", { key: "vendors", className: "mt-3 space-y-3 border-t border-white/15 pt-3" }, [
-            h("p", { className: "text-xs font-semibold text-slate-600 dark:text-slate-300" }, "Pay vendor"),
-            ...cartBySeller.map((g, idx) => {
-              const vendorTotal = sellerGroupGross(g.items);
-              return h(
-                "div",
-                {
-                  key: g.sellerId || String(idx),
-                  className: "rounded-xl border border-white/10 bg-white/40 p-3 text-xs dark:bg-night-900/40"
-                },
-                [
-                  h("p", { key: "h", className: "font-semibold text-slate-900 dark:text-white" }, [
-                    g.sellerPayment?.displayName || "Vendor",
-                    " · ",
-                    h("span", { className: "text-emerald-700 dark:text-emerald-300" }, `items total ~${formatGhc(vendorTotal)}`)
-                  ]),
-                  g.sellerPayment?.phone &&
-                    h("p", { key: "ph", className: "mt-1 font-mono text-slate-800 dark:text-slate-100" }, String(g.sellerPayment.phone)),
-                  (g.sellerPayment?.bankName || g.sellerPayment?.bankAccountNumber) &&
-                    h("p", { key: "bk", className: "mt-1 text-slate-700 dark:text-slate-200" }, [
-                      [g.sellerPayment.bankName, g.sellerPayment.bankAccountName].filter(Boolean).join(" · "),
-                      g.sellerPayment.bankAccountNumber ? ` · ${g.sellerPayment.bankAccountNumber}` : ""
-                    ])
-                ].filter(Boolean)
-              );
-            })
-          ])
-        ]
-      ),
-
     h(
       "div",
-      {
-        key: "segment",
-        className: "mt-6 flex rounded-2xl bg-slate-200/90 p-1 dark:bg-night-800/90"
-      },
+      { key: "lines", className: "mt-5 space-y-2 rounded-2xl border border-white/15 bg-white/50 p-4 dark:bg-night-900/50" },
       [
-        h(
-          "button",
-          {
-            key: "card",
-            type: "button",
-            role: "tab",
-            "aria-selected": method === "bank",
-            className: `${segBtn} ${method === "bank" ? segBtnOn : segBtnOff}`,
-            onClick: () => setMethod("bank")
-          },
-          "Credit / Debit Card"
+        h("p", { key: "lab", className: "text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Item summary"),
+        ...items.map((p) =>
+          h("div", { key: p.id, className: "flex justify-between gap-3 text-sm" }, [
+            h("span", { className: "text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)]),
+            h("span", { className: "font-medium text-slate-900 dark:text-white" }, formatGhc(p.price * p.qty))
+          ])
         ),
-        h(
-          "button",
-          {
-            key: "momo",
-            type: "button",
-            role: "tab",
-            "aria-selected": method === "momo",
-            className: `${segBtn} ${method === "momo" ? segBtnOn : segBtnOff}`,
-            onClick: () => setMethod("momo")
-          },
-          "Mobile Money"
-        )
+        breakdown && pricingOpts
+          ? h("div", { key: "fees", className: "mt-3 space-y-1 border-t border-white/10 pt-3 text-sm" }, [
+              h("div", { className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
+                h("span", null, "Items (seller price)"),
+                h("span", { className: "font-medium text-slate-900 dark:text-white" }, formatGhc(breakdown.subtotal))
+              ]),
+              h("div", { className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
+                h("span", null, "Service fee"),
+                h("span", { className: "font-medium text-slate-900 dark:text-white" }, formatGhc(breakdown.serviceFee))
+              ])
+            ])
+          : null
       ]
     ),
 
-    h("div", { key: "body", className: "mt-6 min-h-[280px]" }, [
-      method === "bank"
-        ? h("div", { key: "bank-block", className: "space-y-4" }, [
-            h("div", { key: "bank-h", className: "flex flex-wrap items-center justify-between gap-2" }, [
-              h(
-                "h2",
-                { key: "h2", className: "text-sm font-semibold text-slate-800 dark:text-slate-100" },
-                "Pay with Bank Card"
-              ),
-              h("div", { key: "brands", className: "flex items-center gap-1.5" }, [
-                h(
-                  "span",
-                  {
-                    key: "visa",
-                    className: "rounded-lg bg-[#1A1F71] px-2 py-1 text-[10px] font-bold tracking-wide text-white"
-                  },
-                  "VISA"
-                ),
-                h(
-                  "span",
-                  {
-                    key: "mc",
-                    className:
-                      "rounded-lg bg-gradient-to-r from-[#EB001B] to-[#F79E1B] px-2 py-1 text-[10px] font-bold text-white"
-                  },
-                  "MC"
-                )
-              ])
-            ]),
-            h(
-              "div",
-              {
-                key: "card-visual",
-                className:
-                  "relative overflow-hidden rounded-2xl bg-gradient-to-br from-night-800 via-sky-950 to-blue-950 p-5 text-white shadow-lg ring-1 ring-sky-500/20"
-              },
-              [
-                h("div", {
-                  key: "glow",
-                  className: "pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-ice-500/25 blur-2xl"
-                }),
-                h("div", {
-                  key: "chip",
-                  className: "relative h-9 w-12 rounded-md bg-gradient-to-br from-ice-400/90 to-amber-500/80 shadow-inner"
-                }),
-                h("p", { key: "num", className: "relative mt-4 font-mono text-lg tracking-widest sm:text-xl" }, cardDisplay),
-                h(
-                  "div",
-                  {
-                    key: "row",
-                    className: "relative mt-4 flex justify-between gap-4 text-xs uppercase tracking-wide text-white/75"
-                  },
-                  [
-                    h("div", { key: "name" }, [
-                      h("div", { key: "l", className: "text-[10px]" }, "Cardholder"),
-                      h(
-                        "div",
-                        { key: "v", className: "mt-0.5 text-sm font-medium text-white" },
-                        cardholderName.trim() || "YOUR NAME"
-                      )
-                    ]),
-                    h("div", { key: "exp", className: "text-right" }, [
-                      h("div", { key: "l", className: "text-[10px]" }, "Expires"),
-                      h("div", { key: "v", className: "mt-0.5 font-mono text-sm text-white" }, cardExpiry || "MM/YY")
-                    ])
-                  ]
-                )
-              ]
-            ),
-            h(Field, { key: "cn", label: "Card number" }, h(TextInput, {
-              value: cardNumber,
-              onChange: (e) => setCardNumber(formatCardNumberInput(e.target.value)),
-              placeholder: "1234 5678 9012 3456",
-              inputMode: "numeric",
-              autoComplete: "cc-number"
-            })),
-            h(Field, { key: "ch", label: "Name on card" }, h(TextInput, {
-              value: cardholderName,
-              onChange: (e) => setCardholderName(e.target.value.toUpperCase()),
-              placeholder: "JANE DOE",
-              autoComplete: "cc-name"
-            })),
-            h("div", { key: "exp-cvv", className: "grid grid-cols-2 gap-3" }, [
-              h(Field, { key: "exp", label: "Expiry date" }, h(TextInput, {
-                value: cardExpiry,
-                onChange: (e) => setCardExpiry(formatExpiryInput(e.target.value)),
-                placeholder: "MM / YY",
-                inputMode: "numeric",
-                autoComplete: "cc-exp"
-              })),
-              h("div", { key: "cvv-wrap", className: "space-y-1.5" }, [
-                h("div", { key: "cvv-lbl", className: "flex items-center gap-1" }, [
-                  h(
-                    "span",
-                    {
-                      key: "lb",
-                      className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400"
-                    },
-                    "CVV"
-                  ),
-                  h(HelpCircle, {
-                    key: "ic",
-                    className: "h-3.5 w-3.5 text-slate-400",
-                    "aria-label": "Card security code",
-                    title: "3–4 digits on the back of your card"
-                  })
-                ]),
-                h(TextInput, {
-                  key: "cvv-in",
-                  value: cardCvv,
-                  onChange: (e) => setCardCvv(e.target.value.replace(/\D/g, "").slice(0, 4)),
-                  placeholder: "•••",
-                  inputMode: "numeric",
-                  autoComplete: "cc-csc",
-                  type: "password"
-                })
-              ])
-            ]),
-            h(
-              "label",
-              {
-                key: "save",
-                className: "flex cursor-pointer items-center gap-2.5 text-sm text-slate-600 dark:text-slate-300"
-              },
-              [
-                h("input", {
-                  key: "cb",
-                  type: "checkbox",
-                  checked: saveCard,
-                  onChange: (e) => setSaveCard(e.target.checked),
-                  className:
-                    "h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-white/20 dark:bg-night-900"
-                }),
-                "Save card for future payments"
-              ]
-            ),
-            h("p", { key: "hint-card", className: "text-xs text-slate-500 dark:text-slate-400" }, "Full card number and CVV are not stored on our servers.")
-          ])
-        : h("div", { key: "momo-block", className: "space-y-4" }, [
-            h(
-              "h2",
-              { key: "momo-h2", className: "text-sm font-semibold text-slate-800 dark:text-slate-100" },
-              "Pay with Mobile Money"
-            ),
-            h("div", { key: "providers", className: "grid grid-cols-1 gap-2 sm:grid-cols-3" }, [
-              h(
-                "button",
-                {
-                  key: "mtn",
-                  type: "button",
-                  onClick: () => setMomoProvider("mtn"),
-                  className: `rounded-xl px-2 py-3 text-center text-[11px] font-bold leading-snug text-slate-900 shadow-sm transition sm:text-xs ${
-                    momoProvider === "mtn" ? "ring-2 ring-sky-500 ring-offset-2 dark:ring-offset-night-900" : ""
-                  } bg-[#FFCB05] hover:brightness-105`
-                },
-                "MTN Mobile Money"
-              ),
-              h(
-                "button",
-                {
-                  key: "telecel",
-                  type: "button",
-                  onClick: () => setMomoProvider("telecel"),
-                  className: `rounded-xl px-2 py-3 text-center text-[11px] font-bold leading-snug text-white shadow-sm transition sm:text-xs ${
-                    momoProvider === "telecel" ? "ring-2 ring-sky-500 ring-offset-2 dark:ring-offset-night-900" : ""
-                  } bg-[#E60000] hover:brightness-110`
-                },
-                "Telecel Cash"
-              ),
-              h(
-                "button",
-                {
-                  key: "tigo",
-                  type: "button",
-                  onClick: () => setMomoProvider("airteltigo"),
-                  className: `rounded-xl px-2 py-3 text-center text-[11px] font-bold leading-snug text-white shadow-sm transition sm:text-xs ${
-                    momoProvider === "airteltigo" ? "ring-2 ring-sky-500 ring-offset-2 dark:ring-offset-night-900" : ""
-                  } bg-[#0066B3] hover:brightness-110`
-                },
-                "AirtelTigo Money"
-              )
-            ]),
-            h("div", { key: "phone-block", className: "space-y-1.5" }, [
-              h(
-                "span",
-                {
-                  key: "plab",
-                  className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400"
-                },
-                "Mobile number"
-              ),
-              h(
-                "div",
-                {
-                  key: "prow",
-                  className:
-                    "flex min-h-[48px] overflow-hidden rounded-2xl border border-slate-300/70 bg-white/70 shadow-inner dark:border-white/10 dark:bg-night-900/60"
-                },
-                [
-                  h(
-                    "span",
-                    {
-                      key: "pre",
-                      className:
-                        "flex shrink-0 items-center gap-2 border-r border-slate-300/70 px-3 text-sm text-slate-700 dark:border-white/10 dark:text-slate-200"
-                    },
-                    [
-                      h("span", { key: "flag", className: "text-lg leading-none", "aria-hidden": true }, "🇬🇭"),
-                      h("span", { key: "cc", className: "font-mono text-sm font-semibold" }, "+233")
-                    ]
-                  ),
-                  h("input", {
-                    key: "in",
-                    className:
-                      "min-w-0 flex-1 border-0 bg-transparent px-3 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100",
-                    value: momoLocal,
-                    onChange: (e) => setMomoLocal(normalizeGhanaMomoLocal(e.target.value)),
-                    placeholder: "Enter your mobile number",
-                    inputMode: "numeric",
-                    pattern: "[0-9]*",
-                    maxLength: 10,
-                    autoComplete: "tel-national"
-                  })
-                ]
-              ),
-              h(
-                "p",
-                { key: "phint", className: "text-xs text-slate-500 dark:text-slate-400" },
-                "Enter 9 digits (leading 0 is optional). Amount sent must match your total."
-              )
-            ]),
-            method === "momo" && momoPhoneError
-              ? h("p", { key: "momo-phone-err", className: "text-xs font-medium text-rose-600 dark:text-rose-300" }, momoPhoneError)
-              : null,
-            h(Field, { key: "momo-amt", label: "Amount to send (Ghc)" }, h(TextInput, {
-              value: momoAmount,
-              onChange: (e) => setMomoAmount(e.target.value),
-              placeholder: subtotal.toFixed(2),
-              inputMode: "decimal"
-            }))
-          ])
+    h("div", { key: "total-row", className: "mt-4 border-t border-slate-200/80 pt-3 dark:border-white/10" }, [
+      h("div", { className: "flex justify-between text-base font-bold text-slate-900 dark:text-white" }, [
+        h("span", null, "Total"),
+        h("span", null, totalStr)
+      ]),
+      breakdown && breakdown.processingFee > 0.005
+        ? h(
+            "p",
+            { className: "mt-1.5 text-xs leading-snug text-slate-500 dark:text-slate-400" },
+            "Total includes payment fees; the exact amount may vary slightly by payment method."
+          )
+        : null
     ]),
 
-    h(Field, { key: "ref", label: "Reference / note (optional)" }, h(TextInput, {
-      value: reference,
-      onChange: (e) => setReference(e.target.value),
-      placeholder: "Transaction ID, auth code, etc."
-    })),
-
-    err
-      ? h(InlineNotice, { key: "err", variant: "error", className: "mt-3", onDismiss: () => setErr("") }, err)
-      : null,
+    err ? h(InlineNotice, { key: "err", variant: "error", className: "mt-4", onDismiss: () => setErr("") }, err) : null,
 
     h(Button, {
       key: "pay",
       className: "mt-5 w-full !rounded-2xl !py-3.5 text-base font-semibold",
       loading,
-      disabled: method === "momo" && (!!momoPhoneError || !momoProvider),
-      onClick: placeOrderAndPay
-    }, `Pay ${totalStr}`),
-
-    h(
-      "div",
-      {
-        key: "trust",
-        className: "mt-4 flex flex-col items-center gap-2 text-xs text-slate-500 dark:text-slate-400"
-      },
-      [
-        h("div", { key: "lock", className: "flex items-center gap-1.5" }, [
-          h(Lock, { key: "ic", className: "h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" }),
-          h("span", { key: "t" }, "100% Secure Payment")
-        ]),
-        h("div", { key: "mini", className: "flex flex-wrap justify-center gap-2 opacity-80" }, [
-          h("span", { key: "v", className: "rounded bg-[#1A1F71] px-1.5 py-0.5 text-[9px] font-bold text-white" }, "VISA"),
-          h(
-            "span",
-            { key: "m", className: "rounded bg-gradient-to-r from-[#EB001B] to-[#F79E1B] px-1.5 py-0.5 text-[9px] font-bold text-white" },
-            "MC"
-          )
-        ])
-      ]
-    ),
-
-    h(
-      "div",
-      {
-        key: "footer",
-        className: "mt-6 flex items-center justify-between border-t border-slate-200/80 pt-4 dark:border-white/10"
-      },
-      [
-        h(
-          "button",
-          {
-            key: "back",
-            type: "button",
-            onClick: () => nav(-1),
-            className:
-              "inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 transition hover:text-sky-600 dark:text-slate-400 dark:hover:text-ice-400"
-          },
-          [h(ArrowLeft, { key: "a", className: "h-4 w-4" }), h("span", { key: "b" }, "Back")]
-        ),
-        h(
-          "div",
-          {
-            key: "foot-brands",
-            className: "flex max-w-[52%] flex-wrap justify-end gap-x-2 gap-y-1 text-[9px] font-bold uppercase tracking-tight text-slate-400 dark:text-slate-500"
-          },
-          [
-            h("span", { key: "mtn" }, "MTN"),
-            h("span", { key: "tel" }, "Telecel"),
-            h("span", { key: "at" }, "AirtelTigo"),
-            h("span", { key: "cd" }, "Cards")
-          ]
-        )
-      ]
-    )
+      onClick: handlePayNow
+    }, "Pay now")
   ]);
 }
 
@@ -2105,12 +1647,12 @@ export function ShopPage() {
         onSearchChange: setQueryInput,
         onSearchSubmit: () => setSearchQ(queryInput.trim())
       },
-      h("div", { key: "main", className: "relative mx-auto max-w-7xl px-4 py-6 pb-24 sm:px-6" }, [
+      h("div", { key: "main", className: "relative w-full px-4 py-6 pb-24 sm:px-6 lg:px-8" }, [
       h(RefImage, {
         key: "bg-blur",
         n: 4,
         alt: "",
-        className: "pointer-events-none absolute left-1/2 top-0 -z-10 h-40 w-full max-w-2xl -translate-x-1/2 rounded-3xl object-cover opacity-20 blur-2xl dark:opacity-[0.12]"
+        className: "pointer-events-none absolute left-0 right-0 top-0 -z-10 h-40 w-full rounded-3xl object-cover opacity-20 blur-2xl dark:opacity-[0.12]"
       }),
       h("section", { key: "cats", className: "mb-4" }, h(CategoryRow, { active: cat, onSelect: setCat })),
       h(
@@ -2173,7 +1715,7 @@ export function ShopPage() {
                     key: "hero-sub",
                     className: "text-xs leading-relaxed text-slate-600 dark:text-slate-400 sm:text-sm"
                   },
-                  "Electronics, books, clothing, food, and more from trusted campus vendors."
+                  "Food, fashion, electronics, beauty, services, books, and essentials from trusted campus vendors."
                 )
               ])
             ]
@@ -2202,13 +1744,22 @@ export function ShopPage() {
       listErr
         ? h(InlineNotice, { key: "list-err", variant: "error", className: "mb-4", onDismiss: () => setListErr("") }, listErr)
         : null,
-      h("h2", { key: "feat-h2", className: "mb-4 font-display text-xl font-bold text-slate-900 dark:text-white sm:text-2xl" }, "Featured products"),
-      listLoading &&
-        h("p", { key: "list-load", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" }, "Loading products…"),
       h(
-        "div",
-        { key: "product-grid", className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" },
-        filtered.map((p) => {
+        "section",
+        {
+          key: "browse",
+          id: "buyer-shop-grid",
+          className: "scroll-mt-28 sm:scroll-mt-32",
+          "aria-label": "Product catalog"
+        },
+        [
+          h("h2", { key: "feat-h2", className: "mb-4 font-display text-xl font-bold text-slate-900 dark:text-white sm:text-2xl" }, "Featured products"),
+          listLoading &&
+            h("p", { key: "list-load", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" }, "Loading products…"),
+          h(
+            "div",
+            { key: "product-grid", className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" },
+            filtered.map((p) => {
           const badge = productBadge(p);
           const detailTo = `/products/${p.id}`;
           return h(GlassCard, { key: p.id, className: "group flex flex-col !p-4" }, [
@@ -2307,6 +1858,8 @@ export function ShopPage() {
             )
           ]);
         })
+      )
+        ]
       )
     ])
   ),
@@ -2459,7 +2012,7 @@ export function ProfilePage() {
     h(
       BuyerLayout,
       { key: "layout", onOpenCart: () => setCartOpen(true), hideSearch: true },
-      h("div", { key: "main", className: "mx-auto max-w-3xl px-4 py-10 sm:px-6" }, [
+      h("div", { key: "main", className: "w-full px-4 py-10 sm:px-6 lg:px-8" }, [
       h("div", { key: "hero", className: "mb-8 flex flex-col items-center text-center" }, [
         h("div", { key: "avatar-wrap", className: "flex flex-col items-center" }, [
           h(
@@ -2602,7 +2155,8 @@ function paymentMethodLabel(method) {
   if (method === "momo") return "Mobile money";
   if (method === "bank") return "Bank card";
   if (method === "stripe") return "Stripe";
-  return "—";
+  if (method === "paystack") return "Paystack";
+  return method ? String(method) : "—";
 }
 
 function BuyerReceiptModal({ order, onClose }) {
@@ -2747,7 +2301,7 @@ export function BuyerMessagesPage() {
   };
 
   const renderBubble = (m, idx) => {
-    const mine = m.senderRole === "buyer";
+    const mine = m.senderLabel === "You";
     return h(
       "div",
       {
@@ -2790,14 +2344,14 @@ export function BuyerMessagesPage() {
           "aside",
           {
             key: "conv-list",
-            className: `flex max-h-[40vh] shrink-0 flex-col border-white/10 md:max-h-none md:h-auto md:w-[min(100%,20rem)] md:max-w-[40%] md:border-r ${
+            className: `flex max-h-[40vh] shrink-0 flex-col border-white/10 md:max-h-none md:h-auto md:w-[min(100%,17rem)] md:max-w-[40%] md:border-r ${
               mobileShowChat ? "max-md:hidden" : "max-md:flex min-h-0"
             }`
           },
           [
             h("div", { key: "conv-h", className: "shrink-0 border-b border-white/10 px-4 py-3" }, [
               h("h2", { className: "text-base font-semibold text-slate-900 dark:text-white" }, "Chats"),
-              h("p", { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" }, "One thread per seller — every order with them stays together.")
+              h("p", { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" }, "Sellers you’ve ordered from — plus Campus Mart Support for account help.")
             ]),
             h(
               "div",
@@ -2936,7 +2490,7 @@ export function BuyerMessagesPage() {
     h(
       BuyerLayout,
       { key: "layout", onOpenCart: () => setCartOpen(true), hideSearch: true, title: "Messages" },
-      h("div", { key: "main", className: "mx-auto flex w-full max-w-5xl flex-col px-4 py-6 pb-24 sm:px-6" }, [
+      h("div", { key: "main", className: "flex w-full flex-col px-4 py-6 pb-24 sm:px-6 lg:px-8" }, [
         h("h2", { key: "h2", className: "sr-only" }, "Messages from sellers"),
         loading ? h("p", { key: "ld", className: "text-sm text-slate-500 dark:text-slate-400" }, "Loading…") : null,
         !loading &&
@@ -2950,7 +2504,7 @@ export function BuyerMessagesPage() {
             h(
               "p",
               { className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
-              "After you place an order, each seller you bought from appears here as one conversation — all your messages with them stay in that thread."
+              "Order chats show here when you buy. If your marketplace has an admin, Campus Mart Support appears first for safety and account help."
             )
           ]),
         chatShell
@@ -2963,12 +2517,60 @@ export function BuyerMessagesPage() {
 export function BuyerOrdersPage() {
   const [cartOpen, setCartOpen] = useState(false);
   const { accessToken } = useAuth();
+  const { toast, confirm } = useNotice();
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [reviewModal, setReviewModal] = useState(null);
   const [receiptOrder, setReceiptOrder] = useState(null);
+  const [cancellingId, setCancellingId] = useState("");
   const closeReviewModal = useCallback(() => setReviewModal(null), []);
+
+  const cancelOrder = async (order) => {
+    if (!accessToken || !order?.id) return;
+    if (!["pending_payment", "awaiting_vendor_payment"].includes(order.status)) return;
+    const ok = await confirm(
+      order.status === "awaiting_vendor_payment"
+        ? "You sent payment details but no seller has confirmed receipt yet. Cancelling now stops the order — if any vendor already received your money you'll need to contact them directly."
+        : "This order hasn't been paid yet. Cancelling will remove it from sellers' queues.",
+      { title: "Cancel this order?", confirmLabel: "Yes, cancel order", cancelLabel: "Keep order" }
+    );
+    if (!ok) return;
+    setCancellingId(order.id);
+    try {
+      const { order: updated } = await apiFetch(`/api/orders/${order.id}/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: {}
+      });
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, ...updated } : o)));
+      toast("Order cancelled.", { variant: "success" });
+    } catch (ex) {
+      toast(ex.message || "Could not cancel order", { variant: "error" });
+    } finally {
+      setCancellingId("");
+    }
+  };
+
+  const deleteOrder = async (order) => {
+    if (!accessToken || !order?.id) return;
+    if (order.status !== "cancelled") return;
+    const ok = await confirm(
+      "Permanently removes this cancelled order from your list. This cannot be undone.",
+      { title: "Remove from my orders?", confirmLabel: "Yes, remove", cancelLabel: "Keep" }
+    );
+    if (!ok) return;
+    try {
+      await apiFetch(`/api/orders/${order.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setOrders((prev) => prev.filter((o) => o.id !== order.id));
+      toast("Order removed.", { variant: "success" });
+    } catch (ex) {
+      toast(ex.message || "Could not remove order", { variant: "error" });
+    }
+  };
 
   useEffect(() => {
     if (!accessToken) return;
@@ -3015,7 +2617,7 @@ export function BuyerOrdersPage() {
     h(
       BuyerLayout,
       { key: "layout", onOpenCart: () => setCartOpen(true), hideSearch: true, title: "My orders" },
-      h("div", { key: "main", className: "mx-auto max-w-3xl px-4 py-8 pb-24 sm:px-6" }, [
+      h("div", { key: "main", className: "mx-auto w-full max-w-5xl px-4 py-8 pb-24 sm:px-6 lg:px-8" }, [
       h("h2", { key: "h2", className: "sr-only" }, "Your orders"),
       h(
         "p",
@@ -3083,6 +2685,68 @@ export function BuyerOrdersPage() {
                       ])
                     : null
                 ].filter(Boolean)),
+                h(
+                  "div",
+                  {
+                    key: "act",
+                    className: "flex flex-wrap items-center gap-2 border-t border-white/10 px-3 py-2.5 sm:px-4"
+                  },
+                  [
+                    ["pending_payment", "awaiting_vendor_payment"].includes(o.status)
+                      ? h(
+                          "button",
+                          {
+                            key: "cancel",
+                            type: "button",
+                            disabled: cancellingId === o.id,
+                            onClick: () => cancelOrder(o),
+                            className:
+                              "inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold text-slate-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-night-900/40 dark:text-slate-200 dark:hover:border-rose-400/40 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
+                          },
+                          [
+                            h(X, { key: "i", className: "h-4 w-4" }),
+                            h("span", { key: "l" }, cancellingId === o.id ? "Cancelling…" : "Cancel order")
+                          ]
+                        )
+                      : null,
+                    o.status === "cancelled"
+                      ? h(
+                          "button",
+                          {
+                            key: "del",
+                            type: "button",
+                            onClick: () => deleteOrder(o),
+                            className:
+                              "inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold text-slate-500 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 dark:border-white/10 dark:bg-night-900/40 dark:text-slate-400 dark:hover:border-rose-400/40 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
+                          },
+                          [
+                            h(Trash2, { key: "i", className: "h-4 w-4" }),
+                            h("span", { key: "l" }, "Remove from list")
+                          ]
+                        )
+                      : null,
+                    h(
+                      Link,
+                      {
+                        key: "rep",
+                        to: `/reports?order=${encodeURIComponent(String(o.id))}`,
+                        className:
+                          "inline-flex min-h-[40px] items-center justify-center rounded-xl border-2 border-rose-500/60 bg-white/50 px-4 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-400/45 dark:bg-night-900/40 dark:text-rose-200 dark:hover:bg-rose-950/30"
+                      },
+                      "Report an issue"
+                    ),
+                    h(
+                      Link,
+                      {
+                        key: "reo",
+                        to: "/",
+                        className:
+                          "inline-flex min-h-[40px] items-center justify-center rounded-xl bg-purple-700 px-4 text-sm font-semibold text-white shadow-md shadow-purple-900/25 transition hover:bg-purple-800 dark:bg-purple-600 dark:hover:bg-purple-500"
+                      },
+                      "Reorder"
+                    )
+                  ].filter(Boolean)
+                ),
                 lines.length > 0 &&
                   h("div", { className: "border-t border-white/10 px-3 py-3 sm:px-4" }, [
                     h("p", { className: "mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Items"),
@@ -3142,10 +2806,21 @@ export function BuyerOrdersPage() {
 export function PaymentSuccessPage() {
   const [params] = useSearchParams();
   const { accessToken } = useAuth();
+  const { clear: clearCart } = useCart();
+  const cartClearedRef = useRef(false);
   const orderId = params.get("orderId") || "";
+  const paystackRef = params.get("reference") || params.get("trxref") || "";
   const [phase, setPhase] = useState("loading");
   const [order, setOrder] = useState(null);
   const [pollErr, setPollErr] = useState("");
+
+  /** Paid orders shouldn’t keep line items in the client cart (localStorage). */
+  useEffect(() => {
+    if (cartClearedRef.current) return;
+    if (phase !== "confirmed" && phase !== "waiting_vendor") return;
+    cartClearedRef.current = true;
+    clearCart();
+  }, [phase, clearCart]);
 
   useEffect(() => {
     if (!orderId) {
@@ -3212,19 +2887,45 @@ export function PaymentSuccessPage() {
       return false;
     };
 
-    tick();
-    const t = setInterval(async () => {
-      const done = await tick();
-      if (done) clearInterval(t);
-    }, 3000);
+    let intervalId;
+    (async () => {
+      try {
+        if (paystackRef) {
+          await apiFetch(`/api/paystack/verify/${encodeURIComponent(paystackRef)}`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+        } else {
+          await apiFetch("/api/payments/paystack/verify", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${accessToken}` },
+            json: { orderId }
+          });
+        }
+      } catch {
+        /* Non-Paystack flow or already finalized */
+      }
+      if (cancelled) return;
+      const done0 = await tick();
+      if (cancelled || done0) return;
+      intervalId = setInterval(async () => {
+        if (cancelled) {
+          clearInterval(intervalId);
+          return;
+        }
+        const done = await tick();
+        if (done) clearInterval(intervalId);
+      }, 3000);
+    })();
+
     return () => {
       cancelled = true;
-      clearInterval(t);
+      if (intervalId) clearInterval(intervalId);
     };
-  }, [orderId, accessToken]);
+  }, [orderId, accessToken, paystackRef]);
 
   const sellers = order?.sellerContacts || [];
   const confirmed = new Set(order?.confirmedSellerIds || []);
+  const paidViaCardGateway = order && ["paystack", "stripe"].includes(order.paymentMethod);
 
   return h("div", { className: "mx-auto max-w-lg px-4 py-8 sm:py-12" }, [
     h(GlassPanel, { className: "text-center" }, [
@@ -3270,7 +2971,13 @@ export function PaymentSuccessPage() {
       ],
       phase === "confirmed" && [
         h("h1", { key: "h1", className: "font-display text-2xl font-bold text-emerald-400" }, "Payment successful"),
-        h("p", { key: "p", className: "mt-2 text-slate-600 dark:text-slate-300" }, "Your order is confirmed — the seller(s) acknowledged payment."),
+        h(
+          "p",
+          { key: "p", className: "mt-2 text-slate-600 dark:text-slate-300" },
+          paidViaCardGateway
+            ? "Your card payment was received and your order is confirmed."
+            : "Your order is confirmed — the seller(s) acknowledged payment."
+        ),
         h(
           "p",
           { key: "p2", className: "mt-3 text-sm text-slate-600 dark:text-slate-400" },
