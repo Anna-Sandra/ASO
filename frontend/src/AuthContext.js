@@ -15,7 +15,7 @@ const AuthContext = createContext({
   setAccessToken: () => {}
 });
 
-const TOKEN_KEY = "brewmart_access_token";
+const TOKEN_KEY = "campusmart_access_token";
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);

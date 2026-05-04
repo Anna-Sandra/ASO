@@ -39,7 +39,9 @@ import {
 import { EmailLog } from "../emailLog/emailLog.model";
 import { AdminAuditEvent, recordAdminAuditEvent } from "./adminAuditEvent.model";
 import { createPaystackRefund, getPaystackRefundById } from "../payments/payments.controller";
+import { runVendorPayoutsForOrder } from "../payments/paystackPayouts";
 import { applyProcessedPaystackRefundToOrder, isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
+import { Notification } from "../notifications/notification.model";
 import { conversationMessageSchema } from "../conversations/conversation.schemas";
 import { getPrimarySupportAdminId } from "../conversations/supportPeer";
 
@@ -120,6 +122,29 @@ function adminLevelForList(email: string | undefined, role: unknown): "super" | 
   return isSuperUserAdminEmail(email) ? "super" : "normal";
 }
 
+async function notifyOrderSellersAdminPaymentConfirmed(order: HydratedDocument<OrderDoc>): Promise<void> {
+  const sellerIds = Array.from(
+    new Set(
+      (order.items || [] as { sellerId: mongoose.Types.ObjectId }[]).map((it) => String(it.sellerId))
+    )
+  ).map((id) => new mongoose.Types.ObjectId(id));
+  if (!sellerIds.length) return;
+
+  const now = new Date();
+  const docs = sellerIds.map((sellerId) => ({
+    userId: sellerId,
+    type: "admin_payment_confirmed" as const,
+    title: "Admin confirmed Paystack payment",
+    message: `Payment for order #${order._id.toString().slice(-8)} has been confirmed. You can ship the products now.`,
+    orderId: order._id,
+    read: false,
+    createdAt: now,
+    updatedAt: now
+  }));
+
+  await Notification.insertMany(docs);
+}
+
 /** Stable key for a user row (lowercased email, else phone, else _id) — for deduping bad data. */
 function userContactKey(u: { _id: mongoose.Types.ObjectId; email?: string; phone?: string }): string {
   const e = (u.email || "").trim().toLowerCase();
@@ -155,20 +180,21 @@ function dedupeUserDocsByContactOldestWins<
 
 const BCRYPT_SALT = 12;
 
-const PAID_LIKE = ["paid", "processing", "sent_for_delivery", "delivered"] as const;
+const PAID_LIKE = ["pending_payment", "paid", "processing", "sent_for_delivery", "delivered"] as const;
 
 /**
  * Lightweight, polling-friendly counts of items needing admin attention. Used by the admin
  * shell sidebar to show "you've got mail" badges next to Orders, Vendor requests, Listings,
  * and Reports — the same affordance vendors already get for incoming orders.
  */
-export const adminBadges = asyncHandler(async (_req: Request, res: Response) => {
-  const [pendingOrders, pendingVendorApps, pendingProducts, openReports, openDisputes] = await Promise.all([
+export const adminBadges = asyncHandler(async (req: Request, res: Response) => {
+  const [pendingOrders, pendingVendorApps, pendingProducts, openReports, openDisputes, unreadNotifications] = await Promise.all([
     Order.countDocuments({ status: { $in: ["pending_payment", "awaiting_vendor_payment"] } }),
     VendorApplication.countDocuments({ status: "pending" }),
     Product.countDocuments({ status: "pending_approval" }),
     Report.countDocuments({ status: { $in: ["open", "in_review"] } }),
-    Order.countDocuments({ disputeOpen: true })
+    Order.countDocuments({ disputeOpen: true }),
+    Notification.countDocuments({ userId: new mongoose.Types.ObjectId(req.user?.id), read: false })
   ]);
 
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
@@ -178,7 +204,8 @@ export const adminBadges = asyncHandler(async (_req: Request, res: Response) => 
       "vendor-apps": pendingVendorApps,
       listings: pendingProducts,
       reports: openReports,
-      disputes: openDisputes
+      disputes: openDisputes,
+      notifications: unreadNotifications
     },
     fetchedAt: new Date().toISOString()
   });
@@ -1512,6 +1539,11 @@ export const patchAdminOrder = asyncHandler(async (req: Request, res: Response) 
   await o.save();
   const bits: string[] = [];
   if (body.status !== undefined) bits.push(`status → ${body.status}`);
+  const shouldTriggerVendorPayout = body.status === "delivered" && o.paymentMethod === "paystack";
+  if (shouldTriggerVendorPayout) {
+    await runVendorPayoutsForOrder(o._id.toString());
+    bits.push("vendor payout triggered");
+  }
   if (body.disputeOpen !== undefined) bits.push(`dispute → ${body.disputeOpen}`);
   if (body.refundStatus !== undefined) bits.push(`refund → ${body.refundStatus}`);
   if (body.adminNote !== undefined) bits.push("note updated");
@@ -1520,6 +1552,38 @@ export const patchAdminOrder = asyncHandler(async (req: Request, res: Response) 
     action: "order.patch",
     title: `Order ${id.slice(-8)} updated`,
     detail: bits.join(" · ")
+  });
+  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+  res.json({ order: out });
+});
+
+export const confirmAdminPaymentReceived = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  const o = await Order.findById(id);
+  if (!o) throw new HttpError(404, "Order not found");
+  if (!PAID_LIKE.includes(o.status as (typeof PAID_LIKE)[number])) {
+    throw new HttpError(400, "Only paid or paid-like orders can have payment confirmed");
+  }
+  if (o.paymentMethod !== "paystack") {
+    throw new HttpError(400, "Payment confirmation is only for Paystack orders");
+  }
+  if (o.adminPaymentConfirmedAt) {
+    throw new HttpError(400, "This payment has already been confirmed");
+  }
+  const now = new Date();
+  (o as { adminPaymentConfirmedAt: Date }).adminPaymentConfirmedAt = now;
+  (o as { paystackSettlementStatus: string }).paystackSettlementStatus = "settled";
+  if (!(o as { paystackSettlementDate?: Date | null }).paystackSettlementDate) {
+    (o as { paystackSettlementDate: Date }).paystackSettlementDate = now;
+  }
+  await o.save();
+  await notifyOrderSellersAdminPaymentConfirmed(o);
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "order.payment_confirmed",
+    title: `Payment confirmed for order ${id.slice(-8)}`,
+    detail: `Paystack charge ${o.paystackReference || "—"} confirmed received`
   });
   const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
   res.json({ order: out });

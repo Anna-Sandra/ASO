@@ -11,7 +11,7 @@ const CartContext = createContext({
   count: 0
 });
 
-const KEY = "brewmart_cart_v1";
+const KEY = "campusmart_cart_v1";
 
 function load() {
   try {

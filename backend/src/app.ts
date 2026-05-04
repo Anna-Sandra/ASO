@@ -25,6 +25,7 @@ import uploadRoutes from "./modules/uploads/upload.routes";
 import vendorRoutes from "./modules/vendor/vendor.routes";
 import vendorApplicationRoutes from "./modules/vendorApplications/vendorApplication.routes";
 import platformRoutes from "./modules/platform/platform.routes";
+import notificationRoutes from "./modules/notifications/notification.routes";
 import {
   initPaystackGuide,
   paystackWebhook,
@@ -123,6 +124,7 @@ export function createApp() {
   app.use("/api/vendor", vendorRoutes);
   app.use("/api/vendor-applications", vendorApplicationRoutes);
   app.use("/api/payments", paymentsRoutes);
+  app.use("/api/notifications", notificationRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

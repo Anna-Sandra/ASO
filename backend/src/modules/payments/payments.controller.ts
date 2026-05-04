@@ -7,11 +7,14 @@ import { roundMoney } from "../../utils/commission";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
+import { Notification } from "../notifications/notification.model";
 import { Order } from "../orders/order.model";
 import { Product } from "../products/product.model";
 import { getOrCreateSettings, getEffectiveCommissionPercent } from "../platform/platformSettings.service";
 import { runVendorPayoutsForOrder, mergePaystackCheckoutSplitIntoInitializeBody } from "./paystackPayouts";
 import { handlePaystackRefundWebhookEvent } from "./paystackRefundSync";
+
+const DEFAULT_PAYSTACK_SETTLEMENT_DAYS = 2;
 
 const stripe = env.STRIPE_SECRET_KEY ? new Stripe(env.STRIPE_SECRET_KEY) : null;
 
@@ -192,7 +195,24 @@ export async function getPaystackRefundById(refundId: number): Promise<{ id: num
  * Mark order paid + stock (idempotent for same reference). Used by webhook and verify API.
  * Returns `true` if the order is now in a state we applied or was already `paid` with this reference.
  */
-export async function finalizePaystackSuccessIfValid(
+export async function notifyAdminsOfNewPaystackPayment(orderId: mongoose.Types.ObjectId, reference: string) {
+  const admins = await User.find({ role: "admin" }).select("_id").lean();
+  if (!admins.length) return;
+  const now = new Date();
+  const docs = admins.map((admin) => ({
+    userId: admin._id,
+    type: "payment_received" as const,
+    title: "New Paystack payment received",
+    message: `Order #${orderId.toString().slice(-8)} has been paid via Paystack and needs confirmation.`,
+    orderId,
+    read: false,
+    createdAt: now,
+    updatedAt: now
+  }));
+  await Notification.insertMany(docs);
+}
+
+async function finalizePaystackSuccessIfValid(
   order: { _id: mongoose.Types.ObjectId; total: number; status: string; items: { productId: mongoose.Types.ObjectId; quantity: number }[] },
   reference: string,
   amountKobo: number,
@@ -204,6 +224,8 @@ export async function finalizePaystackSuccessIfValid(
   }
   const txnIdNum = paystackTransactionId != null ? Number(paystackTransactionId) : NaN;
   const txnSet = Number.isFinite(txnIdNum) ? { paystackTransactionId: txnIdNum } : {};
+  const estimatedSettlementDate = new Date(Date.now() + DEFAULT_PAYSTACK_SETTLEMENT_DAYS * 24 * 60 * 60 * 1000);
+
   if (order.status === "pending_payment") {
     const updated = await Order.findOneAndUpdate(
       { _id: order._id, status: "pending_payment" },
@@ -213,6 +235,8 @@ export async function finalizePaystackSuccessIfValid(
           paymentMethod: "paystack",
           paymentReference: reference,
           paystackReference: reference,
+          paystackSettlementStatus: "pending",
+          paystackSettlementDate: estimatedSettlementDate,
           ...txnSet
         }
       },
@@ -224,21 +248,29 @@ export async function finalizePaystackSuccessIfValid(
         await Product.updateOne({ _id: it.productId }, { $inc: { stock: -it.quantity } });
       }
     }
-    const usedSplit = Boolean((updated as { paystackUsedCheckoutSplit?: boolean })?.paystackUsedCheckoutSplit);
-    if (env.PAYSTACK_AUTO_VENDOR_PAYOUT && !usedSplit) {
-      void runVendorPayoutsForOrder(order._id.toString()).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error("[paystack] auto vendor payout failed:", err);
-      });
+    if (updated) {
+      await notifyAdminsOfNewPaystackPayment(updated._id as mongoose.Types.ObjectId, reference);
     }
     return true;
   }
   if (order.status === "paid") {
-    const o = await Order.findById(order._id).select("paystackReference paymentReference paystackTransactionId").lean();
+    const o = await Order.findById(order._id).select(
+      "paystackReference paymentReference paystackTransactionId paystackSettlementStatus paystackSettlementDate"
+    ).lean();
     const ref = (o as { paystackReference?: string; paymentReference?: string | null })?.paystackReference;
     if (ref === reference) {
+      const updates: Record<string, unknown> = {};
       if (Number.isFinite(txnIdNum) && (o as { paystackTransactionId?: number | null }).paystackTransactionId == null) {
-        await Order.updateOne({ _id: order._id }, { $set: { paystackTransactionId: txnIdNum } });
+        updates.paystackTransactionId = txnIdNum;
+      }
+      if (!((o as { paystackSettlementStatus?: string }).paystackSettlementStatus)) {
+        updates.paystackSettlementStatus = "pending";
+      }
+      if (!((o as { paystackSettlementDate?: Date | null }).paystackSettlementDate)) {
+        updates.paystackSettlementDate = estimatedSettlementDate;
+      }
+      if (Object.keys(updates).length) {
+        await Order.updateOne({ _id: order._id }, { $set: updates });
       }
       return true;
     }
@@ -437,6 +469,8 @@ export const paystackWebhook = asyncHandler(async (req: Request, res: Response) 
     const reference = String(event.data.reference);
     const amount = Number(event.data.amount);
     const metaOrderId = event.data.metadata?.orderId;
+    const settlementStatus = String((event.data as any).settlement_status || "").toLowerCase();
+    const settlementDate = (event.data as any).settlement_date ? new Date(String((event.data as any).settlement_date)) : null;
 
     const order =
       (await Order.findOne({ paystackReference: reference, status: "pending_payment" })) ||
@@ -446,12 +480,24 @@ export const paystackWebhook = asyncHandler(async (req: Request, res: Response) 
 
     if (order) {
       const tid = Number(event.data?.id);
-      await finalizePaystackSuccessIfValid(
+      const updated = await finalizePaystackSuccessIfValid(
         { _id: order._id, total: order.total, status: order.status, items: order.items },
         reference,
         amount,
         Number.isFinite(tid) ? tid : undefined
       );
+      if (updated && (settlementStatus || settlementDate)) {
+        const updates: Record<string, unknown> = {};
+        if (settlementStatus === "settled" || settlementStatus === "pending" || settlementStatus === "failed") {
+          updates.paystackSettlementStatus = settlementStatus;
+        }
+        if (settlementDate && !Number.isNaN(settlementDate.getTime())) {
+          updates.paystackSettlementDate = settlementDate;
+        }
+        if (Object.keys(updates).length) {
+          await Order.updateOne({ _id: order._id }, { $set: updates });
+        }
+      }
     }
   }
 

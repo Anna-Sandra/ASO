@@ -1208,6 +1208,49 @@ export function VendorOrdersPage() {
                         "You confirmed · waiting others"
                       ),
                     status === "paid" &&
+                      !o.adminPaymentConfirmedAt &&
+                      h(
+                        "span",
+                        {
+                          key: "await-confirm",
+                          className: "block max-w-[14rem] text-[11px] leading-snug text-amber-700 dark:text-amber-400"
+                        },
+                        "⏳ Waiting for admin to confirm payment…"
+                      ),
+                    status === "paid" &&
+                      !o.adminPaymentConfirmedAt &&
+                      o.paystackSettlementStatus === "pending" &&
+                      h(
+                        "span",
+                        {
+                          key: "settle-pending",
+                          className: "block max-w-[14rem] text-[11px] leading-snug text-slate-700 dark:text-slate-300"
+                        },
+                        `Paystack settlement pending${o.paystackSettlementDate ? ` until ${new Date(o.paystackSettlementDate).toLocaleDateString()}` : ""}`
+                      ),
+                    status === "paid" &&
+                      !o.adminPaymentConfirmedAt &&
+                      o.paystackSettlementStatus === "failed" &&
+                      h(
+                        "span",
+                        {
+                          key: "settle-failed",
+                          className: "block max-w-[14rem] text-[11px] leading-snug text-rose-700 dark:text-rose-400"
+                        },
+                        "Paystack settlement failed — check payment details"
+                      ),
+                    status === "paid" &&
+                      o.adminPaymentConfirmedAt &&
+                      h(
+                        "span",
+                        {
+                          key: "confirmed",
+                          className: "block max-w-[14rem] text-[11px] leading-snug text-emerald-700 dark:text-emerald-400"
+                        },
+                        "✓ Admin confirmed payment · Ready to ship"
+                      ),
+                    status === "paid" &&
+                      o.adminPaymentConfirmedAt &&
                       h(
                         Button,
                         {
@@ -1218,7 +1261,7 @@ export function VendorOrdersPage() {
                           type: "button",
                           onClick: () => updateStatus(o.id, "processing")
                         },
-                        "Mark processing"
+                        "Paid"
                       ),
                     status === "processing" &&
                       h(
@@ -1282,15 +1325,14 @@ export function VendorOrdersPage() {
                       type: "button",
                       onClick: () => updateStatus(o.id, "cancelled")
                     }, "Cancel order"),
-                  ["pending_payment", "cancelled"].includes(status) &&
-                    h(Button, {
-                      key: "row-del",
-                      variant: "ghost",
-                      className:
-                        "!min-h-[36px] w-full !px-3 !py-2 !text-xs !font-semibold !text-rose-800 !ring-2 !ring-rose-400/55 !bg-rose-50 hover:!bg-rose-100 hover:!ring-rose-500/70 sm:w-auto dark:!text-rose-200 dark:!ring-rose-500/50 dark:!bg-rose-950/50 dark:hover:!bg-rose-950/70",
-                      type: "button",
-                      onClick: () => deleteOrder(o.id)
-                    }, [h(Trash2, { className: "h-3.5 w-3.5 shrink-0" }), h("span", { className: "ml-1" }, "Delete")])
+                  h(Button, {
+                    key: "row-del",
+                    variant: "ghost",
+                    className:
+                      "!min-h-[36px] w-full !px-3 !py-2 !text-xs !font-semibold !text-rose-800 !ring-2 !ring-rose-400/55 !bg-rose-50 hover:!bg-rose-100 hover:!ring-rose-500/70 sm:w-auto dark:!text-rose-200 dark:!ring-rose-500/50 dark:!bg-rose-950/50 dark:hover:!bg-rose-950/70",
+                    type: "button",
+                    onClick: () => deleteOrder(o.id)
+                  }, [h(Trash2, { className: "h-3.5 w-3.5 shrink-0" }), h("span", { className: "ml-1" }, "Delete")])
                 ].filter(Boolean);
                 return actionEls.length
                   ? h("div", { className: "flex flex-col items-stretch gap-2 sm:items-start" }, actionEls)

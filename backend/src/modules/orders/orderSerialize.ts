@@ -151,6 +151,9 @@ export function serializeOrder(o: Record<string, unknown>) {
     paystackRefundId: paystackRefundIdRaw ?? null,
     paystackRefundRemoteStatus: String((o as { paystackRefundRemoteStatus?: string }).paystackRefundRemoteStatus || ""),
     refundStockRestored: Boolean((o as { refundStockRestored?: boolean }).refundStockRestored),
+    adminPaymentConfirmedAt: (o as { adminPaymentConfirmedAt?: Date | null }).adminPaymentConfirmedAt ?? null,
+    paystackSettlementStatus: (o as { paystackSettlementStatus?: string }).paystackSettlementStatus ?? null,
+    paystackSettlementDate: (o as { paystackSettlementDate?: Date | null }).paystackSettlementDate ?? null,
     createdAt: o.createdAt,
     updatedAt: o.updatedAt
   };

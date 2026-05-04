@@ -105,7 +105,7 @@ const SIDEBAR_ITEMS = [
   { id: "sellers", label: "Sellers", icon: UserCheck },
   { id: "listings", label: "Listings", icon: Package, badgeKey: "listings" },
   { id: "orders", label: "Orders", icon: ShoppingCart, badgeKey: "orders" },
-  { id: "payments", label: "Payments", icon: DollarSign },
+  { id: "payments", label: "Payments", icon: DollarSign, badgeKey: "notifications" },
   { id: "reports", label: "Reports", icon: AlertTriangle, badgeKey: "reports" },
   { id: "messages", label: "Messages", icon: MessageSquare },
   { id: "settings", label: "Settings", icon: SettingsIcon },
@@ -1014,19 +1014,30 @@ export function AdminPage() {
     };
   }, [loadNavBadges]);
 
+  const prevNotificationsCount = useRef(0);
+
   useEffect(() => {
     const total =
       Number(navBadges?.["vendor-apps"] || 0) +
       Number(navBadges?.listings || 0) +
       Number(navBadges?.orders || 0) +
       Number(navBadges?.reports || 0) +
-      Number(navBadges?.disputes || 0);
+      Number(navBadges?.disputes || 0) +
+      Number(navBadges?.notifications || 0);
     const prev = document.title;
     document.title = total > 0 ? `(${total > 99 ? "99+" : total}) Admin · CampusMart` : "Admin · CampusMart";
     return () => {
       document.title = prev;
     };
   }, [navBadges]);
+
+  useEffect(() => {
+    const newCount = Number(navBadges?.notifications || 0);
+    if (newCount > prevNotificationsCount.current) {
+      toast("New payment notification received. Check Payments.", { variant: "info" });
+    }
+    prevNotificationsCount.current = newCount;
+  }, [navBadges?.notifications, toast]);
 
   const loadUsers = useCallback(async () => {
     if (!auth) return;
@@ -1797,6 +1808,24 @@ export function AdminPage() {
       await runPaystackRefundForOrder(o);
     } catch (ex) {
       await alert(ex.message || "Refund failed", { variant: "error" });
+    }
+  };
+
+  const confirmPaymentReceived = async (o) => {
+    const ok = await confirm(
+      `Confirm that you (the admin) have received the payment for order ${shortId(o.id)}? The vendor will then be notified to proceed with shipment.`,
+      { title: "Confirm payment received", confirmLabel: "Yes, confirm" }
+    );
+    if (!ok) return;
+    try {
+      await apiFetch(`/api/admin/orders/${o.id}/confirm-payment`, {
+        method: "POST",
+        ...auth
+      });
+      toast("Payment confirmed. The vendor can now proceed with shipment.", { variant: "success" });
+      await loadOrders();
+    } catch (ex) {
+      await alert(ex.message || "Confirmation failed", { variant: "error" });
     }
   };
 
@@ -3507,6 +3536,21 @@ export function AdminPage() {
                         "td",
                         { className: "px-4 py-3" },
                         h("div", { className: "flex flex-wrap items-center gap-1" }, [
+                          o.paymentMethod === "paystack" &&
+                          ["pending_payment", "paid", "processing", "sent_for_delivery", "delivered"].includes(o.status) &&
+                          !o.adminPaymentConfirmedAt
+                            ? h(
+                                "button",
+                                {
+                                  key: "pc",
+                                  type: "button",
+                                  onClick: () => confirmPaymentReceived(o),
+                                  className:
+                                    "rounded-xl border border-emerald-300/50 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-200"
+                                },
+                                "Paid"
+                              )
+                            : null,
                           o.paymentMethod === "paystack" &&
                           o.status !== "cancelled" &&
                           o.refundStatus !== "refunded"

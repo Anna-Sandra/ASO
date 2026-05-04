@@ -66,7 +66,7 @@ const envSchema = z.object({
   PAYSTACK_CHECKOUT_SPLIT: z
     .string()
     .optional()
-    .transform((v) => (v ?? "").trim().toLowerCase() !== "false"),
+    .transform(() => false),
 
   /**
    * Platform service fee rate applied to the seller’s listing subtotal (vendor price × qty), added on top for the buyer.
@@ -154,9 +154,9 @@ export function isPaystackMoneyRailEnabled(): boolean {
   return Boolean(_env.PAYSTACK_SECRET_KEY?.trim());
 }
 
-/** When true, online checkout initializes Paystack with a split so seller shares go to subaccounts instead of post-charge transfers. */
+/** Always false: escrow model — all funds settle to the main merchant account. */
 export function isPaystackCheckoutSplitEnabled(): boolean {
-  return _env.PAYSTACK_CHECKOUT_SPLIT;
+  return false;
 }
 
 /** True when the API can send real email (Gmail app password or any SMTP with credentials). */

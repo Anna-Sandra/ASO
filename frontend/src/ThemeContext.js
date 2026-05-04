@@ -6,7 +6,7 @@ const ThemeContext = createContext({
   toggle: () => {}
 });
 
-const STORAGE_KEY = "brewmart-theme";
+const STORAGE_KEY = "campus-mart-theme";
 const hasWindow = typeof window !== "undefined";
 
 function getStoredTheme() {

@@ -1,6 +1,6 @@
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/$/, "");
 const ADMIN_API_KEY = (process.env.REACT_APP_ADMIN_API_KEY || "").trim();
-const TOKEN_KEY = "brewmart_access_token";
+const TOKEN_KEY = "campusmart_access_token";
 let refreshPromise = null;
 
 /**
