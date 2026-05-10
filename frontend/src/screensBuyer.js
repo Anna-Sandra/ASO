@@ -64,64 +64,14 @@ import {
   ThemeToggleButton
 } from "./ui";
 
-function buyerPricePanel(product, pricingOpts) {
-  const breakdown =
-    pricingOpts && product.price != null
-      ? computeCheckoutBreakdown(
-          product.price,
-          pricingOpts.commissionPercent,
-          pricingOpts.paystackFeePercent,
-          pricingOpts.paystackFeeFixedGhs
-        )
-      : null;
-
+function buyerPricePanel(product) {
   return h(GlassPanel, { key: "price-info", className: "!border-sky-500/20" }, [
     h("h3", { className: "text-sm font-semibold text-slate-900 dark:text-white" }, "Seller’s list price"),
-    breakdown
-      ? h(
-          "div",
-          { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
-          [
-            h("p", { key: "summary" }, [
-              `Listed at ${formatGhc(product.price)}. Estimated checkout total is ${formatGhc(breakdown.total)}. `,
-              "The seller receives the list price, and the platform adds service and payment fees."
-            ]),
-            h(
-              "div",
-              {
-                key: "details",
-                className: "mt-3 grid gap-2 rounded-2xl border border-white/10 bg-slate-50 p-3 text-sm text-slate-600 dark:bg-night-900/70 dark:text-slate-300"
-              },
-              [
-                h(
-                  "div",
-                  { key: "line-1", className: "flex justify-between" },
-                  [h("span", null, "Product price"), h("span", { className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(product.price))]
-                ),
-                h(
-                  "div",
-                  { key: "line-2", className: "flex justify-between" },
-                  [h("span", null, "Service fee"), h("span", { className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(breakdown.serviceFee))]
-                ),
-                h(
-                  "div",
-                  { key: "line-3", className: "flex justify-between" },
-                  [h("span", null, "Payment fee estimate"), h("span", { className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(breakdown.processingFee))]
-                ),
-                h(
-                  "div",
-                  { key: "line-4", className: "flex justify-between border-t border-white/10 pt-2 text-base font-semibold text-slate-900 dark:text-white" },
-                  [h("span", null, "Estimated total"), h("span", null, formatGhc(breakdown.total))]
-                )
-              ]
-            )
-          ]
-        )
-      : h(
-          "p",
-          { className: "mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400" },
-          `Listed at ${formatGhc(product.price)}. Checkout adds a service fee; your total also includes payment fees, which can vary slightly by how you pay.`
-        )
+    h(
+      "p",
+      { className: "mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400" },
+      `Listed at ${formatGhc(product.price)}. Checkout adds a service fee; your total also includes payment fees, which can vary slightly by how you pay.`
+    )
   ]);
 }
 
@@ -746,7 +696,7 @@ export function ProductDetailPage() {
                 )
               )
             ),
-          buyerPricePanel(product, pricingOpts),
+          buyerPricePanel(product),
           buyerVendorPayPanel(product.sellerPayment, { paystackOnly: pricingOpts?.paystackOnly }),
           h(
             Button,

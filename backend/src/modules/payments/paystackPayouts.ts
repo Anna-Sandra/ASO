@@ -179,7 +179,7 @@ export async function runVendorPayoutsForOrder(orderId: string): Promise<void> {
   const lock = await Order.findOneAndUpdate(
     {
       _id: orderId,
-      status: { $in: ["paid", "processing", "sent_for_delivery", "delivered"] },
+      status: "paid",
       paymentMethod: "paystack",
       $or: [{ paystackPayoutStatus: { $exists: false } }, { paystackPayoutStatus: "none" }]
     },

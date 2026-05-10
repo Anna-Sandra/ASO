@@ -123,8 +123,8 @@ export function createApp() {
   app.use("/api/orders", orderRoutes);
   app.use("/api/vendor", vendorRoutes);
   app.use("/api/vendor-applications", vendorApplicationRoutes);
-  app.use("/api/payments", paymentsRoutes);
   app.use("/api/notifications", notificationRoutes);
+  app.use("/api/payments", paymentsRoutes);
 
   app.use(notFound);
   app.use(errorHandler);

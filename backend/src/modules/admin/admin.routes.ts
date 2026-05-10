@@ -8,7 +8,6 @@ import {
   adminBulkCleanup,
   adminDashboard,
   approveProduct,
-  confirmAdminPaymentReceived,
   deleteAdminOrder,
   deleteAdminProduct,
   deleteAdminReport,
@@ -198,14 +197,6 @@ router.patch(
   requireAdminEnvSecret,
   validateBody(adminOrderPatchSchema),
   patchAdminOrder
-);
-router.post(
-  "/orders/:id/confirm-payment",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  confirmAdminPaymentReceived
 );
 router.patch(
   "/products/:id",

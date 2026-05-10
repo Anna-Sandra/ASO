@@ -6,7 +6,7 @@ import { getNotifications, markNotificationRead, markAllNotificationsRead } from
 const router = Router();
 
 router.get("/", protect, requireActiveAccount, getNotifications);
-router.post("/:id/read", protect, requireActiveAccount, markNotificationRead);
 router.post("/read-all", protect, requireActiveAccount, markAllNotificationsRead);
+router.post("/:id/read", protect, requireActiveAccount, markNotificationRead);
 
 export default router;

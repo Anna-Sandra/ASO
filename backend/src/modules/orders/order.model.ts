@@ -87,12 +87,6 @@ export interface OrderDoc {
   paystackRefundId?: number | null;
   paystackRefundRemoteStatus?: string;
   refundStockRestored?: boolean;
-  /** Timestamp when admin confirmed receipt of payment (for orders paid via Paystack). */
-  adminPaymentConfirmedAt?: Date | null;
-  /** Paystack settlement status: pending (funds held), settled (in admin account), or failed. */
-  paystackSettlementStatus?: "pending" | "settled" | "failed" | null;
-  /** Estimated or actual settlement date from Paystack (typically T+2 in Ghana). */
-  paystackSettlementDate?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -194,14 +188,7 @@ const orderSchema = new Schema<OrderDoc>(
     },
     paystackRefundId: { type: Number, default: null },
     paystackRefundRemoteStatus: { type: String, default: "" },
-    refundStockRestored: { type: Boolean, default: false },
-    adminPaymentConfirmedAt: { type: Date, default: null },
-    paystackSettlementStatus: {
-      type: String,
-      enum: ["pending", "settled", "failed"],
-      default: null
-    },
-    paystackSettlementDate: { type: Date, default: null }
+    refundStockRestored: { type: Boolean, default: false }
   },
   { timestamps: true }
 );
