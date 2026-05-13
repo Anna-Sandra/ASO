@@ -978,17 +978,14 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 "div",
                 {
                   key: "order-card",
-                  className: compactMap
-                    ? "rounded-lg border border-slate-100 bg-white p-2 shadow-sm dark:border-white/10 dark:bg-night-900/70"
-                    : "rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-night-900/70"
+                  className:
+                    "rounded-lg border border-slate-100 bg-white p-2 shadow-sm dark:border-white/10 dark:bg-night-900/70"
                 },
                 [
                   el(
                     "p",
                     {
-                      className: compactMap
-                        ? "text-[9px] font-bold uppercase tracking-wider text-slate-400"
-                        : "text-xs font-bold uppercase tracking-[0.15em] text-slate-400"
+                      className: "text-[9px] font-bold uppercase tracking-wider text-slate-400"
                     },
                     "Delivery details"
                   ),
@@ -1004,19 +1001,18 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                     "div",
                     {
                       key: "tot",
-                      className: compactMap
-                        ? "mt-1 flex items-center justify-between border-t border-slate-200 pt-2 dark:border-white/10"
-                        : "mt-2 flex items-center justify-between border-t border-slate-200 pt-4 dark:border-white/10"
+                      className:
+                        "mt-1 flex items-center justify-between border-t border-slate-200 pt-2 dark:border-white/10"
                     },
                     [
                       el(
                         "span",
-                        { className: compactMap ? "text-[10px] font-semibold text-slate-900 dark:text-white" : "text-base font-semibold text-slate-900 dark:text-white" },
+                        { className: "text-[10px] font-semibold text-slate-900 dark:text-white" },
                         "Total"
                       ),
                       el(
                         "span",
-                        { className: compactMap ? "text-xs font-bold text-emerald-600 dark:text-emerald-400" : "text-lg font-bold text-emerald-600 dark:text-emerald-400" },
+                        { className: "text-xs font-bold text-emerald-600 dark:text-emerald-400" },
                         formatGhc(order?.total)
                       )
                     ]
@@ -1079,17 +1075,16 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
           "div",
           {
             key: "chat-strip",
-            className: compactMap ? "border-t border-slate-100 px-3 py-2 sm:px-4 dark:border-white/10" : "border-t border-slate-100 px-4 py-4 sm:px-6 dark:border-white/10"
+            className: "border-t border-slate-100 px-3 py-2 sm:px-4 dark:border-white/10"
           },
           el(
             "a",
             {
               href: `sms:${riderPhoneDigits}?body=${encodeURIComponent(`Campus Mart order ${orderShort} · `)}`,
-              className: compactMap
-                ? "flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white py-2 text-[11px] font-semibold text-sky-600 shadow-sm transition hover:border-sky-300 hover:bg-sky-50/50 dark:border-white/15 dark:bg-night-900 dark:text-sky-400 dark:hover:bg-night-800"
-                : "flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-slate-200 bg-white py-3.5 text-sm font-bold text-sky-600 shadow-sm transition hover:border-sky-300 hover:bg-sky-50/50 dark:border-white/15 dark:bg-night-900 dark:text-sky-400 dark:hover:bg-night-800"
+              className:
+                "flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white py-2 text-[11px] font-semibold text-sky-600 shadow-sm transition hover:border-sky-300 hover:bg-sky-50/50 dark:border-white/15 dark:bg-night-900 dark:text-sky-400 dark:hover:bg-night-800"
             },
-            [el(MessageCircle, { key: "i", className: compactMap ? "h-4 w-4" : "h-5 w-5" }), "Chat with rider"]
+            [el(MessageCircle, { key: "i", className: "h-4 w-4" }), "Chat with rider"]
           )
         )
     ])
