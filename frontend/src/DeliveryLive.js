@@ -536,15 +536,15 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     const dotDone = done && !active;
     const dotActive = active;
 
-    const tlRowCls = compactMap ? "relative flex gap-1.5 pb-2 last:pb-0" : "relative flex gap-4 pb-8 last:pb-0";
-    const tlRailCls = compactMap ? "relative flex w-6 shrink-0 flex-col items-center" : "relative flex w-11 shrink-0 flex-col items-center";
-    const tlDotCls = compactMap
-      ? `relative z-[1] flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-white shadow-sm ${
+    const tlRowCls = compactPanels ? "relative flex gap-1 pb-1.5 last:pb-0 sm:gap-1.5 sm:pb-2" : "relative flex gap-4 pb-8 last:pb-0";
+    const tlRailCls = compactPanels ? "relative flex w-5 shrink-0 flex-col items-center sm:w-6" : "relative flex w-11 shrink-0 flex-col items-center";
+    const tlDotCls = compactPanels
+      ? `relative z-[1] flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-white shadow-sm sm:h-6 sm:w-6 ${
           dotDone
             ? "bg-emerald-500 text-white"
             : dotActive
-              ? "bg-sky-500 text-white ring-2 ring-sky-200"
-              : "border-slate-200 bg-slate-100 text-transparent"
+              ? "bg-sky-500 text-white ring-2 ring-sky-200 dark:ring-sky-900/50"
+              : "border-slate-200 bg-slate-100 text-transparent dark:border-white/15"
         }`
       : `relative z-[1] flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-4 border-white shadow-md ${
           dotDone
@@ -553,15 +553,15 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
               ? "bg-sky-500 text-white ring-4 ring-sky-200"
               : "border-slate-200 bg-slate-100 text-transparent"
         }`;
-    const tlLineTop = compactMap ? "top-7" : "top-[2.85rem]";
-    const tlLineH = compactMap ? "h-[calc(100%-8px)]" : "h-[calc(100%-12px)]";
-    const tlTitleCls = compactMap
-      ? `text-[10px] font-semibold leading-snug ${dotActive ? "text-blue-600" : done ? "text-slate-800 dark:text-slate-100" : "text-slate-400"}`
+    const tlLineTop = compactPanels ? "top-[1.35rem] sm:top-7" : "top-[2.85rem]";
+    const tlLineH = compactPanels ? "h-[calc(100%-6px)]" : "h-[calc(100%-12px)]";
+    const tlTitleCls = compactPanels
+      ? `text-[10px] font-semibold leading-snug sm:text-[11px] ${dotActive ? "text-blue-600 dark:text-sky-400" : done ? "text-slate-800 dark:text-slate-100" : "text-slate-400"}`
       : `text-[15px] font-semibold leading-tight ${dotActive ? "text-blue-600" : done ? "text-slate-800 dark:text-slate-100" : "text-slate-400"}`;
-    const tlMetaCls = compactMap
-      ? `mt-0 text-[9px] leading-tight ${dotActive ? "font-semibold text-blue-600" : pending ? "text-slate-400" : "text-slate-500"}`
+    const tlMetaCls = compactPanels
+      ? `mt-0 text-[9px] leading-tight sm:text-[10px] ${dotActive ? "font-semibold text-blue-600 dark:text-sky-400" : pending ? "text-slate-400" : "text-slate-500"}`
       : `mt-1 text-xs ${dotActive ? "font-semibold text-blue-600" : pending ? "text-slate-400" : "text-slate-500"}`;
-    const txtPad = compactMap ? "min-w-0 flex-1 pt-0" : "min-w-0 flex-1 pt-1.5";
+    const txtPad = compactPanels ? "min-w-0 flex-1 pt-0" : "min-w-0 flex-1 pt-1.5";
 
     return el(
       "div",
@@ -575,9 +575,9 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
               "div",
               { className: tlDotCls },
               dotDone
-                ? el(Check, { className: compactMap ? "h-3 w-3" : "h-5 w-5", strokeWidth: 3 })
+                ? el(Check, { className: compactPanels ? "h-2.5 w-2.5 sm:h-3 sm:w-3" : "h-5 w-5", strokeWidth: 3 })
                 : dotActive
-                  ? el("span", { className: compactMap ? "h-2 w-2 rounded-full bg-white" : "h-3 w-3 rounded-full bg-white" })
+                  ? el("span", { className: compactPanels ? "h-1.5 w-1.5 rounded-full bg-white sm:h-2 sm:w-2" : "h-3 w-3 rounded-full bg-white" })
                   : null
             ),
             idx < STAGE_ORDER.length - 1
@@ -610,8 +610,8 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
           "div",
           {
             key: `ln-${idx}`,
-            className: compactMap
-              ? "flex justify-between gap-2 border-b border-slate-100 py-1 text-[10px] last:border-0 dark:border-white/5"
+            className: compactPanels
+              ? "flex justify-between gap-2 border-b border-slate-100 py-0.5 text-[10px] last:border-0 dark:border-white/5"
               : "flex justify-between gap-3 border-b border-slate-100 py-3 text-sm last:border-0 dark:border-white/5"
           },
           [
@@ -854,28 +854,23 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
         "div",
         {
           key: "lower",
-          className: compactMap
-            ? "grid gap-3 border-t border-slate-100 p-3 sm:gap-3 sm:p-3 lg:grid-cols-[minmax(0,1fr)_minmax(200px,280px)] dark:border-white/10"
-            : "grid gap-8 border-t border-slate-100 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] dark:border-white/10"
+          className:
+            "grid gap-3 border-t border-slate-100 p-3 sm:gap-3 sm:p-3 lg:grid-cols-[minmax(0,1fr)_minmax(200px,280px)] dark:border-white/10"
         },
         [
           el("div", { key: "progress-col", className: "min-w-0" }, [
-            el("div", { key: "pr-h", className: compactMap ? "mb-2 flex items-center justify-between gap-2" : "mb-6 flex items-center justify-between gap-3" }, [
+            el("div", { key: "pr-h", className: "mb-2 flex items-center justify-between gap-2" }, [
               el(
                 "h2",
                 {
-                  className: compactMap
-                    ? "font-display text-[11px] font-bold uppercase tracking-wide text-slate-900 dark:text-white"
-                    : "font-display text-lg font-bold tracking-tight text-slate-900 dark:text-white"
+                  className: "font-display text-[11px] font-bold uppercase tracking-wide text-slate-900 dark:text-white"
                 },
                 "Delivery progress"
               ),
               el(
                 "span",
                 {
-                  className: `${
-                    compactMap ? "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide" : "flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide"
-                  } ${
+                  className: `flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
                     mode === "buyer" && liveConnected && recentLive
                       ? "bg-emerald-100 text-emerald-800"
                       : liveConnected
@@ -886,68 +881,63 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 [
                   el("span", {
                     key: "dot",
-                    className: `${compactMap ? "h-1.5 w-1.5" : "h-2 w-2"} rounded-full ${recentLive ? "animate-pulse bg-emerald-500" : liveConnected ? "bg-emerald-400" : "bg-slate-300"}`
+                    className: `h-1.5 w-1.5 rounded-full ${recentLive ? "animate-pulse bg-emerald-500" : liveConnected ? "bg-emerald-400" : "bg-slate-300"}`
                   }),
-                  recentLive ? (compactMap ? "Live" : "Live updates") : liveConnected ? "Connected" : "Reconnecting…"
+                  recentLive ? "Live" : liveConnected ? "Connected" : "Reconnecting…"
                 ]
               )
             ]),
             el("div", { key: "tl", className: "relative pl-0" }, timelineBody)
           ]),
 
-          el("div", { key: "detail-col", className: compactMap ? "flex min-w-0 flex-col gap-2" : "flex min-w-0 flex-col gap-4" }, [
+          el("div", { key: "detail-col", className: "flex min-w-0 flex-col gap-2" }, [
             mode === "buyer" &&
               rider &&
               el(
                 "div",
                 {
                   key: "rider-card",
-                  className: compactMap
-                    ? "rounded-lg border border-slate-100 bg-slate-50/80 p-2 shadow-sm dark:border-white/10 dark:bg-night-800/80"
-                    : "rounded-2xl border border-slate-100 bg-slate-50/80 p-4 shadow-sm dark:border-white/10 dark:bg-night-800/80"
+                  className:
+                    "rounded-lg border border-slate-100 bg-slate-50/80 p-2 shadow-sm dark:border-white/10 dark:bg-night-800/80"
                 },
                 [
                   el(
                     "p",
                     {
-                      className: compactMap
-                        ? "text-[9px] font-bold uppercase tracking-wider text-slate-400"
-                        : "text-xs font-bold uppercase tracking-[0.15em] text-slate-400"
+                      className: "text-[9px] font-bold uppercase tracking-wider text-slate-400"
                     },
                     "Rider details"
                   ),
                   el(
                     "div",
-                    { className: compactMap ? "mt-2 flex gap-2" : "mt-3 flex gap-4" },
+                    { className: "mt-2 flex gap-2" },
                     [
                       riderPhoto
                         ? el("img", {
                             key: "ph",
                             src: riderPhoto,
                             alt: "",
-                            className: compactMap
-                              ? "h-10 w-10 shrink-0 rounded-full object-cover ring-2 ring-white shadow-sm dark:ring-night-700"
-                              : "h-16 w-16 shrink-0 rounded-full object-cover ring-4 ring-white shadow-md dark:ring-night-700"
+                            className:
+                              "h-10 w-10 shrink-0 rounded-full object-cover ring-2 ring-white shadow-sm dark:ring-night-700"
                           })
                         : el(
                             "div",
                             {
                               key: "ph-f",
-                              className: compactMap
-                                ? "flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-blue-600 text-xs font-bold text-white shadow-sm"
-                                : "flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-blue-600 text-xl font-bold text-white shadow-md"
+                              className:
+                                "flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-blue-600 text-xs font-bold text-white shadow-sm"
                             },
                             String((rider.displayName || "R").trim()).slice(0, 1).toUpperCase()
                           ),
                       el("div", { key: "meta", className: "min-w-0 flex-1" }, [
                         el(
                           "p",
-                          { className: compactMap ? "truncate font-display text-xs font-bold text-slate-900 dark:text-white" : "truncate font-display text-lg font-bold text-slate-900 dark:text-white" },
+                          { className: "truncate font-display text-xs font-bold text-slate-900 dark:text-white" },
                           rider.displayName || "Courier"
                         ),
                         el(
                           "p",
-                          { className: compactMap ? "mt-0.5 text-[10px] text-slate-500" : "mt-1 text-xs text-slate-500" },
+                          { className: "mt-0.5 text-[10px] text-slate-500" },
                           rider.vehicleType ? `${String(rider.vehicleType)} · courier` : "Campus courier"
                         ),
                         riderPhoneDigits
@@ -956,11 +946,10 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               {
                                 key: "tel",
                                 href: `tel:${riderPhoneDigits}`,
-                                className: compactMap
-                                  ? "mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400"
-                                  : "mt-3 inline-flex items-center gap-2 text-sm font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400"
+                                className:
+                                  "mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400"
                               },
-                              el(Phone, { className: compactMap ? "h-3 w-3 shrink-0" : "h-4 w-4 shrink-0" }),
+                              el(Phone, { className: "h-3 w-3 shrink-0" }),
                               rider.phone
                             )
                           : null
@@ -972,11 +961,10 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               key: "sms",
                               href: `sms:${riderPhoneDigits}`,
                               title: "Message",
-                              className: compactMap
-                                ? "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-sm transition hover:brightness-105"
-                                : "flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-md transition hover:brightness-105"
+                              className:
+                                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-sm transition hover:brightness-105"
                             },
-                            el(MessageCircle, { className: compactMap ? "h-4 w-4" : "h-5 w-5" })
+                            el(MessageCircle, { className: "h-4 w-4" })
                           )
                         : null
                     ].filter(Boolean)
@@ -1100,4 +1088,10 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
               className: compactMap
                 ? "flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white py-2 text-[11px] font-semibold text-sky-600 shadow-sm transition hover:border-sky-300 hover:bg-sky-50/50 dark:border-white/15 dark:bg-night-900 dark:text-sky-400 dark:hover:bg-night-800"
                 : "flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-slate-200 bg-white py-3.5 text-sm font-bold text-sky-600 shadow-sm transition hover:border-sky-300 hover:bg-sky-50/50 dark:border-white/15 dark:bg-night-900 dark:text-sky-400 dark:hover:bg-night-800"
-            }
+            },
+            [el(MessageCircle, { key: "i", className: compactMap ? "h-4 w-4" : "h-5 w-5" }), "Chat with rider"]
+          )
+        )
+    ])
+  ]);
+}
