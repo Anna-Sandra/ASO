@@ -4099,12 +4099,16 @@ export function BuyerOrdersPage() {
       !loading &&
         !err &&
         orders.length > 0 &&
-        h(GlassPanel, { key: "orders-list", className: "mb-4 !border-sky-500/20" }, [
-          h("h3", { className: "font-semibold text-slate-900 dark:text-white" }, "Payment history"),
-          h("p", { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, "Status, line items, and rating. Receipt opens full payment details when available."),
+        h(GlassPanel, { key: "orders-list", className: "mb-4 !border-sky-500/20 !p-3 sm:!p-4" }, [
+          h("h3", { className: "text-sm font-semibold text-slate-900 dark:text-white" }, "Payment history"),
+          h(
+            "p",
+            { className: "mt-0.5 max-w-xl text-[11px] leading-snug text-slate-500 dark:text-slate-400" },
+            "Status, items, ratings. Receipt = full payment details when available."
+          ),
           h(
             "div",
-            { className: "mt-3 space-y-4" },
+            { className: "mt-2 space-y-2" },
             ordersSorted.map((o) => {
               const lines = o.items || [];
               const canRate =
@@ -4118,18 +4122,18 @@ export function BuyerOrdersPage() {
                 {
                   id: `order-card-${o.id}`,
                   key: `ord-${o.id}`,
-                  className: `rounded-xl border border-white/10 bg-white/30 dark:bg-night-900/30 ${
+                  className: `rounded-lg border border-white/10 bg-white/30 dark:bg-night-900/30 ${
                     openOrderId && String(o.id) === openOrderId ? "ring-2 ring-sky-500/70" : ""
                   }`
                 },
-                h("div", { className: "flex flex-wrap items-center justify-between gap-2 px-3 py-2 sm:px-4" }, [
+                h("div", { className: "flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 sm:px-3" }, [
                   h("div", { className: "min-w-0 flex-1" }, [
-                    h("p", { className: "font-mono text-xs text-slate-500" }, `#${String(o.id).slice(-8)}`),
-                    h("p", { className: "mt-1 text-sm font-medium text-slate-800 dark:text-slate-100" }, summaryLine),
+                    h("p", { className: "font-mono text-[10px] text-slate-500 dark:text-slate-400" }, `#${String(o.id).slice(-8)}`),
+                    h("p", { className: "mt-0.5 text-xs font-medium leading-tight text-slate-800 dark:text-slate-100" }, summaryLine),
                     h(
                       "p",
                       {
-                        className: `mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${buyerOrderFulfillmentPillClass(o)}`
+                        className: `mt-0.5 inline-flex rounded-full px-1.5 py-px text-[9px] font-semibold leading-tight ${buyerOrderFulfillmentPillClass(o)}`
                       },
                       formatOrderFulfillmentLabel(o)
                     )
@@ -4137,11 +4141,11 @@ export function BuyerOrdersPage() {
                   hasReceiptMeta
                     ? h(Button, {
                         variant: "ghost",
-                        className: "!shrink-0 !px-3 !py-1.5",
+                        className: "!h-8 !shrink-0 !gap-1 !rounded-lg !px-2 !py-0 !text-[11px]",
                         type: "button",
                         onClick: () => setReceiptOrder(o)
                       }, [
-                        h(ReceiptText, { key: "ic", className: "h-4 w-4" }),
+                        h(ReceiptText, { key: "ic", className: "h-3.5 w-3.5" }),
                         h("span", { key: "tx" }, "Receipt")
                       ])
                     : null
@@ -4150,7 +4154,7 @@ export function BuyerOrdersPage() {
                   "div",
                   {
                     key: "act",
-                    className: "flex flex-wrap items-center gap-2 border-t border-white/10 px-3 py-2.5 sm:px-4"
+                    className: "flex flex-wrap items-center gap-1.5 border-t border-white/10 px-2.5 py-1.5 sm:px-3"
                   },
                   [
                     ["pending_payment", "awaiting_vendor_payment"].includes(o.status)
@@ -4162,10 +4166,10 @@ export function BuyerOrdersPage() {
                             disabled: cancellingId === o.id,
                             onClick: () => cancelOrder(o),
                             className:
-                              "inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold text-slate-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-night-900/40 dark:text-slate-200 dark:hover:border-rose-400/40 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
+                              "inline-flex min-h-[32px] items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white/60 px-2.5 text-[11px] font-semibold text-slate-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-night-900/40 dark:text-slate-200 dark:hover:border-rose-400/40 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
                           },
                           [
-                            h(X, { key: "i", className: "h-4 w-4" }),
+                            h(X, { key: "i", className: "h-3.5 w-3.5" }),
                             h("span", { key: "l" }, cancellingId === o.id ? "Cancelling…" : "Cancel order")
                           ]
                         )
@@ -4178,10 +4182,10 @@ export function BuyerOrdersPage() {
                             type: "button",
                             onClick: () => deleteOrder(o),
                             className:
-                              "inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white/60 px-4 text-sm font-semibold text-slate-500 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 dark:border-white/10 dark:bg-night-900/40 dark:text-slate-400 dark:hover:border-rose-400/40 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
+                              "inline-flex min-h-[32px] items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white/60 px-2.5 text-[11px] font-semibold text-slate-500 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 dark:border-white/10 dark:bg-night-900/40 dark:text-slate-400 dark:hover:border-rose-400/40 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
                           },
                           [
-                            h(Trash2, { key: "i", className: "h-4 w-4" }),
+                            h(Trash2, { key: "i", className: "h-3.5 w-3.5" }),
                             h("span", { key: "l" }, "Remove from list")
                           ]
                         )
@@ -4192,7 +4196,7 @@ export function BuyerOrdersPage() {
                         key: "rep",
                         to: `/reports?order=${encodeURIComponent(String(o.id))}`,
                         className:
-                          "inline-flex min-h-[40px] items-center justify-center rounded-xl border-2 border-rose-500/60 bg-white/50 px-4 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-400/45 dark:bg-night-900/40 dark:text-rose-200 dark:hover:bg-rose-950/30"
+                          "inline-flex min-h-[32px] items-center justify-center rounded-lg border border-rose-500/60 bg-white/50 px-2.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-400/45 dark:bg-night-900/40 dark:text-rose-200 dark:hover:bg-rose-950/30"
                       },
                       "Report an issue"
                     ),
@@ -4202,32 +4206,32 @@ export function BuyerOrdersPage() {
                         key: "reo",
                         to: "/",
                         className:
-                          "inline-flex min-h-[40px] items-center justify-center rounded-xl bg-purple-700 px-4 text-sm font-semibold text-white shadow-md shadow-purple-900/25 transition hover:bg-purple-800 dark:bg-purple-600 dark:hover:bg-purple-500"
+                          "inline-flex min-h-[32px] items-center justify-center rounded-lg bg-purple-700 px-2.5 text-[11px] font-semibold text-white shadow shadow-purple-900/25 transition hover:bg-purple-800 dark:bg-purple-600 dark:hover:bg-purple-500"
                       },
                       "Reorder"
                     )
                   ].filter(Boolean)
                 ),
                 lines.length > 0 &&
-                  h("div", { className: "border-t border-white/10 px-3 py-3 sm:px-4" }, [
-                    h("p", { className: "mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Items"),
+                  h("div", { className: "border-t border-white/10 px-2.5 py-2 sm:px-3" }, [
+                    h("p", { className: "mb-1 text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Items"),
                     ...lines.map((it) =>
                       h(
                         "div",
                         {
                           key: `${o.id}-${it.productId || it.name}`,
                           className:
-                            "mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2 last:mb-0 last:border-0 last:pb-0"
+                            "mb-1 flex flex-wrap items-center justify-between gap-1.5 border-b border-white/5 pb-1 last:mb-0 last:border-0 last:pb-0"
                         },
                         [
-                          h("span", { className: "min-w-0 flex-1 text-sm text-slate-800 dark:text-slate-100" }, `${it.name} ×${it.quantity ?? 1}`),
+                          h("span", { className: "min-w-0 flex-1 text-xs leading-snug text-slate-800 dark:text-slate-100" }, `${it.name} ×${it.quantity ?? 1}`),
                           canRate && it.productId
                             ? h(
                                 "button",
                                 {
                                   type: "button",
                                   className:
-                                    "shrink-0 rounded-full bg-sky-500/15 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-500/25 dark:text-sky-300",
+                                    "shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-500/25 dark:text-sky-300",
                                   onClick: () =>
                                     setReviewModal({
                                       productId: String(it.productId),
@@ -4238,7 +4242,7 @@ export function BuyerOrdersPage() {
                                 "Rate"
                               )
                             : !canRate && o.status === "pending_payment"
-                              ? h("span", { className: "text-xs text-slate-500" }, "Pay to rate")
+                              ? h("span", { className: "text-[11px] text-slate-500" }, "Pay to rate")
                               : null
                         ].filter(Boolean)
                       )
@@ -4250,37 +4254,37 @@ export function BuyerOrdersPage() {
                       {
                         key: "dl-teaser",
                         className:
-                          "border-t border-white/10 bg-gradient-to-r from-violet-500/[0.07] via-transparent to-sky-500/[0.07] px-3 py-3 sm:px-4"
+                          "border-t border-white/10 bg-gradient-to-r from-violet-500/[0.05] via-transparent to-sky-500/[0.05] px-2.5 py-1.5 sm:px-3"
                       },
                       [
-                        h("div", { className: "flex flex-wrap items-center justify-between gap-3" }, [
+                        h("div", { className: "flex flex-wrap items-center justify-between gap-2" }, [
                           h("div", { className: "min-w-0 flex-1" }, [
                             h(
                               "p",
                               {
                                 className:
-                                  "text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                                  "text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400"
                               },
-                              "Campus delivery · live GPS"
+                              "Live GPS · opens when courier shares"
                             ),
                             h(
                               "p",
-                              { className: "mt-1 text-xs text-slate-600 dark:text-slate-300" },
-                              "Follow your courier in real time once they share location."
+                              { className: "mt-px line-clamp-1 text-[10px] leading-tight text-slate-600 dark:text-slate-400" },
+                              "Map + timeline in tracker."
                             )
                           ]),
                           h(Button, {
                             type: "button",
                             variant: "primary",
                             className:
-                              "!h-10 !rounded-full !px-4 !text-sm !font-semibold shadow-md shadow-sky-800/15",
+                              "!h-8 !rounded-lg !gap-1 !px-2.5 !text-[11px] !font-semibold shadow shadow-sky-800/15",
                             onClick: () => {
                               setTrackPresetOrderId(String(o.id));
                               setTrackModalOpen(true);
                             }
                           }, [
-                            h(Navigation, { key: "n", className: "mr-1.5 h-4 w-4" }),
-                            "Track live"
+                            h(Navigation, { key: "n", className: "h-3.5 w-3.5" }),
+                            "Track"
                           ])
                         ])
                       ]
