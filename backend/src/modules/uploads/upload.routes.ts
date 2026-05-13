@@ -9,7 +9,9 @@ import {
   uploadReportEvidence,
   uploadReportEvidenceMiddleware,
   uploadVendorVerification,
-  uploadVendorVerificationMiddleware
+  uploadVendorVerificationMiddleware,
+  uploadBookPdf,
+  uploadBookPdfMiddleware
 } from "./upload.controller";
 
 const router = Router();
@@ -38,6 +40,15 @@ router.post(
   authorize("buyer"),
   uploadVendorVerificationMiddleware,
   uploadVendorVerification
+);
+
+router.post(
+  "/book-pdf",
+  protect,
+  requireActiveAccount,
+  authorize("seller", "admin"),
+  uploadBookPdfMiddleware,
+  uploadBookPdf
 );
 
 router.post(

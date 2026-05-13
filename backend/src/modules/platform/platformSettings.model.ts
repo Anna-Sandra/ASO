@@ -32,6 +32,7 @@ export interface PlatformSettingsDoc {
   maintenanceMessage: string;
   allowPublicRegistration: boolean;
   allowVendorApplications: boolean;
+  allowCourierApplications: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -78,7 +79,8 @@ const platformSettingsSchema = new Schema<PlatformSettingsDoc>(
     maintenanceMode: { type: Boolean, default: false },
     maintenanceMessage: { type: String, default: "", maxlength: 2000 },
     allowPublicRegistration: { type: Boolean, default: true },
-    allowVendorApplications: { type: Boolean, default: true }
+    allowVendorApplications: { type: Boolean, default: true },
+    allowCourierApplications: { type: Boolean, default: true }
   },
   { timestamps: true }
 );

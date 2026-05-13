@@ -4,6 +4,13 @@ import { Notification } from "./notification.model";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 
+export const getNotificationSummary = asyncHandler(async (req: Request, res: Response) => {
+  const uid = new mongoose.Types.ObjectId(req.user!.id);
+  const unreadCount = await Notification.countDocuments({ userId: uid, read: false });
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.json({ unreadCount });
+});
+
 export const getNotifications = asyncHandler(async (req: Request, res: Response) => {
   const unreadOnly = String(req.query.unread || "").toLowerCase() === "true";
   const query: Record<string, unknown> = { userId: new mongoose.Types.ObjectId(req.user!.id) };
@@ -22,6 +29,7 @@ export const getNotifications = asyncHandler(async (req: Request, res: Response)
       message: n.message,
       orderId: n.orderId ? (n.orderId as mongoose.Types.ObjectId).toString() : null,
       read: n.read,
+      readAt: n.readAt ?? null,
       createdAt: n.createdAt,
       updatedAt: n.updatedAt
     }))

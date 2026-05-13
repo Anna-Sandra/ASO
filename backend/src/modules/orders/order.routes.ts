@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { protect, authorize } from "../../middleware/auth";
+import { requireAdminEnvSecret } from "../../middleware/adminSecret";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
+import { markAdminOrderPaid } from "../admin/admin.controller";
 import {
   addOrderMessage,
   cancelMyOrder,
@@ -21,6 +23,15 @@ const router = Router();
 const shopRoles = ["buyer", "seller", "admin"] as const;
 
 router.post("/checkout", protect, requireActiveAccount, authorize(...shopRoles), validateBody(checkoutSchema), checkout);
+/** Same handler as POST /api/admin/orders/:id/mark-paid — duplicated here so deployments always pick it up with the orders router. */
+router.post(
+  "/:id/admin/mark-paid",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  markAdminOrderPaid
+);
 router.get("/", protect, requireActiveAccount, authorize(...shopRoles), listMyOrders);
 router.get("/buyer/vendor-messages", protect, requireActiveAccount, authorize("buyer", "admin"), listBuyerVendorInbox);
 router.get("/seller/buyer-messages", protect, requireActiveAccount, authorize("seller", "admin"), listSellerBuyerInbox);

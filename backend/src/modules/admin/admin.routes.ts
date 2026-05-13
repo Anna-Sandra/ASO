@@ -11,9 +11,12 @@ import {
   deleteAdminOrder,
   deleteAdminProduct,
   deleteAdminReport,
+  deleteAdminCourierApplication,
   deleteAdminUser,
   deleteAdminVendorApplication,
+  listCourierApplications,
   listVendorApplications,
+  patchAdminCourierApplication,
   patchAdminVendorApplication,
   getAdminConversation,
   getAdminConversationWithUser,
@@ -29,6 +32,7 @@ import {
   listAdminProducts,
   listAdminReports,
   listAdminUsers,
+  markAdminOrderPaid,
   patchAdminOrder,
   postAdminMessageToUser,
   refundAdminOrderPaystack,
@@ -55,12 +59,36 @@ import {
   adminReportsQuerySchema,
   adminResetPasswordSchema,
   adminUsersQuerySchema,
+  adminRidersQuerySchema,
   grantAdminBodySchema
 } from "./admin.schemas";
 import { conversationMessageSchema } from "../conversations/conversation.schemas";
 import { adminVendorApplicationsQuerySchema, patchVendorApplicationSchema } from "../vendorApplications/vendorApplication.schemas";
+import { adminCourierApplicationsQuerySchema, patchCourierApplicationSchema } from "../courierApplications/courierApplication.schemas";
+import { adminCreateRiderSchema } from "../deliveries/delivery.schemas";
+import { listAdminRiders, postAdminCreateRider } from "../deliveries/riderAdmin.controller";
 
 const router = Router();
+
+router.get(
+  "/riders",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateQuery(adminRidersQuerySchema),
+  listAdminRiders
+);
+
+router.post(
+  "/riders",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateBody(adminCreateRiderSchema),
+  postAdminCreateRider
+);
 
 router.get("/dashboard", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, adminDashboard);
 router.get("/badges", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, adminBadges);
@@ -117,6 +145,24 @@ router.patch(
   requireAdminEnvSecret,
   validateBody(patchVendorApplicationSchema),
   patchAdminVendorApplication
+);
+router.get(
+  "/courier-applications",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateQuery(adminCourierApplicationsQuerySchema),
+  listCourierApplications
+);
+router.patch(
+  "/courier-applications/:id",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateBody(patchCourierApplicationSchema),
+  patchAdminCourierApplication
 );
 router.get("/settings", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminPlatformSettings);
 router.patch(
@@ -189,6 +235,14 @@ router.post(
   requireAdminEnvSecret,
   refundAdminOrderPaystack
 );
+router.post(
+  "/orders/:id/mark-paid",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  markAdminOrderPaid
+);
 router.patch(
   "/orders/:id",
   protect,
@@ -242,6 +296,15 @@ router.delete(
   requireAdminEnvSecret,
   requireSuperAdmin,
   deleteAdminVendorApplication
+);
+router.delete(
+  "/courier-applications/:id",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  requireSuperAdmin,
+  deleteAdminCourierApplication
 );
 router.delete(
   "/users/:id",

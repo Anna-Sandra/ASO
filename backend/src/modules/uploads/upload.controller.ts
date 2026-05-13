@@ -148,6 +148,42 @@ export const uploadReportEvidence = asyncHandler(async (req: Request, res: Respo
   res.status(201).json({ url });
 });
 
+const bookPdfDir = path.resolve(process.cwd(), "uploads", "book-pdfs");
+
+const bookPdfStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(bookPdfDir, { recursive: true });
+    cb(null, bookPdfDir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const safe = ext === ".pdf" ? ext : ".pdf";
+    cb(null, `${randomUUID()}${safe}`);
+  }
+});
+
+export const uploadBookPdfMiddleware = multer({
+  storage: bookPdfStorage,
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype !== "application/pdf") {
+      cb(new Error("Only PDF files are allowed for book uploads"));
+      return;
+    }
+    cb(null, true);
+  }
+}).single("file");
+
+export const uploadBookPdf = asyncHandler(async (req: Request, res: Response) => {
+  const file = req.file as Express.Multer.File | undefined;
+  if (!file) throw new HttpError(400, "No file received");
+  const host = req.get("host");
+  if (!host) throw new HttpError(500, "Could not determine host for file URL");
+  const base = `${req.protocol}://${host}`;
+  const url = `${base}/uploads/book-pdfs/${file.filename}`;
+  res.status(201).json({ url });
+});
+
 export const uploadProfileImage = asyncHandler(async (req: Request, res: Response) => {
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No image file received");

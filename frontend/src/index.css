@@ -62,6 +62,27 @@
   animation: notice-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+@keyframes campus-live-pulse {
+  0% {
+    box-shadow:
+      0 0 0 0 rgba(14, 165, 233, 0.5),
+      0 2px 10px rgba(0, 0, 0, 0.35);
+  }
+  70% {
+    box-shadow:
+      0 0 0 14px rgba(14, 165, 233, 0),
+      0 2px 10px rgba(0, 0, 0, 0.35);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(14, 165, 233, 0),
+      0 2px 10px rgba(0, 0, 0, 0.35);
+  }
+}
+.campus-rider-marker-inner {
+  animation: campus-live-pulse 2s ease-out infinite;
+}
+
 @layer utilities {
   .no-scrollbar {
     -ms-overflow-style: none;
@@ -173,4 +194,10 @@
 /* Focus rings */
 *:focus-visible {
   @apply outline-none ring-2 ring-sky-500/70 ring-offset-2 ring-offset-transparent dark:ring-sky-400/60;
+}
+
+/* Leaflet custom divIcons (delivery markers) — remove default bordered pane */
+.delivery-track-marker-wrap {
+  border: none !important;
+  background: transparent !important;
 }

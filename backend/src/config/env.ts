@@ -117,6 +117,14 @@ const envSchema = z.object({
   BOOTSTRAP_ADMIN_JWT_SUB: z.string().optional().default(""),
 
   /**
+   * Local AI (optional). When set — e.g. http://127.0.0.1:11434 — POST /api/assistant/chat uses Ollama.
+   */
+  OLLAMA_BASE_URL: z.string().optional().default(""),
+
+  /** Model name understood by local Ollama (e.g. llama3, mistral). */
+  OLLAMA_MODEL: z.string().optional().default("llama3"),
+
+  /**
    * Comma- or semicolon-separated emails that count as the platform "super" admin in addition
    * to `BOOTSTRAP_ADMIN_EMAIL` (if set). Super admins can grant `admin` to other user accounts.
    * Normal (non-super) admins cannot promote users to admin.

@@ -7,7 +7,7 @@ import { env, getEmailTransportDiagnostics, isEmailTransportConfigured, isSuperU
 import { sendEmail } from "../../utils/mailer";
 import { EMAIL_TEMPLATE_PREVIEWS } from "../../utils/emailPreviewCatalog";
 import { roundMoney, splitLineGross } from "../../utils/commission";
-import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc } from "../auth/user.model";
+import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type RiderApplicationStatus } from "../auth/user.model";
 import { Order, type OrderDoc } from "../orders/order.model";
 import { isOrderExcludedFromRevenueMetrics, withContacts } from "../orders/orderSerialize";
 import { Product } from "../products/product.model";
@@ -18,6 +18,8 @@ import { Token } from "../auth/token.model";
 import { VendorAnalyticsEvent } from "../vendor/vendorAnalyticsEvent.model";
 import { VendorApplication } from "../vendorApplications/vendorApplication.model";
 import { adminVendorApplicationsQuerySchema, patchVendorApplicationSchema } from "../vendorApplications/vendorApplication.schemas";
+import { CourierApplication } from "../courierApplications/courierApplication.model";
+import { adminCourierApplicationsQuerySchema, patchCourierApplicationSchema } from "../courierApplications/courierApplication.schemas";
 import { clearCommissionCache, getEffectiveCommissionPercent, getOrCreateSettings } from "../platform/platformSettings.service";
 import {
   adminListQuerySchema,
@@ -42,6 +44,9 @@ import { createPaystackRefund, getPaystackRefundById } from "../payments/payment
 import { applyProcessedPaystackRefundToOrder, isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
 import { conversationMessageSchema } from "../conversations/conversation.schemas";
 import { getPrimarySupportAdminId } from "../conversations/supportPeer";
+import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
+import { RiderProfile } from "../deliveries/riderProfile.model";
+import { Delivery } from "../deliveries/delivery.model";
 
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -163,9 +168,10 @@ const PAID_LIKE = ["paid", "processing", "sent_for_delivery", "delivered"] as co
  * and Reports — the same affordance vendors already get for incoming orders.
  */
 export const adminBadges = asyncHandler(async (_req: Request, res: Response) => {
-  const [pendingOrders, pendingVendorApps, pendingProducts, openReports, openDisputes] = await Promise.all([
+  const [pendingOrders, pendingVendorApps, pendingCourierApps, pendingProducts, openReports, openDisputes] = await Promise.all([
     Order.countDocuments({ status: { $in: ["pending_payment", "awaiting_vendor_payment"] } }),
     VendorApplication.countDocuments({ status: "pending" }),
+    CourierApplication.countDocuments({ status: "pending" }),
     Product.countDocuments({ status: "pending_approval" }),
     Report.countDocuments({ status: { $in: ["open", "in_review"] } }),
     Order.countDocuments({ disputeOpen: true })
@@ -176,6 +182,7 @@ export const adminBadges = asyncHandler(async (_req: Request, res: Response) => 
     badges: {
       orders: pendingOrders,
       "vendor-apps": pendingVendorApps,
+      "courier-apps": pendingCourierApps,
       listings: pendingProducts,
       reports: openReports,
       disputes: openDisputes
@@ -345,6 +352,7 @@ export const listAdminUsers = asyncHandler(async (req: Request, res: Response) =
   const skip = (q.page - 1) * q.limit;
   const filter: Record<string, unknown> = {};
   if (q.role !== "all") filter.role = q.role;
+  else filter.role = { $ne: "rider" };
   if (q.accountStatus !== "all") filter.accountStatus = q.accountStatus;
   if (q.verified !== "all") filter.sellerVerified = q.verified === "yes";
   if (q.search) {
@@ -672,7 +680,8 @@ function serializePlatformSettingsDoc(doc: Awaited<ReturnType<typeof getOrCreate
     maintenanceMode: !!doc.maintenanceMode,
     maintenanceMessage: doc.maintenanceMessage || "",
     allowPublicRegistration: doc.allowPublicRegistration !== false,
-    allowVendorApplications: doc.allowVendorApplications !== false
+    allowVendorApplications: doc.allowVendorApplications !== false,
+    allowCourierApplications: doc.allowCourierApplications !== false
   };
 }
 
@@ -726,6 +735,7 @@ export const patchAdminPlatformSettings = asyncHandler(async (req: Request, res:
   if (body.maintenanceMessage !== undefined) doc.maintenanceMessage = body.maintenanceMessage;
   if (body.allowPublicRegistration !== undefined) doc.allowPublicRegistration = body.allowPublicRegistration;
   if (body.allowVendorApplications !== undefined) doc.allowVendorApplications = body.allowVendorApplications;
+  if (body.allowCourierApplications !== undefined) doc.allowCourierApplications = body.allowCourierApplications;
 
   const listingRuleKeys = [
     "listingPolicyNote",
@@ -768,6 +778,7 @@ export const patchAdminPlatformSettings = asyncHandler(async (req: Request, res:
   if (body.maintenanceMessage !== undefined) parts.push("maintenance message updated");
   if (body.allowPublicRegistration !== undefined) parts.push(`signup ${body.allowPublicRegistration ? "open" : "closed"}`);
   if (body.allowVendorApplications !== undefined) parts.push(`vendor apps ${body.allowVendorApplications ? "open" : "closed"}`);
+  if (body.allowCourierApplications !== undefined) parts.push(`courier apps ${body.allowCourierApplications ? "open" : "closed"}`);
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "settings.platform",
@@ -1482,6 +1493,50 @@ export const resetAdminUserPassword = asyncHandler(async (req: Request, res: Res
   res.json({ ok: true });
 });
 
+/**
+ * When Paystack webhooks fail or the buyer paid off‑platform (MoMo/bank), admins can mark the order
+ * paid here. Matches vendor `confirmVendorPaymentReceived` when all sellers confirm: sets `paid`,
+ * fills `confirmedSellerIds`, and decrements product stock once.
+ */
+export const markAdminOrderPaid = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  const o = await Order.findById(id);
+  if (!o) throw new HttpError(404, "Order not found");
+
+  if (!["pending_payment", "awaiting_vendor_payment"].includes(o.status)) {
+    throw new HttpError(
+      400,
+      o.status === "paid"
+        ? "This order is already marked as paid."
+        : "Only orders that are still waiting for payment can be marked paid this way."
+    );
+  }
+
+  const prevStatus = o.status;
+  const uniqueSellerIds = [...new Set(o.items.map((it) => it.sellerId.toString()))];
+  o.confirmedSellerIds = uniqueSellerIds.map((s) => new mongoose.Types.ObjectId(s));
+  o.status = "paid";
+
+  for (const it of o.items) {
+    await Product.updateOne({ _id: it.productId }, { $inc: { stock: -it.quantity } });
+  }
+
+  await o.save();
+
+  await mirrorOrderStatusToDelivery(o);
+
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "order.mark_paid",
+    title: `Payment marked received (admin) — …${id.slice(-8)}`,
+    detail: `${prevStatus} → paid · stock adjusted for ${o.items.length} line(s)`
+  });
+
+  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+  res.json({ order: out });
+});
+
 export const patchAdminOrder = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
@@ -1510,6 +1565,9 @@ export const patchAdminOrder = asyncHandler(async (req: Request, res: Response) 
     (o as { refundStatus: string }).refundStatus = body.refundStatus;
   }
   await o.save();
+  if (body.status !== undefined) {
+    await mirrorOrderStatusToDelivery(o as HydratedDocument<OrderDoc>);
+  }
   const bits: string[] = [];
   if (body.status !== undefined) bits.push(`status → ${body.status}`);
   if (body.disputeOpen !== undefined) bits.push(`dispute → ${body.disputeOpen}`);
@@ -1682,8 +1740,21 @@ export const deleteAdminUser = asyncHandler(async (req: Request, res: Response) 
     }
     await VendorAnalyticsEvent.deleteMany({ sellerId: uidObj });
     await Product.deleteMany({ sellerId: uidObj });
+  } else if (normalizeUserRole(u.role) === "rider") {
+    const activeAssignments = await Delivery.countDocuments({
+      assignedRiderId: uidObj,
+      currentStage: { $nin: ["delivered", "cancelled"] }
+    });
+    if (activeAssignments > 0) {
+      throw new HttpError(
+        409,
+        `Courier has ${activeAssignments} active delivery assignment${activeAssignments === 1 ? "" : "s"}. Resolve them before deleting this account.`
+      );
+    }
+    await RiderProfile.deleteMany({ userId: uidObj });
   }
 
+  await CourierApplication.deleteMany({ userId: uidObj });
   await VendorApplication.deleteMany({ userId: uidObj });
   await Token.deleteMany({ userId: uidObj });
   await u.deleteOne();
@@ -1706,10 +1777,11 @@ export const adminBulkCleanup = asyncHandler(async (req: Request, res: Response)
   const days = Number.isFinite(daysRaw) && daysRaw >= 1 ? daysRaw : 30;
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-  const [orders, reports, apps] = await Promise.all([
+  const [orders, reports, apps, courierApps] = await Promise.all([
     Order.deleteMany({ status: "cancelled", updatedAt: { $lt: cutoff } }),
     Report.deleteMany({ status: { $in: ["resolved", "dismissed"] }, updatedAt: { $lt: cutoff } }),
-    VendorApplication.deleteMany({ status: { $in: ["approved", "rejected"] }, updatedAt: { $lt: cutoff } })
+    VendorApplication.deleteMany({ status: { $in: ["approved", "rejected"] }, updatedAt: { $lt: cutoff } }),
+    CourierApplication.deleteMany({ status: { $in: ["approved", "rejected"] }, updatedAt: { $lt: cutoff } })
   ]);
 
   const payload = {
@@ -1719,14 +1791,15 @@ export const adminBulkCleanup = asyncHandler(async (req: Request, res: Response)
     deleted: {
       cancelledOrders: orders.deletedCount || 0,
       closedReports: reports.deletedCount || 0,
-      reviewedVendorApps: apps.deletedCount || 0
+      reviewedVendorApps: apps.deletedCount || 0,
+      reviewedCourierApps: courierApps.deletedCount || 0
     }
   };
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "system.cleanup",
     title: `Bulk cleanup (${days}d)`,
-    detail: `orders ${payload.deleted.cancelledOrders} · reports ${payload.deleted.closedReports} · apps ${payload.deleted.reviewedVendorApps}`
+    detail: `orders ${payload.deleted.cancelledOrders} · reports ${payload.deleted.closedReports} · apps ${payload.deleted.reviewedVendorApps} · courier apps ${payload.deleted.reviewedCourierApps}`
   });
   res.json(payload);
 });
@@ -1840,4 +1913,164 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
     detail: app.email
   });
   res.json({ ok: true, status: "approved" });
+});
+
+export const listCourierApplications = asyncHandler(async (req: Request, res: Response) => {
+  const q = adminCourierApplicationsQuerySchema.parse(req.query);
+  const filter: Record<string, unknown> = {};
+  if (q.status !== "all") filter.status = q.status;
+  if (q.search) {
+    const re = new RegExp(escapeRegex(q.search), "i");
+    filter.$or = [{ fullName: re }, { email: re }, { phone: re }, { vehicleType: re }, { notes: re }];
+  }
+  const skip = (q.page - 1) * q.limit;
+  const [rows, total] = await Promise.all([
+    CourierApplication.find(filter).sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
+    CourierApplication.countDocuments(filter)
+  ]);
+  const userIds = [...new Set(rows.map((r) => r.userId.toString()))];
+  const users = await User.find({ _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+    .select("displayName email")
+    .lean();
+  const byId = new Map(users.map((u) => [u._id.toString(), u]));
+  res.json({
+    applications: rows.map((r) => ({
+      id: r._id.toString(),
+      userId: r.userId.toString(),
+      fullName: r.fullName,
+      email: r.email,
+      phone: r.phone,
+      vehicleType: r.vehicleType,
+      notes: r.notes,
+      idDocUrl: r.idDocUrl,
+      status: r.status,
+      adminNote: r.adminNote,
+      createdAt: r.createdAt,
+      reviewedAt: r.reviewedAt,
+      accountDisplayName: byId.get(r.userId.toString())?.displayName || ""
+    })),
+    total,
+    page: q.page,
+    limit: q.limit
+  });
+});
+
+export const patchAdminCourierApplication = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid application id");
+  const body = patchCourierApplicationSchema.parse(req.body);
+  const ca = await CourierApplication.findById(id);
+  if (!ca) throw new HttpError(404, "Application not found");
+  if (ca.status !== "pending") throw new HttpError(400, "Only pending applications can be reviewed.");
+
+  const applicant = await User.findById(ca.userId);
+  if (!applicant) throw new HttpError(404, "Applicant not found");
+
+  if (body.action === "reject") {
+    ca.status = "rejected";
+    ca.adminNote = body.adminNote || "";
+    ca.reviewedAt = new Date();
+    await ca.save();
+    await User.updateOne(
+      { _id: ca.userId },
+      { $set: { riderApplicationStatus: "rejected" as RiderApplicationStatus } }
+    );
+    await recordAdminAuditEvent({
+      actorId: req.user?.id,
+      action: "courier.reject",
+      title: `Courier rejected — ${ca.fullName.slice(0, 60)}`,
+      detail: (body.adminNote || "").slice(0, 500)
+    });
+    res.json({ ok: true, status: "rejected" });
+    return;
+  }
+
+  if (normalizeUserRole(applicant.role) !== "buyer") {
+    throw new HttpError(400, "Applicant is not a shopper account; cannot approve as courier.");
+  }
+
+  const phone = ca.phone.trim();
+  if (!phone) throw new HttpError(400, "Application has no phone number.");
+
+  const phoneTaken = await User.findOne({
+    phone,
+    _id: { $ne: ca.userId }
+  })
+    .select("_id")
+    .lean();
+  if (phoneTaken) {
+    throw new HttpError(409, "That phone number is already on another account. Ask the applicant to use a unique number.");
+  }
+
+  const existingRp = await RiderProfile.findOne({ userId: ca.userId }).lean();
+  if (existingRp) {
+    throw new HttpError(400, "This user already has a rider profile.");
+  }
+
+  ca.status = "approved";
+  ca.adminNote = body.adminNote || "";
+  ca.reviewedAt = new Date();
+  await ca.save();
+
+  const displayName =
+    ((applicant as { displayName?: string }).displayName || "").trim() || ca.fullName.trim();
+
+  await VendorApplication.updateMany(
+    { userId: ca.userId, status: "pending" },
+    {
+      $set: {
+        status: "rejected",
+        adminNote: "Auto-closed — applicant approved as campus courier.",
+        reviewedAt: new Date()
+      }
+    }
+  );
+
+  await User.updateOne(
+    { _id: ca.userId },
+    {
+      $set: {
+        role: "rider",
+        phone,
+        displayName,
+        riderApplicationStatus: "none" as RiderApplicationStatus,
+        vendorStatus: "none"
+      }
+    }
+  );
+
+  await RiderProfile.create({
+    userId: ca.userId,
+    vehicleType: ca.vehicleType.trim()
+  });
+
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "courier.approve",
+    title: `Courier approved — ${ca.fullName.slice(0, 60)}`,
+    detail: ca.email
+  });
+  res.json({ ok: true, status: "approved" });
+});
+
+export const deleteAdminCourierApplication = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid application id");
+  const doc = await CourierApplication.findById(id);
+  if (!doc) throw new HttpError(404, "Application not found");
+  if (doc.status === "pending") {
+    throw new HttpError(
+      400,
+      "Approve or reject this application first — pending records cannot be deleted."
+    );
+  }
+  const label = doc.fullName;
+  await doc.deleteOne();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "delete.courierApplication",
+    title: `Courier application removed — ${label.slice(0, 60)}`,
+    detail: id
+  });
+  res.status(204).send();
 });

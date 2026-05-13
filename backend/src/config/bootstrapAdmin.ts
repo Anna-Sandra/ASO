@@ -2,7 +2,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import mongoose from "mongoose";
 import { env } from "./env";
-import { User, type VendorProfileStatus } from "../modules/auth/user.model";
+import { User, type VendorProfileStatus, type RiderApplicationStatus } from "../modules/auth/user.model";
 
 const SALT_ROUNDS = 12;
 
@@ -71,6 +71,7 @@ export function bootstrapAdminSessionUserJson(): {
   phone: string;
   profileImageUrl: string;
   vendorStatus: VendorProfileStatus;
+  riderApplicationStatus: RiderApplicationStatus;
   businessName: string;
   bankName: string;
   bankAccountNumber: string;
@@ -85,6 +86,7 @@ export function bootstrapAdminSessionUserJson(): {
     phone: "",
     profileImageUrl: "",
     vendorStatus: "none",
+    riderApplicationStatus: "none",
     businessName: "",
     bankName: "",
     bankAccountNumber: "",

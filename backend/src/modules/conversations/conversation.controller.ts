@@ -6,6 +6,7 @@ import { User } from "../auth/user.model";
 import { Order } from "../orders/order.model";
 import { Conversation } from "./conversation.model";
 import { getPrimarySupportAdminId } from "./supportPeer";
+import { fireNotification } from "../notifications/notification.service";
 
 function resolveMsgInbox(
   accountRole: "buyer" | "seller" | "admin",
@@ -255,6 +256,12 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
       createdAt: new Date()
     });
     await conv.save();
+    fireNotification(supportId, {
+      type: "message_received",
+      title: "Support message",
+      message: "Someone sent a message to Campus Mart support.",
+      orderId: undefined
+    });
     const raw = sortMessagesAsc(conv.messages as MsgRow[]);
     const messages = raw.map((m) => ({
       senderRole: m.senderRole,
@@ -301,6 +308,15 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
     createdAt: new Date()
   });
   await conv.save();
+
+  const previewRaw = String(text).trim();
+  const preview = previewRaw.length > 160 ? `${previewRaw.slice(0, 160)}…` : previewRaw;
+  fireNotification(peerOid, {
+    type: "message_received",
+    title: "New message",
+    message: preview || "You have a new direct message.",
+    orderId: undefined
+  });
 
   const [peer] = await User.find({ _id: peerOid }).select("displayName email").lean();
   const peerLabel =

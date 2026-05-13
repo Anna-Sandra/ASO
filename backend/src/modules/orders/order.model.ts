@@ -87,6 +87,11 @@ export interface OrderDoc {
   paystackRefundId?: number | null;
   paystackRefundRemoteStatus?: string;
   refundStockRestored?: boolean;
+  /**
+   * Set when a refund completes: whether fulfillment was marked `delivered` at that moment.
+   * Used so UIs can show "Delivered · Refunded" only when the order had reached delivered before the refund.
+   */
+  refundFulfillmentWasDelivered?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -188,7 +193,8 @@ const orderSchema = new Schema<OrderDoc>(
     },
     paystackRefundId: { type: Number, default: null },
     paystackRefundRemoteStatus: { type: String, default: "" },
-    refundStockRestored: { type: Boolean, default: false }
+    refundStockRestored: { type: Boolean, default: false },
+    refundFulfillmentWasDelivered: { type: Boolean }
   },
   { timestamps: true }
 );

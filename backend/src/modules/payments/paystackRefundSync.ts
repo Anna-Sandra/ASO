@@ -1,6 +1,7 @@
 import type { HydratedDocument } from "mongoose";
 import { Order, type OrderDoc } from "../orders/order.model";
 import { Product } from "../products/product.model";
+import { notifyBuyerRefundProcessed } from "../notifications/notification.service";
 
 /** Paystack refund API / webhooks use this when funds have settled back to the customer. */
 export function isPaystackRefundRemoteSettled(status: string): boolean {
@@ -11,6 +12,9 @@ export function isPaystackRefundRemoteSettled(status: string): boolean {
 }
 
 export async function applyProcessedPaystackRefundToOrder(o: HydratedDocument<OrderDoc>): Promise<void> {
+  if (o.refundFulfillmentWasDelivered == null) {
+    o.refundFulfillmentWasDelivered = o.status === "delivered";
+  }
   o.refundStatus = "refunded";
   o.paystackRefundRemoteStatus = "processed";
   if (!o.refundStockRestored) {
@@ -19,6 +23,7 @@ export async function applyProcessedPaystackRefundToOrder(o: HydratedDocument<Or
     }
     o.refundStockRestored = true;
   }
+  void notifyBuyerRefundProcessed(o._id.toString(), o.buyerId);
 }
 
 type RefundWebhookPayload = {

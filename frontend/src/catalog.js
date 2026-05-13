@@ -9,10 +9,24 @@ export const CATEGORIES = [
   { id: "groceries_essentials", label: "Groceries & Essentials" }
 ];
 
+/**
+ * For any UI list of `{ id, label }` where `id === "all"` means “every category / whole list”,
+ * ensure that row is first. Safe to call on lists that already have All first.
+ * @param {{ id: string, label?: string }[]} rows
+ */
+export function withAllCategoryFirst(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const i = rows.findIndex((r) => r && r.id === "all");
+  if (i <= 0) return rows;
+  const next = rows.slice();
+  const [allRow] = next.splice(i, 1);
+  return [allRow, ...next];
+}
+
 export const FILTERS = [
   { id: "all", label: "All" },
   { id: "new", label: "New" },
-  { id: "under20", label: "Under Ghc 20" }
+  { id: "popular", label: "Popular" }
 ];
 
 export const PRODUCT_CATEGORY_VALUES = [
@@ -35,12 +49,19 @@ export const CATEGORY_LABELS = {
   groceries_essentials: "Groceries & Essentials"
 };
 
+/** Fixed cart checkout prices are hidden for service listings — buyers arrange details with vendors. */
+export function isServicesCategory(entity) {
+  if (!entity || typeof entity !== "object") return false;
+  return entity.category === "services";
+}
+
 /** @param {Record<string, unknown>} p */
 export function productMatchesFilter(p, filId) {
   const tags = /** @type {string[]} */ (p.tags || []);
   if (filId === "all") return true;
   if (filId === "new") return tags.includes("new");
-  if (filId === "under20") return Number(p.price) < 20;
+  if (filId === "popular") return tags.includes("popular");
+  
   return true;
 }
 
@@ -57,6 +78,35 @@ export function productBadge(p) {
   if (tags.includes("new")) return "New";
   if (tags.includes("sale")) return "Sale";
   return null;
+}
+
+/**
+ * Decorative promo chips for storefront cards (tags + compare-at pricing).
+ * @param {Record<string, unknown>} p
+ * @returns {Array<{ key: string; label: string; className: string }>}
+ */
+export function productStorefrontBadges(p) {
+  /** @type {Array<{ key: string; label: string; className: string }>} */
+  const out = [];
+  const tags = /** @type {string[]} */ ((p.tags || []).map((t) => String(t || "").toLowerCase()));
+
+  const list = Number(p.price);
+  const cmpRaw = Number(p.compareAtPrice);
+  if (Number.isFinite(cmpRaw) && Number.isFinite(list) && cmpRaw > list && list > 0) {
+    const pct = Math.round(((cmpRaw - list) / cmpRaw) * 100);
+    if (pct > 0 && pct < 100) {
+      out.push({ key: "off", label: `${pct}% OFF`, className: "bg-fuchsia-500 text-white" });
+    }
+  }
+
+  if (tags.includes("popular")) out.push({ key: "popular", label: "Popular", className: "bg-orange-500 text-white" });
+
+  const pb = productBadge(p);
+  if (pb === "New") out.push({ key: "new", label: "New", className: "bg-emerald-500 text-white" });
+  else if (pb === "Sale" && !out.some((x) => x.key === "off")) out.push({ key: "sale", label: "Sale", className: "bg-rose-500 text-white" });
+
+  const seen = new Set();
+  return out.filter((b) => (seen.has(b.label) ? false : (seen.add(b.label), true))).slice(0, 3);
 }
 
 /** @param {Record<string, unknown>} sp */

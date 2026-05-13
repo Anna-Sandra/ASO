@@ -1,3 +1,5 @@
+import { getOrCreateSaveSessionId } from "./saveSession";
+
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/$/, "");
 const ADMIN_API_KEY = (process.env.REACT_APP_ADMIN_API_KEY || "").trim();
 const TOKEN_KEY = "campusmart_access_token";
@@ -134,6 +136,13 @@ export async function apiFetch(path, opts = {}) {
   const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
   const headers = new Headers(opts.headers || {});
   mergeAdminHeaders(path, headers);
+  const authHdr = String(headers.get("Authorization") || "").trim();
+  if (!authHdr.startsWith("Bearer ")) {
+    const sid = getOrCreateSaveSessionId();
+    if (sid && !headers.has("X-Save-Session")) {
+      headers.set("X-Save-Session", sid);
+    }
+  }
   if (opts.json !== undefined) {
     headers.set("Content-Type", "application/json");
   }
@@ -203,6 +212,39 @@ export async function apiUploadProductImages(files, accessToken) {
     fd.append("images", f);
   }
   const url = `${API_BASE}/api/uploads/product-images`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: fd,
+    credentials: "include"
+  });
+  const data = await parseResponse(res);
+  if (!res.ok) {
+    const msg =
+      data && data.error && data.error.message
+        ? data.error.message
+        : `Upload failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+/**
+ * Upload optional book/companion PDF (field `file`, application/pdf only). Requires seller/admin auth.
+ * @param {File} file
+ * @param {string} accessToken
+ * @returns {Promise<{ url: string }>}
+ */
+export async function apiUploadBookPdf(file, accessToken) {
+  if (!API_BASE) {
+    throw new Error("REACT_APP_API_URL is not set. Add it in frontend/.env (e.g. http://localhost:4000).");
+  }
+  const fd = new FormData();
+  fd.append("file", file);
+  const url = `${API_BASE}/api/uploads/book-pdf`;
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}` },

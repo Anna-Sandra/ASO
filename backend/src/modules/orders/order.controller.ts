@@ -8,6 +8,7 @@ import { buyerTotalForMerchantNetGhs, roundMoney, serviceFeeOnVendorGross } from
 import { Order } from "./order.model";
 import { Product } from "../products/product.model";
 import { withContacts } from "./orderSerialize";
+import { notifyOrderCancelledForCounterparties, notifyOrderMessageRecipients, notifySellersNewOrder, notifySellersPaymentSubmitted } from "../notifications/notification.service";
 
 type InboxMsg = { senderRole: string; text: string; createdAt: Date; senderId: mongoose.Types.ObjectId | string };
 
@@ -30,6 +31,15 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     if (!mongoose.isValidObjectId(row.productId)) throw new HttpError(400, "Invalid product id");
     const p = await Product.findById(row.productId);
     if (!p || p.status !== "active") throw new HttpError(400, `Product unavailable: ${row.productId}`);
+    if (p.category === "services") {
+      throw new HttpError(
+        400,
+        "Service listings are quoted with vendors directly. Remove them from your cart — open the listing and use seller contact details."
+      );
+    }
+    if (!(Number(p.price) > 0)) {
+      throw new HttpError(400, `Listing has no checkout price: ${p.name}`);
+    }
     if (p.stock < row.quantity) throw new HttpError(400, `Insufficient stock for ${p.name}`);
 
     const vendorGross = roundMoney(p.price * row.quantity);
@@ -66,6 +76,8 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     processingFeeTotal,
     status: "pending_payment"
   });
+
+  void notifySellersNewOrder(order._id.toString());
 
   const [orderOut] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
   res.status(201).json({ order: orderOut });
@@ -199,6 +211,7 @@ export const addOrderMessage = asyncHandler(async (req: Request, res: Response) 
     createdAt: new Date()
   });
   await order.save();
+  void notifyOrderMessageRecipients(id, isBuyer);
   const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
   res.json({ order: serialized });
 });
@@ -290,6 +303,8 @@ export const cancelMyOrder = asyncHandler(async (req: Request, res: Response) =>
   }
   await order.save();
 
+  void notifyOrderCancelledForCounterparties(id, "buyer");
+
   const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
   res.json({ order: serialized });
 });
@@ -347,6 +362,8 @@ export const markManualPayment = asyncHandler(async (req: Request, res: Response
   order.paymentMethod = body.method;
   order.paymentReference = reference || null;
   await order.save();
+
+  void notifySellersPaymentSubmitted(order._id.toString());
 
   const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
   res.json({ order: serialized });

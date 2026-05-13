@@ -1,7 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { useTheme } from "./ThemeContext";
+import { useTheme } from "./contexts";
 import { h } from "./h";
 import { GlassPanel, LogoMark, ThemeToggleButton } from "./ui";
 

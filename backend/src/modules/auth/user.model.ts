@@ -1,19 +1,19 @@
 import mongoose, { Schema } from "mongoose";
 
-export type UserRole = "buyer" | "seller" | "admin";
+export type UserRole = "buyer" | "seller" | "admin" | "rider";
 
 /** In JWT and session: super admins may grant admin to other users. */
 export type AdminLevel = "super" | "normal";
 
 /** Tokens or legacy users may omit or corrupt `role`; shop routes treat unknown as buyer. */
 export function normalizeUserRole(role: unknown): UserRole {
-  if (role === "buyer" || role === "seller" || role === "admin") return role;
+  if (role === "buyer" || role === "seller" || role === "admin" || role === "rider") return role;
   return "buyer";
 }
 
-/** Expose phone only for sellers (MoMo / buyer payment contact). Hidden for buyers and admins. */
+/** Expose phone for sellers (MoMo / buyer payment contact) and riders (delivery contact). Hidden for buyers and admins. */
 export function publicPhoneForPaymentRole(role: UserRole, phone?: string | null): string {
-  if (role !== "seller") return "";
+  if (role !== "seller" && role !== "rider") return "";
   return typeof phone === "string" ? phone.trim() : "";
 }
 
@@ -21,6 +21,9 @@ export type AccountStatus = "active" | "suspended" | "banned";
 
 /** Buyer vendor onboarding; sellers use `approved` once promoted. */
 export type VendorProfileStatus = "none" | "pending" | "approved" | "rejected";
+
+/** Buyer: campus courier application queue. Cleared when `role` becomes `rider`. */
+export type RiderApplicationStatus = "none" | "pending" | "rejected";
 
 export interface UserDoc {
   _id: mongoose.Types.ObjectId;
@@ -36,6 +39,8 @@ export interface UserDoc {
   sellerVerified?: boolean;
   /** Buyer: vendor application state. After approval, role becomes seller and this is approved. */
   vendorStatus?: VendorProfileStatus;
+  /** Buyer: courier application state (self-serve apply). Not used once `role` is `rider`. */
+  riderApplicationStatus?: RiderApplicationStatus;
   /** Shop / business name (set when vendor application is approved). */
   businessName?: string;
   bankName?: string;
@@ -59,7 +64,7 @@ const userSchema = new Schema<UserDoc>(
   {
     email: { type: String, required: false, unique: true, sparse: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true, select: false },
-    role: { type: String, required: true, enum: ["buyer", "seller", "admin"], default: "buyer" },
+    role: { type: String, required: true, enum: ["buyer", "seller", "admin", "rider"], default: "buyer" },
     emailVerifiedAt: { type: Date, default: null },
     displayName: { type: String, default: "" },
     accountStatus: {
@@ -71,6 +76,11 @@ const userSchema = new Schema<UserDoc>(
     vendorStatus: {
       type: String,
       enum: ["none", "pending", "approved", "rejected"],
+      default: "none"
+    },
+    riderApplicationStatus: {
+      type: String,
+      enum: ["none", "pending", "rejected"],
       default: "none"
     },
     businessName: { type: String, default: "", trim: true, maxlength: 120 },

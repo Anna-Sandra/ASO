@@ -45,7 +45,8 @@ export const adminPlatformSettingsSchema = z.object({
   maintenanceMode: z.boolean().optional(),
   maintenanceMessage: z.string().max(2000).optional(),
   allowPublicRegistration: z.boolean().optional(),
-  allowVendorApplications: z.boolean().optional()
+  allowVendorApplications: z.boolean().optional(),
+  allowCourierApplications: z.boolean().optional()
 });
 
 export const adminEmailTestSchema = z.object({
@@ -116,6 +117,20 @@ function firstQueryString(v: unknown): string | undefined {
 export const adminUsersQuerySchema = adminListQuerySchema.extend({
   role: z
     .preprocess((v) => firstQueryString(v) ?? "all", z.enum(["all", "buyer", "seller", "admin"])),
+  accountStatus: z
+    .preprocess(
+      (v) => firstQueryString(v) ?? "all",
+      z.enum(["all", "active", "suspended", "banned"])
+    ),
+  verified: z.preprocess((v) => firstQueryString(v) ?? "all", z.enum(["all", "yes", "no"])),
+  search: z.preprocess(
+    (v) => (firstQueryString(v) ?? "").trim(),
+    z.string().max(200)
+  )
+});
+
+/** Paginated courier accounts (+ RiderProfile) — separate from `GET /admin/users`. */
+export const adminRidersQuerySchema = adminListQuerySchema.extend({
   accountStatus: z
     .preprocess(
       (v) => firstQueryString(v) ?? "all",

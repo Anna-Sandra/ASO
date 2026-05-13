@@ -11,8 +11,7 @@ import {
   TrendingUp,
   User,
 } from "lucide-react";
-import { useAuth } from "./AuthContext";
-import { useNotice } from "./NoticeContext";
+import { useAuth, useNotice } from "./contexts";
 import { apiFetch, fetchPublicPlatformConfig, getApiBase } from "./api";
 import { CATEGORY_LABELS, PRODUCT_CATEGORY_VALUES } from "./catalog";
 import { BuyerLayout, CartDrawer } from "./screensBuyer";

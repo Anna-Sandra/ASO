@@ -1,12 +1,17 @@
 import mongoose, { Schema } from "mongoose";
 
 export type NotificationType =
+  | "order_placed"
+  | "payment_submitted"
   | "admin_payment_confirmed"
   | "payment_received"
   | "order_status_change"
+  | "order_cancelled"
   | "refund_processed"
   | "dispute_opened"
-  | "message_received";
+  | "message_received"
+  | "listing_decision"
+  | "vendor_application_decision";
 
 export interface NotificationDoc {
   _id: mongoose.Types.ObjectId;
@@ -27,21 +32,24 @@ export interface NotificationDoc {
   updatedAt: Date;
 }
 
+const NOTIFICATION_TYPES: NotificationType[] = [
+  "order_placed",
+  "payment_submitted",
+  "admin_payment_confirmed",
+  "payment_received",
+  "order_status_change",
+  "order_cancelled",
+  "refund_processed",
+  "dispute_opened",
+  "message_received",
+  "listing_decision",
+  "vendor_application_decision"
+];
+
 const notificationSchema = new Schema<NotificationDoc>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-    type: {
-      type: String,
-      enum: [
-        "admin_payment_confirmed",
-        "payment_received",
-        "order_status_change",
-        "refund_processed",
-        "dispute_opened",
-        "message_received"
-      ],
-      required: true
-    },
+    type: { type: String, enum: NOTIFICATION_TYPES, required: true },
     title: { type: String, required: true },
     message: { type: String, required: true },
     orderId: { type: Schema.Types.ObjectId, ref: "Order", default: null },

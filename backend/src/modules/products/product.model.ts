@@ -19,6 +19,8 @@ export interface ProductDoc {
   name: string;
   description: string;
   category: ProductCategory;
+  /** Category-specific listing fields validated by category on write. */
+  categoryAttributes?: Record<string, unknown>;
   price: number;
   compareAtPrice?: number | null;
   stock: number;
@@ -39,6 +41,7 @@ const productSchema = new Schema<ProductDoc>(
     name: { type: String, required: true, trim: true },
     description: { type: String, default: "" },
     category: { type: String, required: true, enum: PRODUCT_CATEGORIES },
+    categoryAttributes: { type: Schema.Types.Mixed, default: {} },
     price: { type: Number, required: true, min: 0 },
     compareAtPrice: { type: Number, min: 0, default: null },
     stock: { type: Number, required: true, min: 0, default: 25 },

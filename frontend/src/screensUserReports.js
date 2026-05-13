@@ -23,8 +23,7 @@ import {
   UploadCloud,
   UserX
 } from "lucide-react";
-import { useAuth } from "./AuthContext";
-import { useNotice } from "./NoticeContext";
+import { useAuth, useNotice } from "./contexts";
 import { apiFetch, getApiBase } from "./api";
 import { h, f } from "./h";
 import { Badge, GlassCard, InlineNotice } from "./ui";
@@ -539,7 +538,7 @@ function ReportPanelInner({ variant }) {
                   className:
                     "inline-flex items-center gap-1.5 text-sm font-medium text-purple-700 transition hover:text-purple-900 dark:text-purple-300 dark:hover:text-purple-100"
                 },
-                [h(Headphones, { key: "i", className: "h-4 w-4" }), h("span", { key: "l", className: "hidden sm:inline" }, "Need help?")]
+                [h(Headphones, { key: "i", className: "h-4 w-4" }), "Help"]
               )
             ]
           ),

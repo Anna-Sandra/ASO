@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { CheckCircle2, Eye, EyeOff, Lock, Shield, User } from "lucide-react";
-import { useAuth } from "./AuthContext";
-import { useNotice } from "./NoticeContext";
+import { useAuth, useNotice } from "./contexts";
 import { decodeJwtPayload } from "./authJwt";
 import { h } from "./h";
 import { apiFetch } from "./api";

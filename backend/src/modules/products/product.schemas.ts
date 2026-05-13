@@ -1,26 +1,103 @@
 import { z } from "zod";
+import mongoose from "mongoose";
 import { MAX_PRODUCT_GALLERY_IMAGES } from "../../config/productLimits";
 import { PRODUCT_CATEGORIES } from "./product.model";
+import { normalizeCategoryAttributes, safeParseCategoryAttributes } from "./categoryAttributes.schema";
 
 const categoryEnum = z.enum(PRODUCT_CATEGORIES);
 
-export const createProductSchema = z.object({
+const productCore = {
   name: z.string().min(1).max(200),
   description: z.string().max(10000).optional().default(""),
   category: categoryEnum,
-  price: z.coerce.number().positive(),
+  categoryAttributes: z.unknown().optional(),
+  /** Services use 0 (“contact vendor” in the UI); other categories must be positive. */
+  price: z.coerce.number().min(0),
   compareAtPrice: z.coerce.number().positive().optional().nullable(),
   stock: z.coerce.number().int().min(0).default(25),
   status: z.enum(["draft", "active"]).default("draft"),
   tags: z.array(z.string().max(32)).max(10).optional().default([]),
   imageUrls: z.array(z.string().url().or(z.string().max(500))).max(MAX_PRODUCT_GALLERY_IMAGES).optional().default([])
-});
+};
 
-export const updateProductSchema = createProductSchema.partial();
+const createBody = z.object(productCore);
+
+export const createProductSchema = createBody
+  .superRefine((data, ctx) => {
+    if (data.category !== "services") {
+      if (!Number.isFinite(data.price) || data.price <= 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Price must be greater than zero.", path: ["price"] });
+      }
+    } else if (data.price < 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid price.", path: ["price"] });
+    }
+    const parsed = safeParseCategoryAttributes(data.category, data.categoryAttributes ?? {});
+    if (!parsed.success) {
+      for (const iss of parsed.error.issues) {
+        ctx.addIssue({
+          ...iss,
+          path: ["categoryAttributes", ...(iss.path || [])]
+        });
+      }
+    }
+  })
+  .transform((d) => ({
+    ...d,
+    categoryAttributes: normalizeCategoryAttributes(d.category, d.categoryAttributes)
+  }));
+
+/** PATCH: when both `category` and `categoryAttributes` are sent, normalize. Otherwise controller merges category from DB before saving attributes. */
+export const updateProductSchema = createBody
+  .partial()
+  .superRefine((data, ctx) => {
+    if (data.category === undefined || data.categoryAttributes === undefined) return;
+    const parsed = safeParseCategoryAttributes(data.category, data.categoryAttributes ?? {});
+    if (!parsed.success) {
+      for (const iss of parsed.error.issues) {
+        ctx.addIssue({
+          ...iss,
+          path: ["categoryAttributes", ...(iss.path || [])]
+        });
+      }
+    }
+  })
+  .transform((d) => {
+    const out = { ...d };
+    if (d.category !== undefined && d.categoryAttributes !== undefined) {
+      out.categoryAttributes = normalizeCategoryAttributes(d.category, d.categoryAttributes);
+    }
+    return out;
+  });
 
 export const listProductsQuerySchema = z.object({
   category: categoryEnum.optional(),
   tag: z.string().max(32).optional(),
   q: z.string().max(200).optional(),
-  maxPrice: z.coerce.number().positive().optional()
+  /** Inclusive min list price (seller price, GHS — same unit as `price` on products). */
+  minPrice: z.coerce.number().min(0).optional(),
+  /** Inclusive max list price. */
+  maxPrice: z.coerce.number().min(0).optional()
+}).superRefine((d, ctx) => {
+  if (d.minPrice != null && d.maxPrice != null && d.minPrice > d.maxPrice) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "minPrice cannot be greater than maxPrice", path: ["minPrice"] });
+  }
+});
+
+export const recommendedProductsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(24).optional().default(12),
+  preferCheaper: z
+    .preprocess((v) => {
+      if (v === undefined || v === null) return true;
+      const raw = Array.isArray(v) ? v[0] : v;
+      if (typeof raw === "boolean") return raw;
+      const s = String(raw).toLowerCase().trim();
+      if (["0", "false", "no", "off"].includes(s)) return false;
+      return true;
+    }, z.boolean())
+    .optional()
+    .default(true)
+});
+
+export const toggleProductSaveSchema = z.object({
+  productId: z.string().refine((s) => mongoose.isValidObjectId(s), { message: "Invalid product id" })
 });

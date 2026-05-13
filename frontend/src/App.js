@@ -1,10 +1,14 @@
 import React from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { AuthProvider, useAuth } from "./AuthContext";
-import { CartProvider } from "./CartContext";
-import { NoticeProvider } from "./NoticeContext";
-import { ThemeProvider } from "./ThemeContext";
-import { h, f } from "./h";
+import {
+  AuthProvider,
+  useAuth,
+  CartProvider,
+  NoticeProvider,
+  NotificationProvider,
+  ThemeProvider
+} from "./contexts";
+import { SavedProductsProvider } from "./savedProductsContext";
 import {
   ForgotPasswordPage,
   LoginPage,
@@ -14,26 +18,33 @@ import {
   VerifyEmailPage
 } from "./screensAuth";
 import {
+  BuyerHelpSupportPage,
   BuyerMessagesPage,
+  BuyerNotificationsPage,
   BuyerOrdersPage,
   CheckoutPage,
   PaymentCancelPage,
   PaymentSuccessPage,
   ProductDetailPage,
   ProfilePage,
-  ShopPage
+  ShopPage,
+  SavedProductsPage
 } from "./screensBuyer";
+import { CourierApplicationPage } from "./screensCourierApply";
 import { VendorApplicationPage } from "./screensVendorApply";
 import { BuyerReportsPage, VendorReportsPage } from "./screensUserReports";
 import { TermsAndConditionsPage, VendorRulesPage } from "./screensLegal";
 import { AdminPage } from "./screensAdmin";
 import { AdminLoginPage, AdminLoginOtpPage } from "./screensAdminLogin";
+import RiderDashboard from "./RiderDashboard";
+import { h } from "./h";
 import {
   VendorAddProductPage,
   VendorAnalyticsPage,
   VendorDashboardPage,
   VendorEditProductPage,
   VendorMessagesPage,
+  VendorNotificationsPage,
   VendorOrdersPage,
   VendorProductsPage,
   VendorProfilePage,
@@ -42,14 +53,18 @@ import {
   VendorShell
 } from "./screensVendor";
 
+function FullScreenLoading() {
+  return h(
+    "div",
+    { className: "flex min-h-screen items-center justify-center bg-night-950 text-slate-300" },
+    "Loading…"
+  );
+}
+
 function VendorGate({ children }) {
   const { accessToken, loading, user } = useAuth();
   if (loading) {
-    return h(
-      "div",
-      { className: "flex min-h-screen items-center justify-center bg-night-950 text-slate-300" },
-      "Loading…"
-    );
+    return h(FullScreenLoading);
   }
   if (!accessToken) {
     return h(Navigate, { to: "/login", replace: true, state: { from: "vendor" } });
@@ -57,6 +72,9 @@ function VendorGate({ children }) {
   if (user && user.role && user.role !== "seller") {
     if (user.role === "admin") {
       return h(Navigate, { to: "/admin", replace: true });
+    }
+    if (user.role === "rider") {
+      return h(Navigate, { to: "/rider", replace: true });
     }
     return h(Navigate, { to: "/login", replace: true, state: { from: "vendor" } });
   }
@@ -66,17 +84,16 @@ function VendorGate({ children }) {
 function BuyerGate({ children }) {
   const { accessToken, loading, user } = useAuth();
   if (loading) {
-    return h(
-      "div",
-      { className: "flex min-h-screen items-center justify-center bg-night-950 text-slate-300" },
-      "Loading…"
-    );
+    return h(FullScreenLoading);
   }
   if (accessToken && user?.role === "admin") {
     return h(Navigate, { to: "/admin", replace: true });
   }
   if (accessToken && user?.role === "seller") {
     return h(Navigate, { to: "/vendor/dashboard", replace: true });
+  }
+  if (accessToken && user?.role === "rider") {
+    return h(Navigate, { to: "/rider", replace: true });
   }
   return children;
 }
@@ -85,11 +102,7 @@ function BuyerGate({ children }) {
 function AdminGate({ children }) {
   const { accessToken, loading, user } = useAuth();
   if (loading) {
-    return h(
-      "div",
-      { className: "flex min-h-screen items-center justify-center bg-night-950 text-slate-300" },
-      "Loading…"
-    );
+    return h(FullScreenLoading);
   }
   if (!accessToken) {
     return h(Navigate, { to: "/admin/login", replace: true, state: { from: "/admin" } });
@@ -100,15 +113,31 @@ function AdminGate({ children }) {
   return children;
 }
 
+function RiderGate({ children }) {
+  const { accessToken, loading, user } = useAuth();
+  if (loading) {
+    return h(FullScreenLoading);
+  }
+  if (!accessToken) {
+    return h(Navigate, { to: "/login", replace: true, state: { from: "/rider" } });
+  }
+  if (user?.role === "admin") {
+    return h(Navigate, { to: "/admin", replace: true });
+  }
+  if (user?.role === "seller") {
+    return h(Navigate, { to: "/vendor/dashboard", replace: true });
+  }
+  if (user?.role !== "rider") {
+    return h(Navigate, { to: "/", replace: true });
+  }
+  return children;
+}
+
 function RequireBuyerAuth({ children }) {
   const { accessToken, loading } = useAuth();
   const loc = useLocation();
   if (loading) {
-    return h(
-      "div",
-      { className: "flex min-h-screen items-center justify-center bg-night-950 text-slate-300" },
-      "Loading…"
-    );
+    return h(FullScreenLoading);
   }
   if (!accessToken) {
     return h(Navigate, { to: "/login", replace: true, state: { from: loc.pathname + (loc.search || "") } });
@@ -127,6 +156,7 @@ function AppRoutes() {
       element: h(BuyerGate, null, h(ProductDetailPage)),
       key: "r-product"
     }),
+    h(Route, { path: "/saved", element: h(BuyerGate, null, h(SavedProductsPage)), key: "r-saved" }),
     h(Route, { path: "/admin/login", element: h(AdminLoginPage), key: "r-admin-login" }),
     h(Route, { path: "/admin/login-otp", element: h(AdminLoginOtpPage), key: "r-admin-login-otp" }),
     h(Route, { path: "/admin", element: h(AdminGate, null, h(AdminPage)), key: "r-admin" }),
@@ -137,6 +167,7 @@ function AppRoutes() {
     h(Route, { path: "/forgot-password", element: h(ForgotPasswordPage), key: "r-forgot" }),
     h(Route, { path: "/reset-password", element: h(ResetPasswordPage), key: "r-reset" }),
     h(Route, { path: "/terms", element: h(TermsAndConditionsPage), key: "r-terms" }),
+    h(Route, { path: "/support", element: h(BuyerGate, null, h(BuyerHelpSupportPage)), key: "r-support" }),
     h(Route, { path: "/vendor-rules", element: h(VendorRulesPage), key: "r-vendor-rules" }),
     h(Route, {
       path: "/checkout",
@@ -154,9 +185,24 @@ function AppRoutes() {
       key: "r-apply-vendor"
     }),
     h(Route, {
+      path: "/apply-courier",
+      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(CourierApplicationPage))),
+      key: "r-apply-courier"
+    }),
+    h(Route, {
       path: "/orders",
       element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(BuyerOrdersPage))),
       key: "r-orders"
+    }),
+    h(Route, {
+      path: "/reports",
+      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(BuyerReportsPage))),
+      key: "r-buyer-reports"
+    }),
+    h(Route, {
+      path: "/rider",
+      element: h(RiderGate, null, h(RiderDashboard)),
+      key: "r-rider"
     }),
     h(Route, {
       path: "/messages",
@@ -164,9 +210,9 @@ function AppRoutes() {
       key: "r-messages"
     }),
     h(Route, {
-      path: "/reports",
-      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(BuyerReportsPage))),
-      key: "r-reports"
+      path: "/notifications",
+      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(BuyerNotificationsPage))),
+      key: "r-notif"
     }),
     h(Route, {
       path: "/payment/success",
@@ -188,6 +234,7 @@ function AppRoutes() {
       h(Route, { path: "products/:productId", element: h(VendorEditProductPage), key: "r-v-edit" }),
       h(Route, { path: "orders", element: h(VendorOrdersPage), key: "r-v-orders" }),
       h(Route, { path: "messages", element: h(VendorMessagesPage), key: "r-v-messages" }),
+      h(Route, { path: "notifications", element: h(VendorNotificationsPage), key: "r-v-notif" }),
       h(Route, { path: "reports", element: h(VendorReportsPage), key: "r-v-reports" }),
       h(Route, { path: "analytics", element: h(VendorAnalyticsPage), key: "r-v-analytics" }),
       h(Route, { path: "reviews", element: h(VendorReviewsPage), key: "r-v-reviews" }),
@@ -206,12 +253,20 @@ export default function App() {
       AuthProvider,
       null,
       h(
-        CartProvider,
+        SavedProductsProvider,
         null,
         h(
-          NoticeProvider,
+          CartProvider,
           null,
-          h(BrowserRouter, { future: { v7_startTransition: true, v7_relativeSplatPath: true } }, h(AppRoutes))
+          h(
+            NotificationProvider,
+            null,
+            h(
+              NoticeProvider,
+              null,
+              h(BrowserRouter, { future: { v7_startTransition: true, v7_relativeSplatPath: true } }, h(AppRoutes))
+            )
+          )
         )
       )
     )

@@ -1,6 +1,9 @@
+import { createServer } from "node:http";
+import { Server } from "socket.io";
 import { createApp } from "./app";
 import { connectDb } from "./config/db";
 import { env } from "./config/env";
+import { setupDeliverySockets } from "./modules/deliveries/delivery.socket";
 
 async function main() {
   try {
@@ -13,8 +16,13 @@ async function main() {
     );
   }
   const app = createApp();
+  const server = createServer(app);
+  const io = new Server(server, {
+    cors: { origin: env.APP_ORIGIN, credentials: true }
+  });
+  setupDeliverySockets(io);
 
-  const server = app.listen(env.PORT, () => {
+  server.listen(env.PORT, () => {
     // eslint-disable-next-line no-console
     console.log(`API listening on http://localhost:${env.PORT}`);
   });

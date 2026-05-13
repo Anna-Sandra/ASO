@@ -39,16 +39,17 @@ import {
   UserPlus,
   Users as UsersIcon,
   Wallet,
+  Truck,
   X,
   XCircle,
-  Ban
+  Ban,
+  Bike
 } from "lucide-react";
-import { useAuth } from "./AuthContext";
-import { useNotice } from "./NoticeContext";
-import { useTheme } from "./ThemeContext";
+import { useAuth, useNotice, useTheme } from "./contexts";
 import { apiFetch, getApiBase } from "./api";
-import { CATEGORY_LABELS } from "./catalog";
+import { CATEGORY_LABELS, withAllCategoryFirst } from "./catalog";
 import { formatGhc } from "./money";
+import { adminOrderFulfillmentBadgeTone, formatOrderFulfillmentLabel } from "./orderStatusDisplay";
 import { h } from "./h";
 import {
   Badge,
@@ -101,7 +102,9 @@ const VENDOR_LOC_BASE_LABELS = {
 const SIDEBAR_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "users", label: "Users", icon: UsersIcon },
+  { id: "riders", label: "Riders", icon: Bike },
   { id: "vendor-apps", label: "Vendor requests", icon: ClipboardList, badgeKey: "vendor-apps" },
+  { id: "courier-apps", label: "Courier requests", icon: Truck, badgeKey: "courier-apps" },
   { id: "sellers", label: "Sellers", icon: UserCheck },
   { id: "listings", label: "Listings", icon: Package, badgeKey: "listings" },
   { id: "orders", label: "Orders", icon: ShoppingCart, badgeKey: "orders" },
@@ -115,7 +118,9 @@ const SIDEBAR_ITEMS = [
 const PAGE_TITLES = {
   dashboard: { title: "Dashboard", hint: "Overview of your marketplace" },
   users: { title: "Users", hint: "Filter by buyers, vendors (sellers), or admins" },
+  riders: { title: "Riders & couriers", hint: "Delivery accounts with vehicle profile (separate from marketplace users)" },
   "vendor-apps": { title: "Vendor applications", hint: "Review requests to become a seller" },
+  "courier-apps": { title: "Courier applications", hint: "Review shoppers who applied to deliver (campus courier)" },
   sellers: { title: "Sellers verification", hint: "Verify and approve seller accounts" },
   listings: { title: "Listings", hint: "Manage every product on the platform" },
   orders: { title: "Orders", hint: "Manage customer orders" },
@@ -137,11 +142,13 @@ const USER_TABS = [
 ];
 
 const VENDOR_APP_TABS = [
+  { id: "all", label: "All" },
   { id: "pending", label: "Pending" },
   { id: "approved", label: "Approved" },
-  { id: "rejected", label: "Rejected" },
-  { id: "all", label: "All" }
+  { id: "rejected", label: "Rejected" }
 ];
+
+const COURIER_APP_TABS = VENDOR_APP_TABS;
 
 const SELLER_TABS = [
   { id: "pending", label: "Pending verification" },
@@ -161,6 +168,7 @@ const LISTING_TABS = [
 const ORDER_TABS = [
   { id: "all", label: "All orders" },
   { id: "pending_payment", label: "Pending" },
+  { id: "awaiting_vendor_payment", label: "Awaiting vendor" },
   { id: "processing", label: "Processing" },
   { id: "delivered", label: "Completed" },
   { id: "cancelled", label: "Cancelled" },
@@ -205,12 +213,6 @@ const SETTINGS_TAB_IDS = new Set(SETTINGS_TABS.map((t) => t.id));
 /*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
-function humanizeOrderStatus(s) {
-  return String(s || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 /** Maps stored refund state + Paystack remote status for badges. */
 function refundBadgeTone(o) {
   const rs = o.refundStatus || "none";
@@ -249,13 +251,6 @@ function listingStatusTone(s) {
   if (s === "rejected") return "danger";
   if (s === "draft") return "neutral";
   return "neutral";
-}
-
-function orderStatusTone(s) {
-  if (s === "delivered") return "success";
-  if (s === "cancelled") return "danger";
-  if (s === "paid" || s === "processing" || s === "sent_for_delivery") return "info";
-  return "warn";
 }
 
 function reportStatusTone(s) {
@@ -400,12 +395,13 @@ function StatCard({ label, value, hint, icon: Icon, tone = "info" }) {
 }
 
 function TabBar({ tabs, value, onChange, className = "" }) {
+  const orderedTabs = withAllCategoryFirst(tabs);
   return h(
     "div",
     {
       className: `flex flex-wrap gap-1 rounded-2xl border border-slate-200/90 bg-white/75 p-1 shadow-inner dark:border-white/10 dark:bg-white/5 ${className}`
     },
-    tabs.map((t) =>
+    orderedTabs.map((t) =>
       h(
         "button",
         {
@@ -499,7 +495,9 @@ function Avatar({ user, size = 36 }) {
       ? "from-amber-400 to-orange-600"
       : user?.role === "seller"
         ? "from-fuchsia-500 to-indigo-600"
-        : "from-sky-500 to-blue-700";
+        : user?.role === "rider"
+          ? "from-teal-500 to-emerald-700"
+          : "from-sky-500 to-blue-700";
   return h(
     "div",
     {
@@ -850,6 +848,26 @@ export function AdminPage() {
   const usersLimit = 20;
   const [viewUser, setViewUser] = useState(null);
 
+  /* Riders (delivery — not listed under Users) */
+  const [riders, setRiders] = useState([]);
+  const [ridersCounts, setRidersCounts] = useState(null);
+  const [ridersTotal, setRidersTotal] = useState(0);
+  const [ridersPage, setRidersPage] = useState(1);
+  const [ridersStatus, setRidersStatus] = useState("all");
+  const [ridersVerified, setRidersVerified] = useState("all");
+  const [ridersSearch, setRidersSearch] = useState("");
+  const [ridersSearchInput, setRidersSearchInput] = useState("");
+  const ridersLimit = 20;
+  const [addRiderOpen, setAddRiderOpen] = useState(false);
+  const [addRiderBusy, setAddRiderBusy] = useState(false);
+  const [addRiderForm, setAddRiderForm] = useState({
+    email: "",
+    password: "",
+    displayName: "",
+    phone: "",
+    vehicleType: ""
+  });
+
   /* Sellers verification */
   const [sellers, setSellers] = useState([]);
   const [sellersTotal, setSellersTotal] = useState(0);
@@ -868,6 +886,14 @@ export function AdminPage() {
   const vendorAppsLimit = 15;
   /** Vendor application row when viewing verification document in modal */
   const [vendorVerificationApp, setVendorVerificationApp] = useState(null);
+
+  const [courierAppRows, setCourierAppRows] = useState([]);
+  const [courierAppsTotal, setCourierAppsTotal] = useState(0);
+  const [courierAppsPage, setCourierAppsPage] = useState(1);
+  const [courierAppsStatus, setCourierAppsStatus] = useState("pending");
+  const [courierAppsSearch, setCourierAppsSearch] = useState("");
+  const [courierAppsSearchInput, setCourierAppsSearchInput] = useState("");
+  const courierAppsLimit = 15;
 
   /* Listings */
   const [listings, setListings] = useState([]);
@@ -957,7 +983,8 @@ export function AdminPage() {
     maintenanceMode: false,
     maintenanceMessage: "",
     allowPublicRegistration: true,
-    allowVendorApplications: true
+    allowVendorApplications: true,
+    allowCourierApplications: true
   });
   const [savingSettings, setSavingSettings] = useState(false);
   const [emailTestTo, setEmailTestTo] = useState("");
@@ -974,8 +1001,10 @@ export function AdminPage() {
   /** Ignore stale fetches so tab/filter switches never show data from a previous request. */
   const reqGen = useRef({
     users: 0,
+    riders: 0,
     sellers: 0,
     vendorApps: 0,
+    courierApps: 0,
     listings: 0,
     orders: 0,
     reports: 0,
@@ -1017,6 +1046,7 @@ export function AdminPage() {
   useEffect(() => {
     const total =
       Number(navBadges?.["vendor-apps"] || 0) +
+      Number(navBadges?.["courier-apps"] || 0) +
       Number(navBadges?.listings || 0) +
       Number(navBadges?.orders || 0) +
       Number(navBadges?.reports || 0) +
@@ -1048,6 +1078,23 @@ export function AdminPage() {
     setUsersTotal(d.total != null ? d.total : 0);
     setUserCounts(d.counts || null);
   }, [accessToken, usersPage, usersRoleTab, usersStatus, usersSearch]);
+
+  const loadRiders = useCallback(async () => {
+    if (!auth) return;
+    const g = ++reqGen.current.riders;
+    const qs = new URLSearchParams({
+      page: String(ridersPage),
+      limit: String(ridersLimit),
+      accountStatus: ridersStatus,
+      verified: ridersVerified,
+      search: ridersSearch
+    });
+    const d = await apiFetch(`/api/admin/riders?${qs.toString()}`, auth);
+    if (g !== reqGen.current.riders) return;
+    setRiders(d.riders || []);
+    setRidersTotal(d.total != null ? d.total : 0);
+    setRidersCounts(d.counts || null);
+  }, [accessToken, ridersPage, ridersStatus, ridersVerified, ridersSearch]);
 
   const loadSellers = useCallback(async () => {
     if (!auth) return;
@@ -1086,6 +1133,21 @@ export function AdminPage() {
     setVendorAppRows(d.applications || []);
     setVendorAppsTotal(d.total || 0);
   }, [accessToken, vendorAppsStatus, vendorAppsPage, vendorAppsSearch]);
+
+  const loadCourierApps = useCallback(async () => {
+    if (!auth) return;
+    const g = ++reqGen.current.courierApps;
+    const qs = new URLSearchParams({
+      status: courierAppsStatus,
+      page: String(courierAppsPage),
+      limit: String(courierAppsLimit),
+      search: courierAppsSearch
+    });
+    const d = await apiFetch(`/api/admin/courier-applications?${qs.toString()}`, auth);
+    if (g !== reqGen.current.courierApps) return;
+    setCourierAppRows(d.applications || []);
+    setCourierAppsTotal(d.total || 0);
+  }, [accessToken, courierAppsStatus, courierAppsPage, courierAppsSearch]);
 
   const loadListings = useCallback(async () => {
     if (!auth) return;
@@ -1356,7 +1418,8 @@ export function AdminPage() {
         maintenanceMode: !!d.settings.maintenanceMode,
         maintenanceMessage: d.settings.maintenanceMessage ?? "",
         allowPublicRegistration: d.settings.allowPublicRegistration !== false,
-        allowVendorApplications: d.settings.allowVendorApplications !== false
+        allowVendorApplications: d.settings.allowVendorApplications !== false,
+        allowCourierApplications: d.settings.allowCourierApplications !== false
       }));
     }
   }, [accessToken]);
@@ -1386,8 +1449,10 @@ export function AdminPage() {
       try {
         if (tab === "dashboard") await loadDashboard();
         else if (tab === "users") await loadUsers();
+        else if (tab === "riders") await loadRiders();
         else if (tab === "sellers") await loadSellers();
         else if (tab === "vendor-apps") await loadVendorApps();
+        else if (tab === "courier-apps") await loadCourierApps();
         else if (tab === "listings") await loadListings();
         else if (tab === "orders") await loadOrders();
         else if (tab === "payments") {
@@ -1410,8 +1475,10 @@ export function AdminPage() {
     tab,
     loadDashboard,
     loadUsers,
+    loadRiders,
     loadSellers,
     loadVendorApps,
+    loadCourierApps,
     loadListings,
     loadOrders,
     loadRevenue,
@@ -1428,12 +1495,19 @@ export function AdminPage() {
     usersRoleTab,
     usersStatus,
     usersSearch,
+    ridersPage,
+    ridersStatus,
+    ridersVerified,
+    ridersSearch,
     sellersPage,
     sellersTab,
     sellersSearch,
     vendorAppsPage,
     vendorAppsStatus,
     vendorAppsSearch,
+    courierAppsPage,
+    courierAppsStatus,
+    courierAppsSearch,
     listingsPage,
     listingsTab,
     listingsSearch,
@@ -1485,8 +1559,10 @@ export function AdminPage() {
   }, [tab, searchParams]);
 
   useEffect(() => setUsersPage(1), [usersRoleTab, usersStatus, usersSearch]);
+  useEffect(() => setRidersPage(1), [ridersStatus, ridersVerified, ridersSearch]);
   useEffect(() => setSellersPage(1), [sellersTab, sellersSearch]);
   useEffect(() => setVendorAppsPage(1), [vendorAppsStatus, vendorAppsSearch]);
+  useEffect(() => setCourierAppsPage(1), [courierAppsStatus, courierAppsSearch]);
   useEffect(() => setListingsPage(1), [listingsTab, listingsSearch]);
   useEffect(() => setOrdersPage(1), [ordersTab, ordersSearch]);
   useEffect(() => setReportsPage(1), [reportsTab, reportsPriority, reportsSearch]);
@@ -1548,6 +1624,7 @@ export function AdminPage() {
       setAddAdminOpen(false);
       setAddAdminEmail("");
       await loadUsers();
+      await loadRiders();
     } catch (ex) {
       await alert(ex.message || "Could not grant admin", { variant: "error" });
     } finally {
@@ -1573,6 +1650,7 @@ export function AdminPage() {
       if (d?.already) toast("That account is not an admin.");
       else toast("Admin access removed.", { variant: "success" });
       await loadUsers();
+      await loadRiders();
     } catch (ex) {
       await alert(ex.message || "Could not remove admin", { variant: "error" });
     }
@@ -1627,6 +1705,40 @@ export function AdminPage() {
       });
       await loadVendorApps();
       setVendorVerificationApp(null);
+    } catch (ex) {
+      await alert(ex.message || "Update failed", { variant: "error" });
+    }
+  };
+
+  const onCourierApplicationDecision = async (row, action) => {
+    if (action === "approve") {
+      const ok = await confirm(
+        `Approve courier application for ${row.fullName}? They become a rider with access to /rider and can be assigned to deliveries.`,
+        { title: "Approve courier?", confirmLabel: "Approve" }
+      );
+      if (!ok) return;
+    } else {
+      const ok = await confirm("Reject this courier application? The shopper can apply again later unless you close applications platform-wide.", {
+        title: "Reject application?",
+        confirmLabel: "Reject"
+      });
+      if (!ok) return;
+    }
+    try {
+      await apiFetch(`/api/admin/courier-applications/${row.id}`, {
+        method: "PATCH",
+        ...auth,
+        json: { action, adminNote: "" }
+      });
+      toast(
+        action === "approve"
+          ? "Courier approved. User should refresh or sign in again to open the rider workspace."
+          : "Application rejected.",
+        { variant: "success" }
+      );
+      await loadCourierApps();
+      await loadRiders();
+      loadNavBadges();
     } catch (ex) {
       await alert(ex.message || "Update failed", { variant: "error" });
     }
@@ -1800,6 +1912,26 @@ export function AdminPage() {
     }
   };
 
+  /** Off-platform pay or Paystack success that did not update the order — marks paid and reduces stock (same as all vendors confirming). */
+  const markOrderPaymentReceived = async (o) => {
+    if (!auth) return;
+    const ok = await confirm(
+      `Mark order ${shortId(o.id)} as paid? Stock will be reduced and the order will move to Paid. Use this only when payment is verified (for example MoMo or bank received, or Paystack succeeded but the order stayed on “pending”).`,
+      { title: "Payment received", confirmLabel: "Mark as paid" }
+    );
+    if (!ok) return;
+    try {
+      await apiFetch(`/api/orders/${o.id}/admin/mark-paid`, { method: "POST", ...auth, json: {} });
+      toast("Order marked as paid", { variant: "success" });
+      await loadOrders();
+      await loadDashboard();
+      loadNavBadges();
+      if (tab === "payments") await refreshPaymentsTab();
+    } catch (ex) {
+      await alert(ex.message || "Could not update order", { variant: "error" });
+    }
+  };
+
   /* Reports */
   const patchReport = async (r, body) => {
     try {
@@ -1880,6 +2012,18 @@ export function AdminPage() {
       }
     });
 
+  const deleteCourierAppRow = (app) =>
+    adminDelete(`/api/admin/courier-applications/${app.id}`, {
+      title: "Delete this courier application?",
+      message:
+        "Removes a reviewed (approved or rejected) application from the queue. The rider account is unaffected. This cannot be undone.",
+      successMessage: "Application deleted",
+      after: async () => {
+        await loadCourierApps();
+        loadNavBadges();
+      }
+    });
+
   const deleteUserRow = (u) =>
     adminDelete(`/api/admin/users/${u.id}`, {
       title: "Delete this user?",
@@ -1892,6 +2036,61 @@ export function AdminPage() {
         await loadDashboard();
       }
     });
+
+  const deleteRiderRow = (u) =>
+    adminDelete(`/api/admin/users/${u.id}`, {
+      title: "Delete this rider?",
+      message:
+        "Permanently deletes the courier account, sessions, and related profile data. Refused if they have unresolved delivery ties. This cannot be undone.",
+      confirmLabel: "Yes, delete rider",
+      successMessage: "Rider deleted",
+      after: async () => {
+        await loadRiders();
+        await loadDashboard();
+      }
+    });
+
+  const submitCreateRider = async () => {
+    if (!auth) return;
+    const email = addRiderForm.email.trim().toLowerCase();
+    const password = addRiderForm.password;
+    const vt = addRiderForm.vehicleType.trim();
+    if (!email || !email.includes("@")) {
+      await alert("Enter a valid email.", { variant: "error" });
+      return;
+    }
+    if (!password || password.length < 8) {
+      await alert("Password must be at least 8 characters.", { variant: "error" });
+      return;
+    }
+    if (!vt) {
+      await alert("Vehicle type is required (e.g. bicycle, motorcycle).", { variant: "error" });
+      return;
+    }
+    setAddRiderBusy(true);
+    try {
+      await apiFetch("/api/admin/riders", {
+        method: "POST",
+        ...auth,
+        json: {
+          email,
+          password,
+          displayName: addRiderForm.displayName.trim() || undefined,
+          phone: addRiderForm.phone.trim() || undefined,
+          vehicleType: vt
+        }
+      });
+      toast("Rider account created.", { variant: "success" });
+      setAddRiderOpen(false);
+      setAddRiderForm({ email: "", password: "", displayName: "", phone: "", vehicleType: "" });
+      await loadRiders();
+      await loadDashboard();
+    } catch (ex) {
+      await alert(ex.message || "Could not create rider", { variant: "error" });
+    } finally {
+      setAddRiderBusy(false);
+    }
+  };
 
   /* Settings */
   const saveSettings = async () => {
@@ -1924,7 +2123,8 @@ export function AdminPage() {
           maintenanceMode: settingsForm.maintenanceMode,
           maintenanceMessage: settingsForm.maintenanceMessage,
           allowPublicRegistration: settingsForm.allowPublicRegistration,
-          allowVendorApplications: settingsForm.allowVendorApplications
+          allowVendorApplications: settingsForm.allowVendorApplications,
+          allowCourierApplications: settingsForm.allowCourierApplications
         }
       });
       toast("Settings saved", { variant: "success" });
@@ -2145,12 +2345,15 @@ export function AdminPage() {
           (() => {
             const total =
               Number(navBadges?.["vendor-apps"] || 0) +
+              Number(navBadges?.["courier-apps"] || 0) +
               Number(navBadges?.listings || 0) +
               Number(navBadges?.orders || 0) +
               Number(navBadges?.reports || 0) +
               Number(navBadges?.disputes || 0);
             const firstHotTab = navBadges?.["vendor-apps"] > 0
               ? "vendor-apps"
+              : navBadges?.["courier-apps"] > 0
+              ? "courier-apps"
               : navBadges?.reports > 0
               ? "reports"
               : navBadges?.orders > 0
@@ -2357,7 +2560,7 @@ export function AdminPage() {
                               h(
                                 "td",
                                 { className: "py-2 pr-3" },
-                                h(Badge, { tone: orderStatusTone(o.status) }, humanizeOrderStatus(o.status))
+                                h(Badge, { tone: adminOrderFulfillmentBadgeTone(o) }, formatOrderFulfillmentLabel(o))
                               ),
                               h(
                                 "td",
@@ -2968,6 +3171,197 @@ export function AdminPage() {
     ]);
   };
 
+  /* ---------------- Courier applications (buyer → rider) ---------------- */
+
+  const renderCourierApplications = () => {
+    return h("div", { className: "space-y-4" }, [
+      h(
+        "p",
+        { key: "hd", className: "text-sm text-slate-500 dark:text-slate-400" },
+        "Approve shoppers who will pick up and hand off deliveries. Approval promotes the account to rider and creates a vehicle profile."
+      ),
+      h("div", { key: "bar", className: "flex flex-wrap items-center justify-between gap-3" }, [
+        h(TabBar, { key: "tabs", tabs: COURIER_APP_TABS, value: courierAppsStatus, onChange: setCourierAppsStatus }),
+        h(
+          "form",
+          {
+            key: "f",
+            className: "flex items-center gap-2 sm:w-80",
+            onSubmit: (e) => {
+              e.preventDefault();
+              setCourierAppsSearch(courierAppsSearchInput.trim());
+            }
+          },
+          [
+            h(SearchBox, {
+              key: "s",
+              value: courierAppsSearchInput,
+              onChange: setCourierAppsSearchInput,
+              placeholder: "Search name, email, phone…",
+              className: "flex-1"
+            }),
+            h(
+              "button",
+              {
+                key: "go",
+                type: "submit",
+                className:
+                  "rounded-2xl border border-slate-300/70 bg-white/50 px-3 py-2 text-sm font-medium hover:bg-white/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+              },
+              "Filter"
+            )
+          ]
+        )
+      ]),
+      courierAppRows.length === 0
+        ? h(EmptyState, {
+            key: "e",
+            title: "No applications",
+            hint:
+              courierAppsStatus === "pending"
+                ? "Pending requests appear when shoppers submit Become a courier."
+                : "Try another filter or search.",
+            icon: Truck
+          })
+        : h(
+            "div",
+            { key: "l", className: "grid grid-cols-1 gap-3 lg:grid-cols-2" },
+            courierAppRows.map((row) => {
+              const applicantUser = {
+                displayName: row.accountDisplayName || row.fullName,
+                email: row.email,
+                id: row.userId,
+                role: "buyer"
+              };
+              const detail = (label, value) =>
+                value == null || String(value).trim() === ""
+                  ? null
+                  : h("div", { key: label, className: "min-w-0 sm:col-span-1" }, [
+                      h(
+                        "dt",
+                        { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+                        label
+                      ),
+                      h("dd", { className: "mt-0.5 break-words text-sm text-slate-800 dark:text-slate-200" }, value)
+                    ]);
+              const statusLabel =
+                row.status === "pending" ? "Pending review" : row.status === "approved" ? "Approved" : "Rejected";
+              return h(
+                GlassCard,
+                { key: row.id },
+                [
+                  h("div", { key: "top", className: "flex items-start justify-between gap-3" }, [
+                    h("div", { className: "flex min-w-0 flex-1 items-center gap-3" }, [
+                      h(Avatar, { key: "a", user: applicantUser, size: 48 }),
+                      h("div", { key: "m", className: "min-w-0 flex-1" }, [
+                        h("p", { className: "truncate font-semibold text-slate-900 dark:text-white" }, row.fullName),
+                        h(
+                          "p",
+                          { className: "truncate text-xs text-slate-500 dark:text-slate-400" },
+                          `${row.email} · ${row.phone}`
+                        ),
+                        h("div", { key: "badges", className: "mt-2 flex flex-wrap items-center gap-2" }, [
+                          h("span", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Status"),
+                          h(Badge, { key: "s", tone: vendorAppStatusTone(row.status) }, statusLabel),
+                          h(Badge, { key: "v", tone: "neutral" }, row.vehicleType)
+                        ])
+                      ])
+                    ]),
+                    h("div", { key: "meta", className: "shrink-0 text-right" }, [
+                      h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Submitted"),
+                      h("p", { className: "text-xs font-medium text-slate-700 dark:text-slate-200" }, fmtDate(row.createdAt)),
+                      h("p", { className: "mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Applicant ID"),
+                      h("p", { className: "font-mono text-[11px] text-slate-600 dark:text-slate-300" }, shortId(row.userId))
+                    ])
+                  ]),
+                  h(
+                    "div",
+                    {
+                      key: "details",
+                      className: "mt-4 rounded-2xl border border-white/10 bg-white/35 p-3 dark:bg-white/5"
+                    },
+                    [
+                      h(
+                        "p",
+                        { className: "mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+                        "Details"
+                      ),
+                      h(
+                        "dl",
+                        { className: "grid gap-3 sm:grid-cols-2" },
+                        [
+                          detail("Notes", row.notes),
+                          detail("ID document", row.idDocUrl ? "File uploaded" : "None uploaded"),
+                          row.reviewedAt ? detail("Reviewed on", fmtDateTime(row.reviewedAt)) : null,
+                          row.adminNote ? detail("Admin note", row.adminNote) : null
+                        ].filter(Boolean)
+                      )
+                    ]
+                  ),
+                  h("div", { key: "actions", className: "mt-4 flex flex-wrap gap-2" }, [
+                    row.idDocUrl
+                      ? h(
+                          Button,
+                          {
+                            key: "doc",
+                            variant: "ghost",
+                            className: "!min-h-[36px] !px-3 !text-xs",
+                            onClick: () => window.open(row.idDocUrl, "_blank", "noopener,noreferrer")
+                          },
+                          "Open ID file"
+                        )
+                      : null,
+                    courierAppsStatus === "pending" && row.status === "pending"
+                      ? [
+                          h(
+                            Button,
+                            {
+                              key: "ok",
+                              className: "!min-h-[36px] !bg-emerald-600 !px-3 !text-xs hover:!bg-emerald-500",
+                              onClick: () => onCourierApplicationDecision(row, "approve")
+                            },
+                            [h(Check, { key: "i", className: "h-4 w-4" }), "Approve"]
+                          ),
+                          h(
+                            Button,
+                            {
+                              key: "no",
+                              variant: "danger",
+                              className: "!min-h-[36px] !px-3 !text-xs",
+                              onClick: () => onCourierApplicationDecision(row, "reject")
+                            },
+                            [h(XCircle, { key: "i", className: "h-4 w-4" }), "Reject"]
+                          )
+                        ]
+                      : null,
+                    row.status !== "pending" && isSuperAdmin
+                      ? h(
+                          "button",
+                          {
+                            key: "del",
+                            type: "button",
+                            onClick: () => deleteCourierAppRow(row),
+                            className:
+                              "ml-auto inline-flex items-center gap-1 rounded-xl border border-rose-300/60 bg-white/60 px-2.5 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-400/40 dark:bg-night-900/40 dark:text-rose-200 dark:hover:bg-rose-950/30"
+                          },
+                          [h(Trash2, { key: "i", className: "h-3.5 w-3.5" }), "Delete (super)"]
+                        )
+                      : null
+                  ].flat().filter(Boolean))
+                ]
+              );
+            })
+          ),
+      h(Pager, {
+        key: "p",
+        page: courierAppsPage,
+        total: courierAppsTotal,
+        limit: courierAppsLimit,
+        onPage: setCourierAppsPage
+      })
+    ]);
+  };
+
   /* ---------------- Sellers verification ---------------- */
 
   const renderSellers = () => {
@@ -3488,9 +3882,9 @@ export function AdminPage() {
                         "td",
                         { className: "px-4 py-3" },
                         h("div", { className: "flex flex-wrap items-center gap-1" }, [
-                          h(Badge, { key: "s", tone: orderStatusTone(o.status) }, humanizeOrderStatus(o.status)),
+                          h(Badge, { key: "s", tone: adminOrderFulfillmentBadgeTone(o) }, formatOrderFulfillmentLabel(o)),
                           o.disputeOpen ? h(Badge, { key: "d", tone: "warn" }, "Dispute") : null,
-                          o.refundStatus && o.refundStatus !== "none"
+                          o.refundStatus && o.refundStatus !== "none" && o.refundStatus !== "refunded"
                             ? h(
                                 Badge,
                                 {
@@ -3507,6 +3901,19 @@ export function AdminPage() {
                         "td",
                         { className: "px-4 py-3" },
                         h("div", { className: "flex flex-wrap items-center gap-1" }, [
+                          o.status === "pending_payment" || o.status === "awaiting_vendor_payment"
+                            ? h(
+                                "button",
+                                {
+                                  key: "mp",
+                                  type: "button",
+                                  onClick: () => markOrderPaymentReceived(o),
+                                  className:
+                                    "rounded-xl border border-emerald-300/50 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-500/15 dark:text-emerald-200"
+                                },
+                                "Mark paid"
+                              )
+                            : null,
                           o.paymentMethod === "paystack" &&
                           o.status !== "cancelled" &&
                           o.refundStatus !== "refunded"
@@ -3650,7 +4057,7 @@ export function AdminPage() {
                           ),
                           h("td", { className: "px-4 py-3 font-semibold" }, o.total != null ? formatGhc(o.total) : "—"),
                           h("td", { className: "px-4 py-3 text-slate-500" }, o.platformFeeTotal != null ? formatGhc(o.platformFeeTotal) : "—"),
-                          h("td", { className: "px-4 py-3" }, h(Badge, { tone: orderStatusTone(o.status) }, humanizeOrderStatus(o.status))),
+                          h("td", { className: "px-4 py-3" }, h(Badge, { tone: adminOrderFulfillmentBadgeTone(o) }, formatOrderFulfillmentLabel(o))),
                           h("td", { className: "px-4 py-3" }, h("div", { className: "flex flex-wrap items-center gap-1" }, [
                             o.refundStatus && o.refundStatus !== "none"
                               ? h(Badge, { key: "rs", tone: refundBadgeTone(o) }, humanizeRefundStatus(o.refundStatus, o.paystackRefundRemoteStatus))
@@ -4343,7 +4750,7 @@ export function AdminPage() {
           toggleRow(
             "maint",
             "Maintenance mode",
-            "Blocks new account registration and new vendor applications. Existing users can still sign in.",
+            "Blocks new account registration, vendor applications, and shopper courier applications. Existing users can still sign in.",
             settingsForm.maintenanceMode,
             (v) => setSettingsForm((s) => ({ ...s, maintenanceMode: v }))
           ),
@@ -4368,6 +4775,13 @@ export function AdminPage() {
             "When off, authenticated buyers cannot submit a new seller application until you turn this back on.",
             settingsForm.allowVendorApplications,
             (v) => setSettingsForm((s) => ({ ...s, allowVendorApplications: v }))
+          ),
+          toggleRow(
+            "capp",
+            "Allow courier applications",
+            "When off, shoppers cannot apply to become campus couriers from the storefront.",
+            settingsForm.allowCourierApplications,
+            (v) => setSettingsForm((s) => ({ ...s, allowCourierApplications: v }))
           )
         ]),
         h("div", { key: "b", className: "pt-2" }, h(Button, { loading: savingSettings, onClick: saveSettings }, "Save general settings"))
@@ -4993,7 +5407,7 @@ export function AdminPage() {
           },
           `${(process.env.REACT_APP_API_URL || "").replace(/\/$/, "") || "(set REACT_APP_API_URL)"}/api/platform/config`
         ),
-        h("p", { className: "mt-2 text-xs text-slate-600 dark:text-slate-400" }, "Exposes site name, maintenance flags, whether signup/vendor apps are open, and which payment rails are enabled.")
+        h("p", { className: "mt-2 text-xs text-slate-600 dark:text-slate-400" }, "Exposes site name, maintenance flags, whether signup, vendor, and courier applications are open, and which payment rails are enabled.")
       ]),
       h(GlassCard, { key: "snap", className: "!p-4" }, [
         h("p", { className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Saved platform state"),
@@ -5003,6 +5417,7 @@ export function AdminPage() {
           h("li", { key: "m" }, `Maintenance: ${settings?.maintenanceMode ? "On" : "Off"}`),
           h("li", { key: "r" }, `New sign-ups: ${settings?.allowPublicRegistration !== false ? "Open" : "Closed"}`),
           h("li", { key: "v" }, `Vendor applications: ${settings?.allowVendorApplications !== false ? "Open" : "Closed"}`),
+          h("li", { key: "c" }, `Courier applications: ${settings?.allowCourierApplications !== false ? "Open" : "Closed"}`),
           h("li", { key: "1" }, `Commission: ${settings?.commissionPercent ?? "—"}%`),
           h("li", { key: "2" }, `MoMo: ${settings?.momoEnabled ? "On" : "Off"}`),
           h("li", { key: "3" }, `Card (Paystack): ${settings?.stripeEnabled ? "On" : "Off"}`),
@@ -5020,7 +5435,7 @@ export function AdminPage() {
       ts: o.createdAt,
       icon: ShoppingCart,
       tone: "info",
-      title: `Order ${shortId(o.id)} — ${humanizeOrderStatus(o.status)}`,
+      title: `Order ${shortId(o.id)} — ${formatOrderFulfillmentLabel(o)}`,
       hint: o.total != null ? formatGhc(o.total) : ""
     }));
     const signups = (dashboard?.recent?.signups || []).map((u) => ({
@@ -5156,6 +5571,7 @@ export function AdminPage() {
     if (tab === "dashboard") return renderDashboard();
     if (tab === "users") return renderUsers();
     if (tab === "vendor-apps") return renderVendorApplications();
+    if (tab === "courier-apps") return renderCourierApplications();
     if (tab === "sellers") return renderSellers();
     if (tab === "listings") return renderListings();
     if (tab === "orders") return renderOrders();
@@ -5236,7 +5652,7 @@ export function AdminPage() {
                       },
                       [
                         h("span", { className: "font-mono text-xs" }, shortId(o.id)),
-                        h("span", { className: "text-xs" }, humanizeOrderStatus(o.status)),
+                        h("span", { className: "text-xs" }, formatOrderFulfillmentLabel(o)),
                         h("span", { className: "font-medium" }, o.total != null ? formatGhc(o.total) : "—")
                       ]
                     )

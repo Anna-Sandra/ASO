@@ -14,12 +14,15 @@ import { sendEmail } from "../../utils/mailer";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { Order } from "../orders/order.model";
 import { Product } from "../products/product.model";
+import { Delivery } from "../deliveries/delivery.model";
+import { RiderProfile } from "../deliveries/riderProfile.model";
 import { Review } from "../reviews/review.model";
 import { VendorAnalyticsEvent } from "../vendor/vendorAnalyticsEvent.model";
 import { VendorApplication } from "../vendorApplications/vendorApplication.model";
+import { CourierApplication } from "../courierApplications/courierApplication.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { Token } from "./token.model";
-import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type UserRole, type VendorProfileStatus } from "./user.model";
+import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type UserRole, type VendorProfileStatus, type RiderApplicationStatus } from "./user.model";
 import {
   buildAccessTokenPayloadForDbUser,
   createOpaqueToken,
@@ -40,6 +43,7 @@ type LeanUser = {
   accountStatus?: string;
   sellerVerified?: boolean;
   vendorStatus?: VendorProfileStatus;
+  riderApplicationStatus?: RiderApplicationStatus;
   businessName?: string;
   bankName?: string;
   bankAccountNumber?: string;
@@ -54,6 +58,7 @@ function pickProfileFromUser(
   accountStatus: string;
   sellerVerified: boolean;
   vendorStatus: VendorProfileStatus;
+  riderApplicationStatus: RiderApplicationStatus;
   businessName: string;
 } {
   const role = normalizeUserRole(u.role);
@@ -61,12 +66,24 @@ function pickProfileFromUser(
   if (vendorStatus !== "pending" && vendorStatus !== "approved" && vendorStatus !== "rejected" && vendorStatus !== "none") {
     vendorStatus = role === "seller" ? "approved" : "none";
   }
+  let riderApplicationStatus = (u as { riderApplicationStatus?: RiderApplicationStatus }).riderApplicationStatus;
+  if (
+    riderApplicationStatus !== "pending" &&
+    riderApplicationStatus !== "rejected" &&
+    riderApplicationStatus !== "none"
+  ) {
+    riderApplicationStatus = "none";
+  }
+  if (role === "rider") {
+    riderApplicationStatus = "none";
+  }
   return {
     profileImageUrl: typeof u.profileImageUrl === "string" && u.profileImageUrl.trim() ? u.profileImageUrl.trim() : "",
     emailVerifiedAt: u.emailVerifiedAt,
     accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
     sellerVerified: Boolean((u as { sellerVerified?: boolean }).sellerVerified),
     vendorStatus,
+    riderApplicationStatus: riderApplicationStatus ?? "none",
     businessName: typeof (u as { businessName?: string }).businessName === "string" ? (u as { businessName: string }).businessName.trim() : ""
   };
 }
@@ -127,6 +144,7 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
       phone: publicPhoneForPaymentRole(role, user.phone),
       profileImageUrl: p.profileImageUrl,
       vendorStatus: p.vendorStatus,
+      riderApplicationStatus: p.riderApplicationStatus,
       businessName: p.businessName,
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
@@ -161,6 +179,7 @@ function sendEnvBootstrapAdminLoginSuccess(res: Response, extra?: Record<string,
       phone: u.phone,
       profileImageUrl: u.profileImageUrl,
       vendorStatus: u.vendorStatus,
+      riderApplicationStatus: u.riderApplicationStatus,
       businessName: u.businessName,
       bankName: u.bankName,
       bankAccountNumber: u.bankAccountNumber,
@@ -268,6 +287,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
       role: user.role,
       displayName: user.displayName ?? "",
       vendorStatus: "none" as VendorProfileStatus,
+      riderApplicationStatus: "none" as RiderApplicationStatus,
       businessName: ""
     },
     message: shouldEmailVerify ? "Verification email sent" : "Account created",
@@ -503,6 +523,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         accountStatus: "active",
         sellerVerified: true,
         vendorStatus: u.vendorStatus,
+        riderApplicationStatus: u.riderApplicationStatus,
         businessName: u.businessName,
         bankName: u.bankName,
         bankAccountNumber: u.bankAccountNumber,
@@ -531,6 +552,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       accountStatus: p.accountStatus,
       sellerVerified: p.sellerVerified,
       vendorStatus: p.vendorStatus,
+      riderApplicationStatus: p.riderApplicationStatus,
       businessName: p.businessName,
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
@@ -560,8 +582,8 @@ export const updateProfile = asyncHandler(async (req: Request, res: Response) =>
     clearProfileImage?: boolean;
   };
   const roleBefore = normalizeUserRole((await User.findById(req.user!.id).select("role").lean())?.role);
-  if (body.phone !== undefined && roleBefore !== "seller") {
-    throw new HttpError(400, "Phone is only for seller payment contact (Mobile Money).");
+  if (body.phone !== undefined && roleBefore !== "seller" && roleBefore !== "rider") {
+    throw new HttpError(400, "Phone is only for seller payment contact or rider delivery contact.");
   }
 
   const patch: Record<string, string> = {};
@@ -586,6 +608,7 @@ export const updateProfile = asyncHandler(async (req: Request, res: Response) =>
       phone: publicPhoneForPaymentRole(role, user.phone),
       profileImageUrl: p.profileImageUrl,
       vendorStatus: p.vendorStatus,
+      riderApplicationStatus: p.riderApplicationStatus,
       businessName: p.businessName,
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
@@ -627,6 +650,18 @@ export const deleteAccount = asyncHandler(async (req: Request, res: Response) =>
         `You still have ${active} active order${active === 1 ? "" : "s"}. Complete or cancel them before deleting your account.`
       );
     }
+  } else if (user.role === "rider") {
+    const activeAssignments = await Delivery.countDocuments({
+      assignedRiderId: uidObj,
+      currentStage: { $nin: ["delivered", "cancelled"] }
+    });
+    if (activeAssignments > 0) {
+      throw new HttpError(
+        409,
+        `You still have ${activeAssignments} active delivery assignment${activeAssignments === 1 ? "" : "s"}. Complete or hand them off before deleting your account.`
+      );
+    }
+    await RiderProfile.deleteMany({ userId: uidObj });
   } else if (user.role === "seller") {
     const active = await Order.countDocuments({
       "items.sellerId": uidObj,
@@ -647,6 +682,7 @@ export const deleteAccount = asyncHandler(async (req: Request, res: Response) =>
   }
 
   await VendorApplication.deleteMany({ userId: uidObj });
+  await CourierApplication.deleteMany({ userId: uidObj });
   await Token.deleteMany({ userId: uidObj });
   await User.deleteOne({ _id: uidObj });
   res.clearCookie("refreshToken", refreshCookieOptions());

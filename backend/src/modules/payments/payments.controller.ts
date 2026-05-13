@@ -9,9 +9,11 @@ import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
 import { Order } from "../orders/order.model";
 import { Product } from "../products/product.model";
+import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
 import { getOrCreateSettings, getEffectiveCommissionPercent } from "../platform/platformSettings.service";
 import { runVendorPayoutsForOrder, mergePaystackCheckoutSplitIntoInitializeBody } from "./paystackPayouts";
 import { handlePaystackRefundWebhookEvent } from "./paystackRefundSync";
+import { notifyOrderPaid } from "../notifications/notification.service";
 
 const stripe = env.STRIPE_SECRET_KEY ? new Stripe(env.STRIPE_SECRET_KEY) : null;
 
@@ -224,6 +226,9 @@ export async function finalizePaystackSuccessIfValid(
         await Product.updateOne({ _id: it.productId }, { $inc: { stock: -it.quantity } });
       }
     }
+    void notifyOrderPaid(order._id.toString());
+    const paidDoc = await Order.findById(order._id);
+    if (paidDoc) await mirrorOrderStatusToDelivery(paidDoc);
     return true;
   }
   if (order.status === "paid") {
@@ -530,6 +535,9 @@ export const stripeWebhook = asyncHandler(async (req: Request, res: Response) =>
           );
         }
       }
+      void notifyOrderPaid(orderId);
+      const paidDoc = await Order.findById(orderId);
+      if (paidDoc) await mirrorOrderStatusToDelivery(paidDoc);
     }
   }
 

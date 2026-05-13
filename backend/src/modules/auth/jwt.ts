@@ -4,7 +4,7 @@ import { env, isSuperUserAdminEmail } from "../../config/env";
 
 export type AccessTokenPayload = {
   sub: string;
-  role: "buyer" | "seller" | "admin";
+  role: "buyer" | "seller" | "admin" | "rider";
   /** short key: admin only — “super” can manage other admins */
   al?: "super" | "normal";
 };
@@ -18,7 +18,7 @@ export function signAccessToken(payload: AccessTokenPayload) {
 /** DB-backed users: admin tokens get `al` (super can grant admin to other accounts). */
 export function buildAccessTokenPayloadForDbUser(
   sub: string,
-  role: "buyer" | "seller" | "admin",
+  role: "buyer" | "seller" | "admin" | "rider",
   email: string | null | undefined
 ): AccessTokenPayload {
   if (role !== "admin") {

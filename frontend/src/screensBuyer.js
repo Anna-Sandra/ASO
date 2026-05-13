@@ -9,46 +9,59 @@ import {
   Flag,
   Heart,
   LayoutGrid,
-  Lock,
+  Mail,
+  Menu,
   MessageSquare,
   Minus,
+  Navigation,
   Package,
   Plus,
   ReceiptText,
+  Award,
+  Bookmark,
   Search,
   Send,
   ShoppingBasket,
   Sparkles,
   Camera,
+  Headphones,
   Shirt,
   ShoppingCart,
   Star,
   Store,
   Trash2,
+  Shield,
+  Truck,
+  TrendingUp,
   User,
   Utensils,
   Wallet,
   Wrench,
   X
 } from "lucide-react";
-import { useAuth } from "./AuthContext";
-import { useCart } from "./CartContext";
-import { useNotice } from "./NoticeContext";
-import { useTheme } from "./ThemeContext";
+import { useAuth, useCart, useNotice, useTheme } from "./contexts";
+import { useSavedProducts } from "./savedProductsContext";
 import { apiFetch, apiUploadProfileImage, deleteAuthenticatedAccount } from "./api";
+import { NotificationBell, NotificationsContent } from "./screensNotifications";
 import {
   CATEGORIES,
   CATEGORY_LABELS,
   FILTERS,
   formatSellerPaymentSnippet,
   groupCartItemsBySeller,
+  isServicesCategory,
   productBadge,
   productMatchesFilter,
+  productStorefrontBadges,
   refFromId,
-  sellerGroupGross
+  sellerGroupGross,
+  withAllCategoryFirst
 } from "./catalog";
 import { formatGhc } from "./money";
-import { computeCheckoutBreakdown, useCheckoutPricingOptions } from "./checkoutPricing";
+import { TrackOrderModal } from "./TrackOrderModal";
+import { ShoppingAssistantFAB } from "./ShoppingAssistantFAB";
+import { buyerTotalFromSellerSubtotal, computeCheckoutBreakdown, useCheckoutPricingOptions } from "./checkoutPricing";
+import { buyerOrderFulfillmentPillClass, formatOrderFulfillmentLabel } from "./orderStatusDisplay";
 import { h, f } from "./h";
 import {
   Button,
@@ -58,19 +71,19 @@ import {
   InlineNotice,
   LogoMark,
   RefImage,
-  SelectInput,
   TextArea,
   TextInput,
   ThemeToggleButton
 } from "./ui";
 
-function buyerPricePanel(product) {
-  return h(GlassPanel, { key: "price-info", className: "!border-sky-500/20" }, [
-    h("h3", { className: "text-sm font-semibold text-slate-900 dark:text-white" }, "Seller’s list price"),
+/** Service listings have no fixed storefront price — buyer contacts vendor. */
+function buyerServicePricingPanel() {
+  return h(GlassPanel, { key: "svc-price", className: "!border-amber-500/25 !bg-amber-500/10" }, [
+    h("h3", { className: "text-sm font-semibold text-amber-950 dark:text-amber-50" }, "Pricing"),
     h(
       "p",
-      { className: "mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400" },
-      `Listed at ${formatGhc(product.price)}. Checkout adds a service fee; your total also includes payment fees, which can vary slightly by how you pay.`
+      { className: "mt-1 text-xs leading-relaxed text-amber-950/90 dark:text-amber-100/90" },
+      "Contact vendor for more details — use the seller details below to reach them and agree scope and payment."
     )
   ]);
 }
@@ -440,7 +453,7 @@ export function ProductDetailPage() {
   const orderIdFromUrl = searchParams.get("orderId") || "";
   const { accessToken } = useAuth();
   const { add } = useCart();
-  const { toast } = useNotice();
+  const { isSaved, toggleSaved } = useSavedProducts();
   const [product, setProduct] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [reviewStatus, setReviewStatus] = useState(null);
@@ -453,6 +466,10 @@ export function ProductDetailPage() {
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [reviewMsg, setReviewMsg] = useState("");
+  const [relatedExplore, setRelatedExplore] = useState([]);
+  const [relatedSimilar, setRelatedSimilar] = useState([]);
+  const [relatedExploreTitle, setRelatedExploreTitle] = useState("Explore your interests");
+  const [relatedSimilarTitle, setRelatedSimilarTitle] = useState("More you may like");
   const pricingOpts = useCheckoutPricingOptions();
 
   useEffect(() => {
@@ -510,13 +527,36 @@ export function ProductDetailPage() {
     };
   }, [accessToken, productId, orderIdFromUrl]);
 
+  useEffect(() => {
+    if (!productId) return;
+    let cancelled = false;
+    apiFetch(`/api/products/${productId}/related`)
+      .then((d) => {
+        if (cancelled) return;
+        setRelatedExplore(Array.isArray(d.explore?.products) ? d.explore.products : []);
+        setRelatedSimilar(Array.isArray(d.similar?.products) ? d.similar.products : []);
+        if (d.explore?.title) setRelatedExploreTitle(String(d.explore.title));
+        if (d.similar?.title) setRelatedSimilarTitle(String(d.similar.title));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRelatedExplore([]);
+          setRelatedSimilar([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [productId]);
+
   const tryAdd = () => {
-    if (!product || (product.stock ?? 0) <= 0) return;
+    if (!product || isServicesCategory(product) || (product.stock ?? 0) <= 0) return;
     if (!accessToken) {
       nav("/login", { state: { from: loc.pathname } });
       return;
     }
     add(product, 1);
+    setCartOpen(true);
   };
 
   const submitReview = async () => {
@@ -608,6 +648,9 @@ export function ProductDetailPage() {
 
   const mainSrc = imgs[photoIdx] || imgs[0];
   const titleShort = product.name.length > 28 ? `${product.name.slice(0, 26)}…` : product.name;
+  const svc = isServicesCategory(product);
+  const listPx = Number(product.price) || 0;
+  const unitPayTotal = !svc && pricingOpts ? buyerTotalFromSellerSubtotal(listPx, pricingOpts) : null;
 
   return h(f, null, [
     h(
@@ -623,8 +666,8 @@ export function ProductDetailPage() {
         h(ArrowLeft, { className: "h-4 w-4" }),
         h("span", null, "Back to shop")
       ]),
-      h("div", { key: "grid", className: "grid gap-8 lg:grid-cols-2" }, [
-        h("div", { key: "gal", className: "space-y-3" }, [
+      h("div", { key: "grid", className: "grid gap-8 lg:grid-cols-2 lg:items-start" }, [
+        h("div", { key: "gal-media", className: "space-y-3 lg:col-start-1 lg:row-start-1" }, [
           h("div", { className: "relative overflow-hidden rounded-3xl border border-white/10 bg-white/5" }, [
             badge
               ? h(
@@ -664,12 +707,99 @@ export function ProductDetailPage() {
                   )
                 )
               )
-            : null
+            : null,
+          h("section", { key: "reviews", className: "mt-4 border-t border-white/10 pt-5" }, [
+            h("h2", { className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "Customer reviews"),
+            h("p", { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, "Ratings are from verified purchases."),
+            reviewStatusErr &&
+              h(InlineNotice, { key: "rs-err", variant: "error", className: "mt-3", onDismiss: () => setReviewStatusErr("") }, reviewStatusErr),
+            accessToken && reviewStatus?.canSubmit &&
+              h(GlassPanel, { key: "form", className: "mt-4 !border-sky-500/20" }, [
+                h("h3", { className: "font-semibold text-slate-900 dark:text-white" }, "Write a review"),
+                h("p", { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, "Tap a star to choose 1–5, then add an optional comment and submit."),
+                h("div", { className: "mt-3" }, [
+                  h("p", { className: "mb-2 text-sm font-medium text-slate-700 dark:text-slate-200" }, "Rating"),
+                  h(RatingStarPicker, { value: rating, onChange: setRating }),
+                  h("p", { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, `${rating} of 5 stars`)
+                ]),
+                h("div", { key: "comm", className: "mt-3" }, h(Field, { label: "Comment (optional)" }, h(TextArea, { value: comment, onChange: (e) => setComment(e.target.value), rows: 4, placeholder: "Quality, would you recommend it?" }))),
+                reviewMsg &&
+                  (reviewMsg.startsWith("Thanks")
+                    ? h(InlineNotice, { key: "rm", variant: "success", className: "mt-3", onDismiss: () => setReviewMsg("") }, reviewMsg)
+                    : h(InlineNotice, { key: "rm", variant: "error", className: "mt-3", onDismiss: () => setReviewMsg("") }, reviewMsg)),
+                h(
+                  Button,
+                  {
+                    key: "sub",
+                    className: "mt-4",
+                    type: "button",
+                    loading: submitting,
+                    onClick: submitReview
+                  },
+                  "Submit review"
+                )
+              ]),
+            accessToken &&
+              reviewStatus &&
+              !reviewStatus.canSubmit &&
+              !reviewStatus.hasReview &&
+              reviewStatus.reason === "purchase_required" &&
+              h("div", { key: "need", className: "mt-3 space-y-2 text-sm text-slate-500 dark:text-slate-400" }, [
+                h("p", null, "You can leave a review after this item is on a paid order (paid, processing, sent_for_delivery, or delivered)."),
+                h(Link, { to: "/orders", className: "font-medium text-sky-600 hover:underline dark:text-sky-300" }, "View my orders →"),
+                h("p", { className: "text-xs" }, "Tip: use Rate on My orders to review here, or add ?orderId=… to this page’s address bar so we can match the right purchase.")
+              ]),
+            accessToken &&
+              reviewStatus &&
+              !reviewStatus.canSubmit &&
+              !reviewStatus.hasReview &&
+              reviewStatus.reason === "order_not_eligible" &&
+              h("p", { key: "bad-ord", className: "mt-3 text-sm text-amber-700 dark:text-amber-200/90" }, "This order cannot be used for a review on this product. Pick another order from My orders or remove ?orderId from the address bar."),
+            accessToken && reviewStatus?.hasReview &&
+              h("p", { key: "done", className: "mt-3 text-sm text-emerald-600 dark:text-emerald-400" }, "You already reviewed this product."),
+            !accessToken &&
+              h("p", { key: "guest", className: "mt-3 text-sm text-slate-500 dark:text-slate-400" }, "Sign in to leave a review after you buy this product."),
+            h("div", { key: "list", className: "mt-4 space-y-3" }, [
+              reviews.length === 0 && h("p", { className: "text-sm text-slate-500" }, "No reviews yet."),
+              reviews.map((r) =>
+                h(GlassCard, { key: r.id, className: "!p-4" }, [
+                  h("div", { className: "flex flex-wrap items-center justify-between gap-2" }, [
+                    h("span", { className: "font-medium text-slate-800 dark:text-slate-100" }, r.reviewerDisplayName || "Verified buyer"),
+                    h("span", { className: "text-xs text-slate-500" }, new Date(r.createdAt).toLocaleDateString())
+                  ]),
+                  h(ReviewStars, { value: r.rating, className: "mt-1" }),
+                  r.comment && h("p", { className: "mt-2 text-sm text-slate-700 dark:text-slate-200" }, r.comment)
+                ].filter(Boolean))
+              )
+            ])
+          ])
         ]),
-        h("div", { key: "info", className: "space-y-5" }, [
+        h("div", { key: "info", className: "space-y-5 lg:col-start-2 lg:row-start-1" }, [
           h("div", { key: "hd" }, [
-            h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl" }, product.name),
-            h("p", { className: "mt-1 text-sm text-slate-500 dark:text-slate-400" }, CATEGORY_LABELS[product.category] || product.category),
+            h("div", { key: "hd-top", className: "flex flex-wrap items-start justify-between gap-3" }, [
+              h("div", { key: "titles", className: "min-w-0 flex-1 space-y-1" }, [
+                h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl" }, product.name),
+                h("p", { className: "text-sm text-slate-500 dark:text-slate-400" }, CATEGORY_LABELS[product.category] || product.category)
+              ]),
+              h(
+                "button",
+                {
+                  key: "save-det",
+                  type: "button",
+                  className:
+                    "tap-target shrink-0 rounded-xl border border-slate-200/90 bg-white/80 p-2.5 text-slate-400 shadow-sm transition hover:border-rose-200 hover:text-rose-500 dark:border-white/10 dark:bg-night-900/60 dark:hover:border-rose-500/40",
+                  "aria-label": isSaved(product.id) ? "Remove from saved" : "Save item",
+                  "aria-pressed": isSaved(product.id),
+                  onClick: (e) => {
+                    e.preventDefault();
+                    toggleSaved(product.id).catch(() => {});
+                  }
+                },
+                h(Heart, {
+                  className: `h-6 w-6 ${isSaved(product.id) ? "fill-rose-500 text-rose-500" : ""}`
+                })
+              )
+            ]),
             avgRating != null &&
               h("div", { key: "avg", className: "mt-3 flex flex-wrap items-center gap-2 text-sm" }, [
                 h(ReviewStars, { key: "st", value: avgRating }),
@@ -677,10 +807,19 @@ export function ProductDetailPage() {
                 h("span", { className: "text-slate-500" }, `(${reviews.length} review${reviews.length === 1 ? "" : "s"})`)
               ])
           ]),
-          h("div", { key: "pr", className: "flex flex-wrap items-baseline gap-3" }, [
-            h("span", { className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(product.price))
-          ]),
-          h("p", { className: "text-sm text-slate-600 dark:text-slate-300" }, `${product.stock ?? 0} in stock`),
+          svc
+            ? buyerServicePricingPanel()
+            : h("div", { key: "pr", className: "flex flex-col gap-1" }, [
+                h("span", { className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx)),
+                unitPayTotal != null && Math.abs(unitPayTotal - listPx) > 0.005
+                  ? h(
+                      "span",
+                      { className: "text-xs text-slate-500 dark:text-slate-400" },
+                      `Listing ${formatGhc(listPx)} · Total includes estimated service & payment fees`
+                    )
+                  : null
+              ].filter(Boolean)),
+          !svc ? h("p", { key: "st", className: "text-sm text-slate-600 dark:text-slate-300" }, `${product.stock ?? 0} in stock`) : null,
           (product.tags || []).length > 0 &&
             h(
               "div",
@@ -696,31 +835,36 @@ export function ProductDetailPage() {
                 )
               )
             ),
-          buyerPricePanel(product),
+          h(GlassPanel, { key: "desc", className: "!border-white/10" }, [
+            h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Description"),
+            h("p", { className: "mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200" }, product.description || "No description provided.")
+          ]),
           buyerVendorPayPanel(product.sellerPayment, { paystackOnly: pricingOpts?.paystackOnly }),
           h(
             Button,
             {
               key: "add",
-              variant: "primary",
-              className: "w-full !rounded-2xl !py-3 sm:w-auto sm:!px-10",
+              variant: svc ? "ghost" : "primary",
+              className: `w-full !rounded-2xl !py-3 sm:w-auto sm:!px-10 ${svc ? "!border-slate-300/60 dark:!border-white/20" : ""}`,
               type: "button",
-              disabled: (product.stock ?? 0) <= 0,
+              disabled: svc || (product.stock ?? 0) <= 0,
               onClick: tryAdd
             },
             [
-              h(ShoppingCart, { key: "ic", className: "h-5 w-5" }),
+              svc ? null : h(ShoppingCart, { key: "ic", className: "h-5 w-5" }),
               h(
                 "span",
                 { key: "tx" },
-                (product.stock ?? 0) <= 0 ? "Out of stock" : accessToken ? "Add to cart" : "Sign in to add to cart"
+                svc
+                  ? "Contact vendor for more details"
+                  : (product.stock ?? 0) <= 0
+                    ? "Out of stock"
+                    : accessToken
+                      ? "Add to cart"
+                      : "Sign in to add to cart"
               )
-            ]
+            ].filter(Boolean)
           ),
-          h(GlassPanel, { key: "desc", className: "!border-white/10" }, [
-            h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Description"),
-            h("p", { className: "mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200" }, product.description || "No description provided.")
-          ]),
           accessToken
             ? h(
                 "div",
@@ -741,74 +885,73 @@ export function ProductDetailPage() {
             : null
         ])
       ]),
-      h("section", { key: "reviews", className: "mt-12 border-t border-white/10 pt-10" }, [
-        h("h2", { className: "font-display text-xl font-bold text-slate-900 dark:text-white" }, "Customer reviews"),
-        h("p", { className: "mt-1 text-sm text-slate-500 dark:text-slate-400" }, "Ratings are from verified purchases."),
-        reviewStatusErr &&
-          h(InlineNotice, { key: "rs-err", variant: "error", className: "mt-4", onDismiss: () => setReviewStatusErr("") }, reviewStatusErr),
-        accessToken && reviewStatus?.canSubmit &&
-          h(GlassPanel, { key: "form", className: "mt-6 !border-sky-500/20" }, [
-            h("h3", { className: "font-semibold text-slate-900 dark:text-white" }, "Write a review"),
-            h("p", { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, "Tap a star to choose 1–5, then add an optional comment and submit."),
-            h("div", { className: "mt-4" }, [
-              h("p", { className: "mb-2 text-sm font-medium text-slate-700 dark:text-slate-200" }, "Rating"),
-              h(RatingStarPicker, { value: rating, onChange: setRating }),
-              h("p", { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, `${rating} of 5 stars`)
-            ]),
-            h("div", { key: "comm", className: "mt-4" }, h(Field, { label: "Comment (optional)" }, h(TextArea, { value: comment, onChange: (e) => setComment(e.target.value), rows: 4, placeholder: "Quality, would you recommend it?" }))),
-            reviewMsg &&
-              (reviewMsg.startsWith("Thanks")
-                ? h(InlineNotice, { key: "rm", variant: "success", className: "mt-3", onDismiss: () => setReviewMsg("") }, reviewMsg)
-                : h(InlineNotice, { key: "rm", variant: "error", className: "mt-3", onDismiss: () => setReviewMsg("") }, reviewMsg)),
-            h(
-              Button,
-              {
-                key: "sub",
-                className: "mt-4",
-                type: "button",
-                loading: submitting,
-                onClick: submitReview
-              },
-              "Submit review"
-            )
-          ]),
-        accessToken &&
-          reviewStatus &&
-          !reviewStatus.canSubmit &&
-          !reviewStatus.hasReview &&
-          reviewStatus.reason === "purchase_required" &&
-          h("div", { key: "need", className: "mt-4 space-y-2 text-sm text-slate-500 dark:text-slate-400" }, [
-            h("p", null, "You can leave a review after this item is on a paid order (paid, processing, sent_for_delivery, or delivered)."),
-            h(Link, { to: "/orders", className: "font-medium text-sky-600 hover:underline dark:text-sky-300" }, "View my orders →"),
-            h("p", { className: "text-xs" }, "Tip: use Rate on My orders to review here, or add ?orderId=… to this page’s address bar so we can match the right purchase.")
-          ]),
-        accessToken &&
-          reviewStatus &&
-          !reviewStatus.canSubmit &&
-          !reviewStatus.hasReview &&
-          reviewStatus.reason === "order_not_eligible" &&
-          h("p", { key: "bad-ord", className: "mt-4 text-sm text-amber-700 dark:text-amber-200/90" }, "This order cannot be used for a review on this product. Pick another order from My orders or remove ?orderId from the address bar."),
-        accessToken && reviewStatus?.hasReview &&
-          h("p", { key: "done", className: "mt-4 text-sm text-emerald-600 dark:text-emerald-400" }, "You already reviewed this product."),
-        !accessToken &&
-          h("p", { key: "guest", className: "mt-4 text-sm text-slate-500 dark:text-slate-400" }, "Sign in to leave a review after you buy this product."),
-        h("div", { key: "list", className: "mt-6 space-y-4" }, [
-          reviews.length === 0 && h("p", { className: "text-sm text-slate-500" }, "No reviews yet."),
-          reviews.map((r) =>
-            h(GlassCard, { key: r.id, className: "!p-4" }, [
-              h("div", { className: "flex flex-wrap items-center justify-between gap-2" }, [
-                h("span", { className: "font-medium text-slate-800 dark:text-slate-100" }, r.reviewerDisplayName || "Verified buyer"),
-                h("span", { className: "text-xs text-slate-500" }, new Date(r.createdAt).toLocaleDateString())
-              ]),
-              h(ReviewStars, { value: r.rating, className: "mt-1" }),
-              r.comment && h("p", { className: "mt-2 text-sm text-slate-700 dark:text-slate-200" }, r.comment)
-            ].filter(Boolean))
-          )
-        ])
-      ])
+      h(BuyerProductDiscoveryRail, { key: "rail-exp", title: relatedExploreTitle, products: relatedExplore }),
+      h(BuyerProductDiscoveryRail, { key: "rail-sim", title: relatedSimilarTitle, products: relatedSimilar })
     ])
     ),
     h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })
+  ]);
+}
+
+/** Horizontal discovery rail on product detail (matches shop recommendation poster tiles). */
+function BuyerProductDiscoveryRail({ title, products }) {
+  if (!Array.isArray(products) || products.length === 0) return null;
+  return h("div", { className: "mt-12 border-t border-white/10 pt-10", "aria-label": title }, [
+    h(
+      "div",
+      { key: "h", className: "mb-3 flex items-center gap-2" },
+      [
+        h(Sparkles, { className: "h-5 w-5 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
+        h(
+          "h2",
+          { className: "font-display text-base font-semibold tracking-tight text-slate-900 dark:text-white sm:text-lg" },
+          title
+        )
+      ]
+    ),
+    h(
+      "div",
+      {
+        key: "rail",
+        className:
+          "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:gap-3.5 sm:px-0"
+      },
+      products.map((p) =>
+        h(
+          Link,
+          {
+            key: p.id,
+            to: `/products/${p.id}`,
+            "aria-label": p.name,
+            className:
+              "group relative aspect-[3/4] w-[min(42vw,11rem)] shrink-0 snap-start overflow-hidden rounded-xl bg-slate-300/50 ring-1 ring-slate-200/80 transition duration-200 hover:z-[1] hover:scale-[1.03] hover:shadow-lg hover:shadow-slate-900/15 hover:ring-sky-500/35 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:bg-night-800 dark:ring-white/10 dark:hover:shadow-black/40 dark:hover:ring-sky-400/40"
+          },
+          [
+            h(RefImage, {
+              src: p.imageUrls?.[0],
+              n: refFromId(p.id),
+              alt: p.name,
+              className: "absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105"
+            }),
+            h("div", {
+              className: "pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent",
+              "aria-hidden": true
+            }),
+            h(
+              "div",
+              { className: "absolute bottom-0 left-0 right-0 p-3 pt-10" },
+              h(
+                "span",
+                {
+                  className: "line-clamp-2 text-left text-sm font-semibold leading-snug text-white drop-shadow-md"
+                },
+                p.name
+              )
+            )
+          ]
+        )
+      )
+    )
   ]);
 }
 
@@ -854,7 +997,7 @@ function buyerNavbarHandle(u) {
  * Compact top nav link (buyer / guest shell — no sidebar).
  * Optional `activeWhen` resolves highlight when pathname match alone is not enough (e.g. `/` vs `/#buyer-shop-grid`).
  */
-function BuyerNavbarNavLink({ to, end, icon: Icon, label, activeWhen }) {
+function BuyerNavbarNavLink({ to, end, icon: Icon, label, activeWhen, labelOnMobile = false }) {
   const loc = useLocation();
   const resolveActive = (pathActive) =>
     typeof activeWhen === "function" ? activeWhen({ pathActive, loc }) : pathActive;
@@ -878,17 +1021,205 @@ function BuyerNavbarNavLink({ to, end, icon: Icon, label, activeWhen }) {
           key: "ic",
           className: `h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4 ${on ? "text-white" : "opacity-85"}`
         }),
-        h("span", { key: "tx", className: "hidden sm:inline" }, label)
+        h("span", { key: "tx", className: labelOnMobile ? "whitespace-nowrap text-[11px] sm:text-xs" : "hidden sm:inline" }, label)
       ]);
     }
   });
 }
 
-export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchValue, onSearchChange, onSearchSubmit }) {
+/** Storefront sidebar: discover links, profile / apply, price filters (categories stay in main-area chips only). */
+function BuyerStorefrontAside({
+  fil,
+  setFil,
+  minPriceIn,
+  maxPriceIn,
+  setMinPriceIn,
+  setMaxPriceIn,
+  applyPriceRange,
+  clearPriceRange,
+  priceFilterCaption,
+  onItemClick,
+  navigate
+}) {
+  const { accessToken, user } = useAuth();
+
+  const row = (key, Icon, label, opts) => {
+    const active = opts?.active;
+    return h(
+      "button",
+      {
+        key,
+        type: "button",
+        onClick: () => {
+          opts?.onClick?.();
+          onItemClick?.();
+        },
+        className: `flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] font-medium leading-snug transition ${
+          active ? "border border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-500/35 dark:bg-sky-950/40 dark:text-sky-100" : "border border-transparent text-slate-700 hover:bg-sky-50/70 dark:text-slate-200 dark:hover:bg-white/5"
+        }`
+      },
+      [
+        h(Icon, { className: `h-4 w-4 shrink-0 ${active ? "text-sky-600 dark:text-sky-300" : "text-slate-500 dark:text-slate-400"}`, strokeWidth: 2 }),
+        h("span", { className: "min-w-0 flex-1" }, label)
+      ]
+    );
+  };
+
+  const linkRow = (key, Icon, label, to) =>
+    h(
+      NavLink,
+      {
+        key,
+        to,
+        end: to === "/",
+        onClick: () => onItemClick?.(),
+        className: ({ isActive }) =>
+          `flex w-full items-center gap-2 rounded-lg px-2 py-2 text-[13px] font-medium leading-snug transition ${
+            isActive
+              ? "border border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-500/35 dark:bg-sky-950/40 dark:text-sky-100"
+              : "border border-transparent text-slate-700 hover:bg-sky-50/70 dark:text-slate-200 dark:hover:bg-white/5"
+          }`
+      },
+      [
+        h(Icon, { className: "h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400", strokeWidth: 2 }),
+        h("span", { className: "min-w-0 truncate" }, label)
+      ]
+    );
+
+  const divider = (k) => h("div", { key: k, className: "my-2.5 border-t border-slate-200 dark:border-white/10" });
+
+  const showVendorApply =
+    accessToken && user?.role === "buyer" && !["pending", "approved"].includes(String(user?.vendorStatus ?? ""));
+  const showCourierApply =
+    accessToken && user?.role === "buyer" && String(user?.riderApplicationStatus || "") !== "pending";
+  const showVendorNavLink = !accessToken || showVendorApply;
+  const showCourierNavLink = !accessToken || showCourierApply;
+
+  return h(
+    "div",
+    { className: "flex h-full min-h-0 flex-col gap-0 overflow-y-auto p-2.5 lg:p-3" },
+    [
+      h("p", { key: "u-h", className: "mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400" }, "Discover"),
+      row("saved", Bookmark, "Saved items", {
+        onClick: () => navigate("/saved")
+      }),
+      row("recent", LayoutGrid, "Recently viewed", {
+        onClick: () => {
+          const el = document.getElementById("buyer-shop-grid");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }),
+      linkRow("help", Headphones, "Help & support", "/support"),
+      divider("dv-sell"),
+      showVendorNavLink ? linkRow("vend-side", Store, "Become a vendor", "/apply-vendor") : null,
+      showCourierNavLink ? linkRow("cour-side", Truck, "Become a courier", "/apply-courier") : null,
+      h(
+        "div",
+        {
+          key: "side-price-wrap",
+          className: "mt-3",
+          title: "Uses seller list prices with categories and search."
+        },
+        h(
+          GlassCard,
+          {
+            key: "side-price",
+            className:
+              "!border-slate-200/90 !bg-white/95 !p-2 !shadow-sm dark:!border-white/10 dark:!bg-night-900/60"
+          },
+        [
+          h(
+            "p",
+            {
+              key: "t",
+              className: "px-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-600 dark:text-sky-400"
+            },
+            "Price (GHS)"
+          ),
+          h("div", { key: "row", className: "mt-1.5 grid grid-cols-2 gap-1.5" }, [
+            h("label", { key: "lmin", className: "block" }, [
+              h("span", { className: "block text-[9px] font-medium text-slate-500 dark:text-slate-400" }, "Min"),
+              h(TextInput, {
+                type: "number",
+                min: 0,
+                step: 1,
+                value: minPriceIn,
+                onChange: (e) => setMinPriceIn(e.target.value),
+                onKeyDown: (e) => {
+                  if (e.key === "Enter") applyPriceRange();
+                },
+                className: "!min-h-0 !h-8 !rounded-lg !px-2 !py-1 !text-xs !leading-tight",
+                placeholder: "Any",
+                "aria-label": "Minimum price in GHS"
+              })
+            ]),
+            h("label", { key: "lmax", className: "block" }, [
+              h("span", { className: "block text-[9px] font-medium text-slate-500 dark:text-slate-400" }, "Max"),
+              h(TextInput, {
+                type: "number",
+                min: 0,
+                step: 1,
+                value: maxPriceIn,
+                onChange: (e) => setMaxPriceIn(e.target.value),
+                onKeyDown: (e) => {
+                  if (e.key === "Enter") applyPriceRange();
+                },
+                className: "!min-h-0 !h-8 !rounded-lg !px-2 !py-1 !text-xs !leading-tight",
+                placeholder: "Any",
+                "aria-label": "Maximum price in GHS"
+              })
+            ])
+          ]),
+          h("div", { key: "act", className: "mt-1.5 flex gap-1" }, [
+            h(
+              Button,
+              {
+                type: "button",
+                variant: "primary",
+                className: "min-w-0 flex-1 !min-h-0 !rounded-lg !py-1.5 !text-[11px] !font-semibold",
+                onClick: applyPriceRange
+              },
+              "Apply"
+            ),
+            h(Button, {
+              type: "button",
+              variant: "ghost",
+              className: "min-w-0 flex-1 !min-h-0 !rounded-lg !py-1.5 !text-[11px] !font-semibold",
+              onClick: () => clearPriceRange()
+            }, "Clear")
+          ]),
+          priceFilterCaption
+            ? h(
+                "p",
+                { key: "cap", className: "mt-1 px-0.5 text-[9px] font-medium leading-tight text-sky-700 dark:text-sky-300" },
+                `Active: ${priceFilterCaption}`
+              )
+            : null
+        ]
+        )
+      )
+    ].filter(Boolean)
+  );
+}
+
+export function BuyerLayout({
+  children,
+  onOpenCart,
+  title,
+  hideSearch,
+  searchValue,
+  onSearchChange,
+  onSearchSubmit,
+  shoppingAssistant = true,
+  searchPlaceholder = "Search products, brands…",
+  storefront = false,
+  storefrontAsideProps = null
+}) {
   const { dark, toggle } = useTheme();
   const { count } = useCart();
   const { accessToken, logout, user } = useAuth();
   const nav = useNavigate();
+  const [asideOpen, setAsideOpen] = useState(false);
 
   const onLogout = async () => {
     await logout();
@@ -899,8 +1230,34 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
     onSearchSubmit?.();
   };
 
-  const cartNavInactive =
-    "text-slate-700 hover:bg-white/45 dark:text-slate-200 dark:hover:bg-white/10";
+  const headerCartBtn = h(
+    "button",
+    {
+      key: "cart-hdr",
+      type: "button",
+      title: "Cart",
+      "aria-label": `Cart${count > 0 ? `, ${count} items` : ""}`,
+      className:
+        "tap-target relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-700 transition hover:bg-sky-50 dark:text-slate-200 dark:hover:bg-white/10",
+      onClick: () => onOpenCart()
+    },
+    [
+      h(ShoppingCart, {
+        key: "i",
+        className: "h-[1.35rem] w-[1.35rem] shrink-0 text-sky-600 dark:text-sky-400"
+      }),
+      count > 0 &&
+        h(
+          "span",
+          {
+            key: "c",
+            className:
+              "absolute -right-0.5 -top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-sky-500 px-1 text-[10px] font-bold text-white"
+          },
+          count > 99 ? "99+" : String(count)
+        )
+    ].filter(Boolean)
+  );
 
   const topNavLinks = [
     h(BuyerNavbarNavLink, {
@@ -919,31 +1276,10 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
       user?.role === "buyer" &&
       !["pending", "approved"].includes(user?.vendorStatus) &&
       h(BuyerNavbarNavLink, { key: "apply", to: "/apply-vendor", icon: Store, label: "Become a vendor" }),
-    h(
-      "button",
-      {
-        key: "cart",
-        type: "button",
-        title: "Cart",
-        "aria-label": `Cart${count > 0 ? `, ${count} items` : ""}`,
-        className: `relative inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1.5 text-[11px] font-medium transition sm:gap-1.5 sm:px-2.5 sm:text-xs ${cartNavInactive}`,
-        onClick: () => onOpenCart()
-      },
-      [
-        h(ShoppingCart, { key: "i", className: "h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" }),
-        h("span", { key: "t", className: "hidden sm:inline" }, "Cart"),
-        count > 0 &&
-          h(
-            "span",
-            {
-              key: "c",
-              className:
-                "ml-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-sky-500 px-1 text-[10px] font-bold text-white sm:h-5 sm:min-w-[1.25rem] sm:text-xs"
-            },
-            String(count)
-          )
-      ].filter(Boolean)
-    )
+    accessToken &&
+      user?.role === "buyer" &&
+      user?.riderApplicationStatus !== "pending" &&
+      h(BuyerNavbarNavLink, { key: "cour", to: "/apply-courier", icon: Truck, label: "Become a courier" })
   ].filter(Boolean);
 
   const vendorPendingBanner =
@@ -958,6 +1294,20 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
           "rounded-lg border border-amber-400/35 bg-amber-500/10 px-2 py-1 text-center text-[10px] font-medium text-amber-950 dark:text-amber-100 sm:text-xs"
       },
       "Vendor application pending review"
+    );
+
+  const riderPendingBanner =
+    accessToken &&
+    user?.role === "buyer" &&
+    user?.riderApplicationStatus === "pending" &&
+    h(
+      "div",
+      {
+        key: "rpend",
+        className:
+          "rounded-lg border border-emerald-400/35 bg-emerald-500/10 px-2 py-1 text-center text-[10px] font-medium text-emerald-950 dark:text-emerald-100 sm:text-xs"
+      },
+      "Courier application pending review"
     );
 
   const profileChip =
@@ -986,6 +1336,8 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
 
   const headerActions = [
     h(ThemeToggleButton, { key: "th", dark, onToggle: toggle }),
+    headerCartBtn,
+    accessToken && h(NotificationBell, { key: "bell", to: "/notifications" }),
     profileChip,
     h(
       Button,
@@ -1000,7 +1352,209 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
     )
   ].filter(Boolean);
 
-  return h("div", { className: "flex min-h-screen flex-col bg-slate-100 dark:bg-night-950 dark:bg-mesh-dark" }, [
+  if (storefront && storefrontAsideProps) {
+    const asideNode = h(BuyerStorefrontAside, {
+      ...storefrontAsideProps,
+      navigate: nav,
+      onItemClick: () => setAsideOpen(false)
+    });
+
+    const sfNavLinksArr = [
+      h(BuyerNavbarNavLink, {
+        key: "sfd",
+        labelOnMobile: true,
+        to: "/",
+        end: true,
+        icon: LayoutGrid,
+        label: "Dashboard",
+        activeWhen: ({ pathActive, loc }) => pathActive && !loc.hash
+      }),
+      h(BuyerNavbarNavLink, { key: "sfo", labelOnMobile: true, to: "/orders", icon: Package, label: "Orders" }),
+      accessToken && h(BuyerNavbarNavLink, { key: "sfm", labelOnMobile: true, to: "/messages", icon: MessageSquare, label: "Messages" }),
+      accessToken && h(BuyerNavbarNavLink, { key: "sfr", labelOnMobile: true, to: "/reports", icon: AlertTriangle, label: "Reports" }),
+      h(BuyerNavbarNavLink, {
+        key: "sfp",
+        labelOnMobile: true,
+        to: "/profile",
+        icon: User,
+        label: "Profile"
+      })
+    ].filter(Boolean);
+
+    const headerActionsSf = [
+      h(ThemeToggleButton, { key: "th", dark, onToggle: toggle }),
+      headerCartBtn,
+      accessToken && h(NotificationBell, { key: "bell", to: "/notifications" }),
+      h(
+        Button,
+        {
+          key: "auth",
+          variant: "primary",
+          className: "!min-h-[44px] !rounded-full !px-3 !text-xs sm:!px-4 sm:!text-sm",
+          type: "button",
+          onClick: () => (accessToken ? onLogout() : nav("/login"))
+        },
+        accessToken ? "Log out" : "Login"
+      )
+    ].filter(Boolean);
+
+    return h(React.Fragment, null, [
+      h(
+        "div",
+        {
+          key: "shell-storefront",
+          className: "flex min-h-screen flex-col bg-slate-100 dark:bg-night-950 dark:bg-mesh-dark"
+        },
+        [
+          h(
+            "header",
+            {
+              key: "hdr-sf",
+              className:
+                "sticky top-0 z-40 border-b border-slate-200/90 bg-white shadow-sm dark:border-white/10 dark:bg-night-900/95 dark:backdrop-blur-xl"
+            },
+            h("div", { className: "mx-auto flex w-full max-w-[1720px] flex-col gap-2 px-3 py-2 sm:gap-2.5 sm:px-5 sm:py-2.5 lg:px-8" }, [
+              h(
+                "div",
+                {
+                  key: "sf-row-toolbar",
+                  className: "flex flex-wrap items-center gap-x-3 gap-y-2"
+                },
+                [
+                  h("div", { key: "sf-left", className: "flex min-w-0 items-center gap-2" }, [
+                    h(
+                      "button",
+                      {
+                        key: "menu",
+                        type: "button",
+                        className:
+                          "tap-target inline-flex rounded-xl p-2 text-slate-600 hover:bg-sky-50 lg:hidden dark:text-slate-200 dark:hover:bg-white/10",
+                        "aria-expanded": asideOpen,
+                        "aria-controls": "storefront-buyer-drawer",
+                        "aria-label": "Open menu",
+                        onClick: () => setAsideOpen((o) => !o)
+                      },
+                      h(Menu, { className: "h-5 w-5" })
+                    ),
+                    h(
+                      Link,
+                      {
+                        key: "brand-sf",
+                        to: "/",
+                        className: "flex min-w-0 shrink-0 items-center gap-2",
+                        onClick: () => setAsideOpen(false)
+                      },
+                      [
+                        h(LogoMark, { key: "lm", className: "h-8 w-8 sm:h-9 sm:w-9" }),
+                        h("div", { key: "titles", className: "min-w-0 leading-tight" }, [
+                          h(
+                            "span",
+                            {
+                              key: "brand-t",
+                              className: "font-display text-base font-bold text-slate-900 dark:text-white sm:text-lg"
+                            },
+                            "Campus Mart"
+                          ),
+                          title
+                            ? h(
+                                "span",
+                                {
+                                  key: "sub",
+                                  className:
+                                    "ml-2 inline-block max-w-[10rem] truncate align-middle text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400 sm:max-w-[16rem]"
+                                },
+                                title
+                              )
+                            : null
+                        ])
+                      ])
+                  ]),
+                  h(
+                    "div",
+                    { key: "sf-nav-wrap", className: "hidden min-w-0 flex-1 items-center justify-center lg:flex" },
+                    h(
+                      "nav",
+                      { className: "no-scrollbar flex w-full max-w-full items-center justify-center gap-1 overflow-x-auto [-webkit-overflow-scrolling:touch]", "aria-label": "Main" },
+                      sfNavLinksArr
+                    )
+                  ),
+                  h("div", { key: "sf-actions", className: "ml-auto flex flex-wrap items-center justify-end gap-1 sm:gap-2" }, headerActionsSf)
+                ]
+              ),
+              vendorPendingBanner,
+              riderPendingBanner,
+              h(
+                "nav",
+                {
+                  key: "sf-nav-m",
+                  className: "no-scrollbar flex justify-center gap-1 overflow-x-auto pb-0.5 lg:hidden [-webkit-overflow-scrolling:touch]",
+                  "aria-label": "Main"
+                },
+                sfNavLinksArr
+              )
+            ])
+          ),
+          h("div", { key: "sf-body", className: "relative mx-auto flex w-full max-w-[1720px] flex-1 min-h-0" }, [
+            h(
+              "aside",
+              {
+                key: "sf-aside-d",
+                className:
+                  "sticky top-[4.75rem] hidden h-[calc(100vh-4.75rem)] w-[13.5rem] shrink-0 overflow-y-auto border-r border-slate-200/90 bg-white dark:border-white/10 dark:bg-night-900/50 lg:flex"
+              },
+              asideNode
+            ),
+            asideOpen &&
+              h(
+                "button",
+                {
+                  key: "backdrop",
+                  type: "button",
+                  className:
+                    "fixed inset-0 z-[48] bg-slate-900/45 backdrop-blur-[1px] lg:hidden",
+                  "aria-label": "Close menu",
+                  tabIndex: -1,
+                  onClick: () => setAsideOpen(false)
+                }),
+            asideOpen &&
+              h(
+                "aside",
+                {
+                  id: "storefront-buyer-drawer",
+                  key: "sf-draw",
+                  className:
+                    "fixed left-0 top-0 z-[49] flex h-[100dvh] w-[min(15.5rem,88vw)] flex-col border-r border-slate-200 bg-white pt-[env(safe-area-inset-top)] shadow-xl dark:border-white/10 dark:bg-night-950 lg:hidden",
+                  role: "dialog",
+                  "aria-modal": true,
+                  "aria-label": "Shop menu"
+                },
+                [
+                  h("div", { key: "dr-head", className: "flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-3 py-2.5 dark:border-white/10" }, [
+                    h("span", { className: "text-sm font-bold text-slate-900 dark:text-white" }, "Menu"),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        className: "tap-target rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10",
+                        "aria-label": "Close menu",
+                        onClick: () => setAsideOpen(false)
+                      },
+                      h(X, { className: "h-5 w-5" })
+                    )
+                  ]),
+                  h("div", { key: "dr-body", className: "min-h-0 flex-1 overflow-y-auto" }, asideNode)
+                ]
+              ),
+            h("main", { key: "sf-main", className: "min-w-0 flex-1" }, children)
+          ])
+        ]
+      ),
+      shoppingAssistant !== false && h(ShoppingAssistantFAB, { key: "assist" })
+    ]);
+  }
+
+  return h(React.Fragment, null, [
+    h("div", { key: "shell", className: "flex min-h-screen flex-col bg-slate-100 dark:bg-night-950 dark:bg-mesh-dark" }, [
     h("div", { key: "main-wrap", className: "flex min-h-screen min-w-0 flex-1 flex-col" }, [
       h(
         "header",
@@ -1009,12 +1563,12 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
           className:
             "sticky top-0 z-40 border-b border-white/10 bg-white/30 shadow-sm backdrop-blur-xl dark:bg-night-900/40"
         },
-        h("div", { className: "flex w-full flex-col gap-2 px-4 py-2 sm:gap-3 sm:px-6 sm:py-3 lg:px-8" }, [
+        h("div", { className: "flex w-full flex-col gap-1.5 px-4 py-1.5 sm:gap-2 sm:px-6 sm:py-2 lg:px-8" }, [
           h("div", {
             key: "row-1",
-            className: "grid w-full min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)_auto] items-center gap-2 sm:gap-3"
+            className: "grid w-full min-w-0 grid-cols-3 items-center gap-2 sm:gap-3"
           }, [
-            h(Link, { key: "brand", to: "/", className: "flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-2" }, [
+            h(Link, { key: "brand", to: "/", className: "justify-self-start flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-2" }, [
               h(LogoMark, { key: "lm", className: "h-8 w-8 sm:h-9 sm:w-9" }),
               h("div", { key: "titles", className: "min-w-0 leading-tight" }, [
                 h(
@@ -1039,27 +1593,28 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
               "nav",
               {
                 key: "topnav",
-                className: "min-w-0 flex justify-center self-center",
+                className: "justify-self-center min-w-0 max-w-full",
                 "aria-label": "Main"
               },
               h(
                 "div",
                 {
                   className:
-                    "no-scrollbar flex max-w-full items-center justify-center gap-1 overflow-x-auto px-0.5 pb-0.5 [-webkit-overflow-scrolling:touch] sm:gap-1.5"
+                    "no-scrollbar mx-auto flex w-max max-w-full items-center justify-center gap-1 overflow-x-auto px-0.5 pb-0.5 [-webkit-overflow-scrolling:touch] sm:gap-1.5"
                 },
                 topNavLinks
               )
             ),
-            h("div", { key: "actions", className: "flex shrink-0 flex-wrap items-center justify-end justify-self-end gap-1 sm:gap-2" }, headerActions)
+            h("div", { key: "actions", className: "justify-self-end flex shrink-0 flex-wrap items-center justify-end gap-1 sm:gap-2" }, headerActions)
           ]),
           vendorPendingBanner,
+          riderPendingBanner,
           !hideSearch &&
             h("div", { key: "row-search", className: "flex flex-1 items-center gap-2" }, [
               h("div", { key: "search-wrap", className: "relative flex flex-1 items-center" }, [
                 h(Search, {
                   key: "ic-search",
-                  className: "pointer-events-none absolute left-3 h-4 w-4 text-slate-400"
+                  className: "pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
                 }),
                 h(TextInput, {
                   key: "input",
@@ -1071,15 +1626,17 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
                       submitSearch();
                     }
                   },
-                  placeholder: "Search products, brands…",
-                  className: "!rounded-full !pl-10 !pr-24"
+                  placeholder: searchPlaceholder,
+                  className:
+                    "!h-9 !min-h-[36px] !rounded-full !py-0 !pl-9 !pr-[4.25rem] !text-sm"
                 }),
                 h(
                   Button,
                   {
                     key: "submit",
                     variant: "primary",
-                    className: "!absolute right-1 top-1/2 !min-h-[36px] -translate-y-1/2 !rounded-full !px-4 !py-2 !text-sm",
+                    className:
+                      "!absolute right-1 top-1/2 !h-7 !min-h-0 -translate-y-1/2 !rounded-full !px-3 !py-0 !text-xs",
                     type: "button",
                     onClick: submitSearch
                   },
@@ -1091,7 +1648,9 @@ export function BuyerLayout({ children, onOpenCart, title, hideSearch, searchVal
       ),
       h("div", { key: "page-children", className: "flex-1" }, children)
     ])
-  ]);
+  ]),
+  shoppingAssistant !== false && h(ShoppingAssistantFAB, { key: "assist" })
+]);
 }
 
 function CategoryRow({ active, onSelect }) {
@@ -1108,7 +1667,7 @@ function CategoryRow({ active, onSelect }) {
   return h(
     "div",
     { className: "no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0" },
-    CATEGORIES.map((c) => {
+    withAllCategoryFirst(CATEGORIES).map((c) => {
       const Icon = icons[c.id] || LayoutGrid;
       const isOn = active === c.id;
       return h(
@@ -1141,6 +1700,129 @@ function CategoryRow({ active, onSelect }) {
   );
 }
 
+function storefrontBadgeStack(p) {
+  const badges = productStorefrontBadges(p);
+  if (!badges.length) return null;
+  return h(
+    "div",
+    {
+      key: "sf-bdg",
+      className: "pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap gap-1"
+    },
+    badges.map((b) =>
+      h(
+        "span",
+        {
+          key: b.key,
+          className: `rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase leading-tight tracking-wide shadow-sm ring-1 ring-black/10 ${b.className}`
+        },
+        b.label
+      )
+    )
+  );
+}
+
+/** Short labels so the chip row fits on one line; full name in title for hover/tooltip. */
+const STOREFRONT_CHIP_LABEL = {
+  all: "All",
+  food_drinks: "Food",
+  fashion_accessories: "Fashion",
+  electronics_gadgets: "Electronics",
+  beauty_personal_care: "Beauty",
+  services: "Services",
+  books_academic: "Books",
+  groceries_essentials: "Groceries"
+};
+
+/** Horizontal category chips — single row, horizontal scroll, compact. */
+function StorefrontCategoryChips({ active, onSelect }) {
+  const icons = {
+    all: LayoutGrid,
+    food_drinks: Utensils,
+    fashion_accessories: Shirt,
+    electronics_gadgets: Cpu,
+    beauty_personal_care: Sparkles,
+    services: Wrench,
+    books_academic: BookOpen,
+    groceries_essentials: ShoppingBasket
+  };
+  return h(
+    "div",
+    {
+      className:
+        "no-scrollbar -mx-4 flex max-w-full flex-nowrap gap-1.5 overflow-x-auto overscroll-x-contain px-4 pb-0.5 sm:-mx-0 sm:gap-2 sm:px-0",
+      role: "tablist",
+      "aria-label": "Product categories"
+    },
+    withAllCategoryFirst(CATEGORIES).map((c) => {
+      const Icon = icons[c.id] || LayoutGrid;
+      const isOn = active === c.id;
+      const full = c.label;
+      const short = STOREFRONT_CHIP_LABEL[c.id] ?? c.label;
+      return h(
+        "button",
+        {
+          key: c.id,
+          type: "button",
+          role: "tab",
+          "aria-selected": isOn,
+          title: full,
+          "aria-label": full,
+          onClick: () => onSelect(c.id),
+          className: `inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border px-2 py-1.5 text-[11px] font-semibold leading-none transition sm:gap-1.5 sm:rounded-xl sm:px-2.5 sm:py-2 sm:text-xs ${
+            isOn
+              ? "border-sky-500 bg-sky-50 text-sky-950 shadow-sm dark:border-sky-400/45 dark:bg-sky-950/40 dark:text-sky-50"
+              : "border-slate-200/90 bg-white text-slate-700 shadow-sm hover:border-sky-200 hover:bg-sky-50/50 dark:border-white/10 dark:bg-night-900/40 dark:text-slate-200 dark:hover:border-sky-500/30"
+          }`
+        },
+        [
+          h(Icon, {
+            key: "ic",
+            className: `h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4 ${isOn ? "text-sky-600 dark:text-sky-300" : "text-slate-500 dark:text-slate-400"}`
+          }),
+          h("span", { key: "lb" }, short)
+        ]
+      );
+    })
+  );
+}
+
+function StorefrontTrustBar() {
+  const cell = (key, Icon, title, subtitle) =>
+    h(
+      "div",
+      {
+        key,
+        className: "flex items-start gap-3 rounded-xl border border-slate-200/70 bg-white/90 p-3 shadow-sm dark:border-white/10 dark:bg-night-900/50 sm:p-4"
+      },
+      [
+        h(
+          "div",
+          {
+            key: "ic-wrap",
+            className: "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-100 dark:bg-sky-950/45"
+          },
+          h(Icon, { className: "h-5 w-5 text-sky-700 dark:text-sky-200", "aria-hidden": true })
+        ),
+        h("div", { key: "tx", className: "min-w-0" }, [
+          h("p", { className: "text-sm font-bold text-slate-900 dark:text-white" }, title),
+          h("p", { className: "mt-0.5 text-[11px] leading-snug text-slate-500 dark:text-slate-400 sm:text-xs" }, subtitle)
+        ])
+      ]
+    );
+
+  return h(
+    "div",
+    { className: "mt-14 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" },
+    [
+      cell("s1", Shield, "Safe & secure", "Encrypted checkout with order protections."),
+      cell("s2", Truck, "Fast delivery", "Couriers tuned for campus handoffs."),
+      cell("s3", Award, "Trusted vendors", "Curated storefronts around you."),
+      cell("s4", Headphones, "24/7 support", "Reach us when something goes wrong.")
+    ]
+  );
+}
+
 export function CartDrawer({ open, onClose }) {
   const { items, subtotal, setQty, remove, clear } = useCart();
   const { accessToken } = useAuth();
@@ -1149,6 +1831,8 @@ export function CartDrawer({ open, onClose }) {
   const pricingOpts = useCheckoutPricingOptions();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+
+  const hasServiceInCart = items.some((p) => isServicesCategory(p));
 
   const breakdown =
     pricingOpts && subtotal > 0
@@ -1167,7 +1851,7 @@ export function CartDrawer({ open, onClose }) {
       nav("/login", { state: { from: "/checkout" } });
       return;
     }
-    if (items.length === 0 || subtotal <= 0) return;
+    if (items.length === 0 || subtotal <= 0 || hasServiceInCart) return;
     onClose?.();
     nav("/checkout");
   };
@@ -1224,7 +1908,23 @@ export function CartDrawer({ open, onClose }) {
                   h("div", { key: "meta", className: "min-w-0 flex-1" }, [
                     h("p", { key: "name", className: "truncate font-semibold text-slate-900 dark:text-white" }, p.name),
                     h("p", { key: "desc", className: "text-xs text-slate-500 dark:text-slate-400" }, p.blurb || p.description || ""),
-                    h("p", { key: "price", className: "mt-1 text-sm font-bold text-sky-600 dark:text-sky-300" }, formatGhc(p.price)),
+                    h(
+                      "p",
+                      {
+                        key: "price",
+                        className: `mt-1 text-sm font-bold ${isServicesCategory(p) ? "text-amber-700 dark:text-amber-200" : "text-sky-600 dark:text-sky-300"}`
+                      },
+                      isServicesCategory(p)
+                        ? "Contact vendor — remove to check out other items"
+                        : formatGhc(
+                            pricingOpts
+                              ? buyerTotalFromSellerSubtotal(
+                                  (Number(p.price) || 0) * (Number(p.qty) || 1),
+                                  pricingOpts
+                                ) ?? (Number(p.price) || 0) * (Number(p.qty) || 1)
+                              : (Number(p.price) || 0) * (Number(p.qty) || 1)
+                          )
+                    ),
                     h("div", { key: "qty", className: "mt-2 flex items-center gap-2" }, [
                       h(
                         "button",
@@ -1273,52 +1973,19 @@ export function CartDrawer({ open, onClose }) {
           err
             ? h(InlineNotice, { key: "err", variant: "error", className: "mt-3", onDismiss: () => setErr("") }, err)
             : null,
-          (() => {
-            const feeRows = [];
-            if (breakdown && pricingOpts) {
-              feeRows.push(
-                h("div", { key: "items", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
-                  h("span", { key: "l" }, "Items (seller price)"),
-                  h("span", { key: "v", className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(breakdown.subtotal))
-                ])
-              );
-              feeRows.push(
-                h("div", { key: "svc", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
-                  h("span", { key: "l" }, "Service fee"),
-                  h("span", { key: "v", className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(breakdown.serviceFee))
-                ])
-              );
-            } else {
-              feeRows.push(
-                h("div", { key: "subtotal", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
-                  h("span", { key: "l" }, "Subtotal"),
-                  h("span", { key: "v", className: "font-semibold text-slate-900 dark:text-white" }, formatGhc(subtotal))
-                ])
-              );
-            }
-            feeRows.push(
-              h("div", { key: "delivery", className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
-                h("span", { key: "l" }, "Delivery"),
-                h("span", { key: "v", className: "font-semibold text-emerald-400" }, "Free")
-              ])
-            );
-            feeRows.push(
-              h("div", { key: "total", className: "flex justify-between text-lg font-bold text-slate-900 dark:text-white" }, [
-                h("span", { key: "l" }, "Total"),
-                h("span", { key: "v" }, formatGhc(breakdown ? breakdown.total : subtotal))
-              ])
-            );
-            if (breakdown && breakdown.processingFee > 0.005) {
-              feeRows.push(
-                h(
+          h("div", { key: "totals", className: "mt-6 space-y-2 border-t border-white/10 pt-4 text-sm" }, [
+            h("div", { key: "total", className: "flex justify-between text-lg font-bold text-slate-900 dark:text-white" }, [
+              h("span", { key: "l" }, "Total"),
+              h("span", { key: "v" }, formatGhc(breakdown ? breakdown.total : subtotal))
+            ]),
+            breakdown && breakdown.processingFee > 0.005
+              ? h(
                   "p",
                   { key: "paynote", className: "text-xs leading-snug text-slate-500 dark:text-slate-400" },
-                  "Total includes payment fees; the exact amount may vary slightly by payment method."
+                  "The exact amount may vary slightly by payment method."
                 )
-              );
-            }
-            return h("div", { key: "totals", className: "mt-6 space-y-2 border-t border-white/10 pt-4 text-sm" }, feeRows);
-          })(),
+              : null
+          ]),
           h(
             Button,
             {
@@ -1326,7 +1993,7 @@ export function CartDrawer({ open, onClose }) {
               className: "mt-3 w-full !rounded-2xl",
               onClick: checkout,
               loading,
-              disabled: items.length === 0
+              disabled: items.length === 0 || subtotal <= 0 || hasServiceInCart
             },
             [h("span", { key: "tx" }, "Proceed to checkout "), h(ChevronRight, { key: "ic", className: "h-4 w-4" })]
           )
@@ -1378,6 +2045,8 @@ export function CheckoutPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
+  const hasServiceLine = items.some((p) => isServicesCategory(p));
+
   const breakdown =
     pricingOpts && subtotal > 0
       ? computeCheckoutBreakdown(
@@ -1405,6 +2074,12 @@ export function CheckoutPage() {
     }
     if (!items.length) {
       setErr("Your cart is empty.");
+      return;
+    }
+    if (hasServiceLine || !(subtotal > 0)) {
+      setErr(
+        "Service listings are not paid through this cart. Remove them and contact each vendor from their listing for pricing."
+      );
       return;
     }
     setLoading(true);
@@ -1533,25 +2208,12 @@ export function CheckoutPage() {
       "div",
       { key: "lines", className: "mt-5 space-y-2 rounded-2xl border border-white/15 bg-white/50 p-4 dark:bg-night-900/50" },
       [
-        h("p", { key: "lab", className: "text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Item summary"),
+        h("p", { key: "lab", className: "text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Your items"),
         ...items.map((p) =>
-          h("div", { key: p.id, className: "flex justify-between gap-3 text-sm" }, [
-            h("span", { className: "text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)]),
-            h("span", { className: "font-medium text-slate-900 dark:text-white" }, formatGhc(p.price * p.qty))
+          h("div", { key: p.id, className: "flex gap-3 text-sm" }, [
+            h("span", { className: "min-w-0 text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)])
           ])
-        ),
-        breakdown && pricingOpts
-          ? h("div", { key: "fees", className: "mt-3 space-y-1 border-t border-white/10 pt-3 text-sm" }, [
-              h("div", { className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
-                h("span", null, "Items (seller price)"),
-                h("span", { className: "font-medium text-slate-900 dark:text-white" }, formatGhc(breakdown.subtotal))
-              ]),
-              h("div", { className: "flex justify-between text-slate-600 dark:text-slate-400" }, [
-                h("span", null, "Service fee"),
-                h("span", { className: "font-medium text-slate-900 dark:text-white" }, formatGhc(breakdown.serviceFee))
-              ])
-            ])
-          : null
+        )
       ]
     ),
 
@@ -1580,27 +2242,277 @@ export function CheckoutPage() {
   ]);
 }
 
+export function SavedProductsPage() {
+  const { accessToken } = useAuth();
+  const nav = useNavigate();
+  const loc = useLocation();
+  const [cartOpen, setCartOpen] = useState(false);
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const { toggleSaved } = useSavedProducts();
+  const { add } = useCart();
+  const pricingOpts = useCheckoutPricingOptions();
+
+  const tryAddToCart = (p) => {
+    if (isServicesCategory(p) || (p.stock ?? 0) <= 0) return;
+    if (!accessToken) {
+      nav("/login", { state: { from: loc.pathname + (loc.search || "") } });
+      return;
+    }
+    add(p, 1);
+    setCartOpen(true);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setErr("");
+    const hdr = {};
+    if (accessToken) hdr.Authorization = `Bearer ${accessToken}`;
+    apiFetch("/api/products/saves", { headers: hdr })
+      .then((d) => {
+        if (!cancelled) setProducts(d.products || []);
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setErr(ex.message || "Could not load saved items");
+          setProducts([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  const onToggleSave = async (p) => {
+    try {
+      const saved = await toggleSaved(p.id);
+      if (!saved) setProducts((prev) => prev.filter((x) => String(x.id) !== String(p.id)));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return h(f, null, [
+    h(
+      BuyerLayout,
+      {
+        key: "layout",
+        hideSearch: true,
+        title: "Saved items",
+        onOpenCart: () => setCartOpen(true)
+      },
+      h("div", { key: "main", className: "mx-auto w-full max-w-[1480px] px-4 py-8 pb-24 sm:px-6 lg:px-8" }, [
+        h(Link, { key: "back", to: "/", className: "mb-6 inline-flex items-center gap-2 text-sm font-medium text-sky-600 hover:underline dark:text-sky-300" }, [
+          h(ArrowLeft, { className: "h-4 w-4" }),
+          h("span", null, "Back to shop")
+        ]),
+        h("h1", { key: "h1", className: "mb-2 font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Saved items"),
+        h(
+          "p",
+          { key: "sub", className: "mb-8 text-sm text-slate-600 dark:text-slate-400" },
+          "Listings you saved from Campus Mart. Available while browsing signed out too — we keep them under this browser’s session."
+        ),
+        err ? h(InlineNotice, { key: "e", variant: "error", className: "mb-4", onDismiss: () => setErr("") }, err) : null,
+        loading
+          ? h("p", { key: "ld", className: "text-slate-500" }, "Loading…")
+          : products.length === 0
+            ? h(
+                "p",
+                { key: "empty", className: "rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-10 text-center text-sm text-slate-600 dark:border-white/10 dark:bg-night-900/50 dark:text-slate-400" },
+                "No saved items yet. Tap the heart on a product to save it here."
+              )
+            : h(
+                "div",
+                {
+                  key: "grid",
+                  className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+                },
+                products.map((p) => {
+                  const detailTo = `/products/${p.id}`;
+                  const svcCard = isServicesCategory(p);
+                  const listP = Number(p.price) || 0;
+                  const cmpAt = Number(p.compareAtPrice);
+                  const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
+                  const vendorNm =
+                    p?.sellerPayment && typeof p.sellerPayment === "object" && String(p.sellerPayment.displayName || "").trim()
+                      ? String(p.sellerPayment.displayName).trim()
+                      : "Campus seller";
+                  return h(
+                    "div",
+                    {
+                      key: p.id,
+                      className:
+                        "group flex flex-col overflow-hidden rounded-xl border border-slate-200/95 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-night-900/55"
+                    },
+                    [
+                      h("div", { key: "img", className: "relative" }, [
+                        storefrontBadgeStack(p),
+                        h(
+                          Link,
+                          {
+                            key: "pic-l",
+                            to: detailTo,
+                            className: "block overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                          },
+                          h(RefImage, {
+                            key: "pic",
+                            src: p.imageUrls?.[0],
+                            n: refFromId(p.id),
+                            alt: p.name,
+                            className: "h-44 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-48"
+                          })
+                        )
+                      ]),
+                      h("div", { key: "meta", className: "mt-3 flex flex-1 flex-col" }, [
+                        h("div", { key: "title-row", className: "flex items-start gap-1.5" }, [
+                          h(
+                            "div",
+                            { key: "ttl", className: "min-w-0 flex-1" },
+                            h(
+                              Link,
+                              {
+                                key: "titles",
+                                to: detailTo,
+                                className: "min-w-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                              },
+                              h("h3", { className: "line-clamp-2 text-sm font-semibold leading-snug text-slate-900 underline-offset-2 hover:underline dark:text-white sm:text-[15px]" }, p.name)
+                            )
+                          ),
+                          h(
+                            "button",
+                            {
+                              key: "wish",
+                              type: "button",
+                              className:
+                                "tap-target shrink-0 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-rose-500 dark:hover:bg-white/10",
+                              "aria-label": "Remove from saved",
+                              "aria-pressed": true,
+                              onClick: (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onToggleSave(p);
+                              }
+                            },
+                            h(Heart, { className: "h-5 w-5 fill-rose-500 text-rose-500" })
+                          )
+                        ]),
+                        h("div", { key: "vendor", className: "mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5" }, [
+                          h(Star, { className: "h-3.5 w-3.5 shrink-0 text-amber-400", "aria-hidden": true }),
+                          h(
+                            "span",
+                            { className: "text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+                            vendorNm
+                          )
+                        ]),
+                        svcCard
+                          ? h(
+                              "p",
+                              {
+                                key: "svc-pr",
+                                className: "mt-3 text-sm font-semibold leading-snug text-amber-800 dark:text-amber-100"
+                              },
+                              "See listing for pricing & scope"
+                            )
+                          : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
+                              strikeCmp
+                                ? h(
+                                    "span",
+                                    {
+                                      key: "strike",
+                                      className: "text-xs font-semibold text-slate-400 line-through dark:text-slate-500"
+                                    },
+                                    formatGhc(cmpAt)
+                                  )
+                                : null,
+                              h("span", { key: "list", className: "text-lg font-extrabold text-sky-700 dark:text-sky-200" }, formatGhc(listP)),
+                              h(
+                                "span",
+                                {
+                                  key: "stkg",
+                                  className: "w-full shrink-0 text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:w-auto sm:translate-y-px"
+                                },
+                                `${p.stock ?? 0} in stock`
+                              )
+                            ]),
+                        h(
+                          Button,
+                          {
+                            key: "add",
+                            variant: "ghost",
+                            className:
+                              "mt-4 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !font-semibold !text-sky-700 hover:!bg-sky-50 dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
+                            type: "button",
+                            disabled: !isServicesCategory(p) && (p.stock ?? 0) <= 0,
+                            onClick: () => {
+                              if (isServicesCategory(p)) {
+                                nav(detailTo);
+                                return;
+                              }
+                              tryAddToCart(p);
+                            }
+                          },
+                          [
+                            isServicesCategory(p) ? null : h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
+                            h(
+                              "span",
+                              { key: "tx" },
+                              isServicesCategory(p)
+                                ? "View listing"
+                                : (p.stock ?? 0) <= 0
+                                  ? "Out of stock"
+                                  : accessToken
+                                    ? "Add to cart"
+                                    : "Sign in to add"
+                            )
+                          ].filter(Boolean)
+                        )
+                      ])
+                    ]
+                  );
+                })
+              )
+      ])
+    ),
+    h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })
+  ]);
+}
+
 export function ShopPage() {
   const [cat, setCat] = useState("all");
   const [fil, setFil] = useState("all");
   const [cartOpen, setCartOpen] = useState(false);
   const [queryInput, setQueryInput] = useState("");
   const [searchQ, setSearchQ] = useState("");
+  const [minPriceIn, setMinPriceIn] = useState("");
+  const [maxPriceIn, setMaxPriceIn] = useState("");
+  const [minPriceQ, setMinPriceQ] = useState(null);
+  const [maxPriceQ, setMaxPriceQ] = useState(null);
   const [products, setProducts] = useState([]);
   const [listErr, setListErr] = useState("");
   const [listLoading, setListLoading] = useState(true);
+  const [recRows, setRecRows] = useState([]);
+  const [recLoading, setRecLoading] = useState(false);
+  const [recErr, setRecErr] = useState("");
+  const [recPreferValue, setRecPreferValue] = useState(true);
   const { add } = useCart();
   const { accessToken } = useAuth();
+  const { isSaved, toggleSaved } = useSavedProducts();
   const nav = useNavigate();
   const loc = useLocation();
 
   const tryAddToCart = (p) => {
-    if ((p.stock ?? 0) <= 0) return;
+    if (isServicesCategory(p) || (p.stock ?? 0) <= 0) return;
     if (!accessToken) {
       nav("/login", { state: { from: loc.pathname + (loc.search || "") } });
       return;
     }
     add(p, 1);
+    setCartOpen(true);
   };
 
   useEffect(() => {
@@ -1614,6 +2526,8 @@ export function ShopPage() {
     const params = new URLSearchParams();
     if (cat !== "all") params.set("category", cat);
     if (searchQ) params.set("q", searchQ);
+    if (minPriceQ != null && Number.isFinite(minPriceQ)) params.set("minPrice", String(minPriceQ));
+    if (maxPriceQ != null && Number.isFinite(maxPriceQ)) params.set("maxPrice", String(maxPriceQ));
     const qs = params.toString();
     apiFetch(`/api/products${qs ? `?${qs}` : ""}`)
       .then((d) => {
@@ -1631,7 +2545,72 @@ export function ShopPage() {
     return () => {
       cancelled = true;
     };
-  }, [cat, searchQ]);
+  }, [cat, searchQ, minPriceQ, maxPriceQ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRecLoading(true);
+    setRecErr("");
+    const qs = new URLSearchParams();
+    qs.set("preferCheaper", recPreferValue ? "1" : "0");
+    const hdr = {};
+    if (accessToken) hdr.Authorization = `Bearer ${accessToken}`;
+    apiFetch(`/api/products/recommended?${qs.toString()}`, { headers: hdr })
+      .then((d) => {
+        if (cancelled) return;
+        const rawRows = Array.isArray(d.rows) ? d.rows : [];
+        const normalized = rawRows
+          .filter((r) => r && Array.isArray(r.products) && r.products.length)
+          .map((r) => ({
+            id: String(r.id || r.title || ""),
+            title: String(r.title || "Recommended"),
+            products: r.products
+          }));
+        if (normalized.length) {
+          setRecRows(normalized);
+        } else if (Array.isArray(d.products) && d.products.length) {
+          setRecRows([{ id: "recommended", title: "Recommended for you", products: d.products }]);
+        } else {
+          setRecRows([]);
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setRecErr(ex.message || "Could not load recommendations");
+          setRecRows([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRecLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, recPreferValue]);
+
+  const applyPriceRange = () => {
+    const minRaw = parseFloat(String(minPriceIn).trim());
+    const maxRaw = parseFloat(String(maxPriceIn).trim());
+    setMinPriceQ(Number.isFinite(minRaw) && minRaw >= 0 ? minRaw : null);
+    setMaxPriceQ(Number.isFinite(maxRaw) && maxRaw >= 0 ? maxRaw : null);
+  };
+
+  const clearPriceRange = () => {
+    setMinPriceIn("");
+    setMaxPriceIn("");
+    setMinPriceQ(null);
+    setMaxPriceQ(null);
+  };
+
+  const priceFilterCaption =
+    minPriceQ != null || maxPriceQ != null
+      ? [
+          minPriceQ != null && Number.isFinite(minPriceQ) ? `from ${formatGhc(minPriceQ)}` : null,
+          maxPriceQ != null && Number.isFinite(maxPriceQ) ? `up to ${formatGhc(maxPriceQ)}` : null
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : "";
 
   const filtered = useMemo(() => {
     return products.filter((p) => productMatchesFilter(p, fil));
@@ -1642,104 +2621,294 @@ export function ShopPage() {
       BuyerLayout,
       {
         key: "layout",
-        onOpenCart: () => setCartOpen(true),
-        searchValue: queryInput,
-        onSearchChange: setQueryInput,
-        onSearchSubmit: () => setSearchQ(queryInput.trim())
+        hideSearch: true,
+        storefront: true,
+        storefrontAsideProps: {
+          fil,
+          setFil,
+          minPriceIn,
+          maxPriceIn,
+          setMinPriceIn,
+          setMaxPriceIn,
+          applyPriceRange,
+          clearPriceRange,
+          priceFilterCaption
+        },
+        onOpenCart: () => setCartOpen(true)
       },
-      h("div", { key: "main", className: "relative w-full px-4 py-6 pb-24 sm:px-6 lg:px-8" }, [
+      h("div", { key: "main", className: "relative w-full max-w-[1480px] px-4 py-6 pb-24 sm:px-6 lg:py-8 lg:pl-5 lg:pr-10 xl:mx-auto" }, [
       h(RefImage, {
         key: "bg-blur",
         n: 4,
         alt: "",
-        className: "pointer-events-none absolute left-0 right-0 top-0 -z-10 h-40 w-full rounded-3xl object-cover opacity-20 blur-2xl dark:opacity-[0.12]"
+        className:
+          "pointer-events-none absolute left-0 right-0 top-0 -z-10 h-44 w-full rounded-3xl object-cover opacity-[0.14] blur-2xl dark:opacity-[0.1]"
       }),
-      h("section", { key: "cats", className: "mb-4" }, h(CategoryRow, { active: cat, onSelect: setCat })),
-      h(
-        GlassCard,
-        {
-          key: "hero-mini",
-          className:
-            "relative mb-5 overflow-hidden !rounded-2xl !border-sky-400/40 !bg-gradient-to-br !from-sky-500/[0.12] !via-white/40 !to-indigo-500/[0.08] !p-3 !shadow-lg !shadow-sky-500/20 sm:!p-4 dark:!border-sky-500/30 dark:!from-sky-500/[0.08] dark:!via-night-900/80 dark:!to-indigo-950/40 dark:!shadow-sky-950/40"
-        },
-        [
-          h("div", {
-            key: "hero-blob-a",
-            className: "pointer-events-none absolute -right-8 -top-12 h-36 w-36 rounded-full bg-sky-400/30 blur-2xl dark:bg-sky-500/25"
-          }),
-          h("div", {
-            key: "hero-blob-b",
-            className: "pointer-events-none absolute -bottom-14 -left-10 h-40 w-40 rounded-full bg-indigo-500/25 blur-3xl dark:bg-indigo-500/20"
-          }),
-          h("div", {
-            key: "hero-shine",
+      h("div", { key: "hero-stack", className: "relative z-[2] mb-5 w-full" }, [
+        h("div", { key: "shop-hero-search", className: "mb-3 w-full max-w-xl lg:max-w-2xl" }, [
+          h("div", { className: "relative" }, [
+            h(Search, {
+              key: "ic",
+              className: "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-sky-500 dark:text-sky-400"
+            }),
+            h(TextInput, {
+              key: "q",
+              "aria-label": "Search products and services",
+              value: queryInput,
+              onChange: (e) => setQueryInput(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  setSearchQ(queryInput.trim());
+                }
+              },
+              placeholder: "Search for products, services…",
+              className:
+                "!h-9 !min-h-[36px] !rounded-2xl !border-slate-300/70 !bg-white/90 !py-0 !pl-10 !pr-[4.5rem] !text-sm shadow-inner dark:!border-white/10 dark:!bg-night-950/70"
+            }),
+            h(
+              Button,
+              {
+                key: "go",
+                variant: "primary",
+                type: "button",
+                className:
+                  "!absolute right-1 top-1/2 !h-7 !min-h-0 -translate-y-1/2 !rounded-xl !px-3 !py-0 !text-xs",
+                onClick: () => setSearchQ(queryInput.trim())
+              },
+              "Search"
+            )
+          ])
+        ]),
+        h(
+          GlassCard,
+          {
+            key: "hero-mini",
             className:
-              "pointer-events-none absolute inset-0 bg-gradient-to-br from-white/50 via-transparent to-transparent opacity-60 dark:from-white/[0.04] dark:opacity-100"
-          }),
-          h(
-            "div",
-            { key: "hero-row", className: "relative flex items-start gap-3 sm:gap-4" },
+              "relative overflow-hidden glass-strong !rounded-[1.35rem] !border-slate-200/95 !p-4 !shadow-md sm:!p-6 dark:!border-white/10"
+          },
+          [
+            h("div", {
+              key: "hero-blob-a",
+              className: "pointer-events-none absolute -right-10 -top-14 z-0 h-40 w-40 rounded-full bg-sky-400/25 blur-2xl dark:bg-sky-600/20"
+            }),
+            h("div", {
+              key: "hero-blob-b",
+              className: "pointer-events-none absolute -bottom-16 -left-12 z-0 h-44 w-44 rounded-full bg-indigo-400/20 blur-3xl dark:bg-indigo-600/15"
+            }),
+            h("div", {
+              key: "hero-shine",
+              className:
+                "pointer-events-none absolute inset-0 z-0 bg-gradient-to-br from-white/70 via-transparent to-transparent opacity-60 dark:from-white/[0.05] dark:opacity-90"
+            }),
+            h(
+              "div",
+              { key: "hero-row", className: "relative z-[2] flex flex-col items-start gap-4 sm:flex-row sm:gap-6" },
             [
               h(
                 "div",
                 {
                   key: "hero-icon",
                   className:
-                    "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-600/35 ring-2 ring-white/50 dark:ring-sky-400/20"
+                    "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-600/30 ring-2 ring-white/60 dark:ring-sky-400/25"
                 },
-                h(Store, { className: "h-5 w-5", "aria-hidden": true })
+                h(Store, { className: "h-6 w-6", "aria-hidden": true })
               ),
-              h("div", { key: "hero-copy", className: "min-w-0 flex-1 space-y-1" }, [
+              h("div", { key: "hero-copy", className: "min-w-0 flex-1 space-y-2" }, [
                 h(
                   "p",
                   {
                     key: "hero-eyebrow",
-                    className: "text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600 dark:text-sky-400"
+                    className: "text-[10px] font-bold uppercase tracking-[0.22em] text-sky-600 dark:text-sky-400"
                   },
                   "Campus Mart"
                 ),
-                h("h1", { key: "hero-h1", className: "font-display text-base font-semibold leading-snug sm:text-lg" }, [
-                  h(
-                    "span",
-                    {
-                      key: "hero-h1-grad",
-                      className:
-                        "bg-gradient-to-r from-slate-900 via-sky-800 to-indigo-800 bg-clip-text text-transparent dark:from-white dark:via-sky-100 dark:to-indigo-100"
-                    },
-                    "Everything you need for campus life"
-                  )
+                h("h1", { key: "hero-h1", className: "font-display text-lg font-semibold leading-tight tracking-tight sm:text-2xl" }, [
+                  h("span", { key: "h1-dark", className: "text-slate-950 dark:text-white" }, "Everything you need"),
+                  " ",
+                  h("span", { key: "h1-v", className: "text-sky-700 dark:text-sky-300" }, "for campus life")
                 ]),
                 h(
                   "p",
                   {
                     key: "hero-sub",
-                    className: "text-xs leading-relaxed text-slate-600 dark:text-slate-400 sm:text-sm"
+                    className: "max-w-xl text-xs leading-relaxed text-slate-600 dark:text-slate-400 sm:text-sm"
                   },
-                  "Food, fashion, electronics, beauty, services, books, and essentials from trusted campus vendors."
+                  "Food, drinks, fashion, electronics, beauty, campus services, books, and groceries — curated from trusted sellers around you."
                 )
-              ])
-            ]
+              ]),
+              h(
+                "div",
+                {
+                  key: "hero-art",
+                  className:
+                    "pointer-events-none relative mx-auto flex h-[5.75rem] w-full max-w-[10rem] items-center justify-center opacity-95 sm:h-[7rem] sm:max-w-[12rem] sm:opacity-100"
+                },
+                h(
+                  "div",
+                  { className: "flex items-end gap-2 drop-shadow-[0_10px_24px_rgba(14,165,233,0.3)] dark:opacity-95" },
+                  [
+                    h("div", { key: "c1", className: "h-12 w-9 rounded-xl bg-gradient-to-br from-sky-400 to-sky-700 opacity-95" }),
+                    h("div", { key: "c2", className: "-mb-1 flex h-16 w-16 items-center justify-center rounded-2xl bg-sky-600 text-2xl shadow-lg shadow-sky-600/30 ring-4 ring-white/80 dark:ring-sky-900/60" }, "🎓"),
+                    h("div", { key: "c3", className: "h-14 w-10 rounded-xl bg-gradient-to-br from-amber-200 to-amber-400/95" })
+                  ]
+                )
+              )
+            ].filter(Boolean)
+          ),
+          h(
+            "div",
+            {
+              key: "hero-dots",
+              className: "pointer-events-none absolute bottom-3 right-4 z-[3] flex gap-1.5 opacity-75"
+            },
+            ["a", "b", "c"].map((dot, i) =>
+              h("span", {
+                key: dot,
+                className: `h-1.5 w-1.5 rounded-full ${i === 0 ? "bg-sky-500 shadow-sm shadow-sky-400/60" : "bg-sky-300/90 dark:bg-sky-700"}`
+              })
+            )
           )
         ]
-      ),
-      h("div", { key: "filters-row", className: "mb-4 flex flex-wrap items-center gap-2" }, [
-        h("span", { key: "flabel", className: "text-sm font-semibold text-slate-600 dark:text-slate-300" }, "Filter:"),
-        FILTERS.map((fitem) =>
+      )
+    ]),
+      h("section", { key: "quick-cats", className: "mb-5", "aria-label": "Categories" }, h(StorefrontCategoryChips, { active: cat, onSelect: setCat })),
+      h("div", { key: "filters-row", className: "mb-6 flex flex-wrap items-center gap-2 rounded-[1rem] border border-white/70 bg-white/80 px-3 py-2.5 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-night-900/55" }, [
+        h("span", { key: "flabel", className: "text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500" }, "Browse"),
+        withAllCategoryFirst(FILTERS).map((fitem) =>
           h(
             "button",
             {
               key: fitem.id,
               type: "button",
               onClick: () => setFil(fitem.id),
-              className: `tap-target rounded-full px-4 py-2 text-sm font-medium transition ${
+              className: `tap-target rounded-full px-4 py-2 text-xs font-semibold transition sm:text-sm ${
                 fil === fitem.id
-                  ? "bg-sky-600 text-white shadow-lg shadow-sky-900/30"
-                  : "glass text-slate-700 hover:bg-white/50 dark:text-slate-200 dark:hover:bg-white/10"
+                  ? "bg-sky-600 text-white shadow-md shadow-sky-600/30"
+                  : "bg-slate-100/85 text-slate-700 hover:bg-sky-50 dark:bg-night-950/70 dark:text-slate-200 dark:hover:bg-white/10"
               }`
             },
             fitem.label
           )
         )
+      ]),
+      h("section", { key: "rec-section", className: "mb-8", "aria-label": "Recommended products" }, [
+        h("div", { key: "rec-hdr", className: "mb-5 flex flex-wrap items-end justify-between gap-3" }, [
+          h("div", { key: "rec-titles", className: "min-w-0 space-y-1" }, [
+            h("div", { className: "flex items-center gap-2" }, [
+              h(Sparkles, { className: "h-5 w-5 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
+              h("h2", { className: "font-display text-lg font-bold text-slate-900 dark:text-white sm:text-xl" }, "Recommended")
+            ]),
+            accessToken
+              ? null
+              : h(
+                  "p",
+                  { className: "pl-7 text-xs text-slate-500 dark:text-slate-400" },
+                  "Sign in for picks based on your orders."
+                )
+          ]),
+          h("div", {
+            key: "rec-pref",
+            className:
+              "flex shrink-0 rounded-[0.85rem] border border-slate-200/90 bg-white/90 p-0.5 shadow-sm dark:border-white/10 dark:bg-night-950/70",
+            role: "group",
+            "aria-label": "Recommendation style"
+          }, [
+            h(
+              "button",
+              {
+                key: "v",
+                type: "button",
+                onClick: () => setRecPreferValue(true),
+                className: `tap-target rounded-[0.65rem] px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${
+                  recPreferValue
+                    ? "bg-sky-600 text-white shadow-sm shadow-sky-600/25"
+                    : "text-slate-600 hover:bg-slate-100/90 dark:text-slate-300 dark:hover:bg-white/10"
+                }`
+              },
+              "Value"
+            ),
+            h(
+              "button",
+              {
+                key: "r",
+                type: "button",
+                onClick: () => setRecPreferValue(false),
+                className: `tap-target rounded-[0.65rem] px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${
+                  !recPreferValue
+                    ? "bg-sky-600 text-white shadow-sm shadow-sky-600/25"
+                    : "text-slate-600 hover:bg-slate-100/90 dark:text-slate-300 dark:hover:bg-white/10"
+                }`
+              },
+              "Reviews"
+            )
+          ])
+        ]),
+        recErr
+          ? h(InlineNotice, { variant: "error", className: "mb-3", onDismiss: () => setRecErr("") }, recErr)
+          : null,
+        recLoading && !recRows.length
+          ? h("p", { key: "rec-load", className: "text-sm text-slate-500 dark:text-slate-400" }, "Loading suggestions…")
+          : null,
+        !recLoading && recRows.length === 0 && !recErr
+          ? h("p", { key: "rec-none", className: "text-sm text-slate-500 dark:text-slate-400" }, "Nothing to recommend yet.")
+          : null,
+        recRows.length > 0
+          ? recRows.map((row) =>
+              h("div", { key: row.id || row.title, className: "mb-7 last:mb-0" }, [
+                h(
+                  "h3",
+                  {
+                    className: "mb-3 font-display text-base font-semibold tracking-tight text-slate-900 dark:text-white sm:text-lg"
+                  },
+                  row.title
+                ),
+                h(
+                  "div",
+                  {
+                    className:
+                      "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-1 sm:gap-3.5 sm:px-1"
+                  },
+                  row.products.map((p) => {
+                    const to = `/products/${p.id}`;
+                    return h(
+                      Link,
+                      {
+                        key: p.id,
+                        to,
+                        "aria-label": p.name,
+                        className:
+                          "group relative aspect-[3/4] w-[min(42vw,11rem)] shrink-0 snap-start overflow-hidden rounded-xl bg-slate-300/50 ring-1 ring-slate-200/80 transition duration-200 hover:z-[1] hover:scale-[1.03] hover:shadow-lg hover:shadow-slate-900/15 hover:ring-sky-500/35 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:bg-night-800 dark:ring-white/10 dark:hover:shadow-black/40 dark:hover:ring-sky-400/40"
+                      },
+                      [
+                        h(RefImage, {
+                          src: p.imageUrls?.[0],
+                          n: refFromId(p.id),
+                          alt: p.name,
+                          className: "absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105"
+                        }),
+                        h("div", {
+                          className: "pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent",
+                          "aria-hidden": true
+                        }),
+                        h(
+                          "div",
+                          { className: "absolute bottom-0 left-0 right-0 p-3 pt-10" },
+                          h(
+                            "span",
+                            {
+                              className: "line-clamp-2 text-left text-sm font-semibold leading-snug text-white drop-shadow-md"
+                            },
+                            p.name
+                          )
+                        )
+                      ]
+                    );
+                  })
+                )
+              ])
+            )
+          : null
       ]),
       listErr
         ? h(InlineNotice, { key: "list-err", variant: "error", className: "mb-4", onDismiss: () => setListErr("") }, listErr)
@@ -1760,105 +2929,159 @@ export function ShopPage() {
             "div",
             { key: "product-grid", className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" },
             filtered.map((p) => {
-          const badge = productBadge(p);
-          const detailTo = `/products/${p.id}`;
-          return h(GlassCard, { key: p.id, className: "group flex flex-col !p-4" }, [
-            h("div", { key: "img", className: "relative" }, [
-              badge
-                ? h(
-                    "span",
-                    {
-                      key: "bdg",
-                      className:
-                        "pointer-events-none absolute left-2 top-2 z-10 rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-900"
-                    },
-                    badge
-                  )
-                : null,
-              h(
-                Link,
-                { key: "pic-l", to: detailTo, className: "block overflow-hidden rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500" },
-                h(RefImage, {
-                  key: "pic",
-                  src: p.imageUrls?.[0],
-                  n: refFromId(p.id),
-                  alt: p.name,
-                  className: "h-40 w-full object-cover transition group-hover:scale-[1.02] sm:h-44"
-                })
-              )
-            ].filter(Boolean)),
-            h("div", { key: "title-row", className: "mt-3 flex items-start justify-between gap-2" }, [
-              h(
-                Link,
+              const detailTo = `/products/${p.id}`;
+              const svcCard = isServicesCategory(p);
+              const listP = Number(p.price) || 0;
+              const cmpAt = Number(p.compareAtPrice);
+              const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
+              const vendorNm =
+                p?.sellerPayment && typeof p.sellerPayment === "object" && String(p.sellerPayment.displayName || "").trim()
+                  ? String(p.sellerPayment.displayName).trim()
+                  : "Campus seller";
+
+              return h(
+                "div",
                 {
-                  key: "titles",
-                  to: detailTo,
-                  className: "min-w-0 flex-1 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                  key: p.id,
+                  className:
+                    "group flex flex-col overflow-hidden rounded-xl border border-slate-200/95 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-night-900/55"
                 },
-                h("div", { className: "min-w-0" }, [
-                  h("h3", { className: "truncate font-semibold text-slate-900 underline-offset-2 hover:underline dark:text-white" }, p.name),
+                [
+                  h("div", { key: "img", className: "relative" }, [
+                    storefrontBadgeStack(p),
+                    h(
+                      Link,
+                      {
+                        key: "pic-l",
+                        to: detailTo,
+                        className: "block overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                      },
+                      h(RefImage, {
+                        key: "pic",
+                        src: p.imageUrls?.[0],
+                        n: refFromId(p.id),
+                        alt: p.name,
+                        className: "h-44 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-48"
+                      })
+                    )
+                  ]),
+                  h("div", { key: "meta", className: "mt-3 flex flex-1 flex-col" }, [
+                    h("div", { key: "title-row", className: "flex items-start gap-1.5" }, [
+                      h(
+                        "div",
+                        { key: "ttl-b", className: "min-w-0 flex-1" },
+                        h(
+                          Link,
+                          {
+                            key: "titles",
+                            to: detailTo,
+                            className: "block min-w-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                          },
+                          h(
+                            "h3",
+                            {
+                              className: "line-clamp-2 text-sm font-semibold leading-snug text-slate-900 underline-offset-2 hover:underline dark:text-white sm:text-[15px]"
+                            },
+                            p.name
+                          )
+                        )
+                      ),
+                      h(
+                        "button",
+                        {
+                          key: "wish",
+                          type: "button",
+                          className:
+                            "tap-target shrink-0 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-rose-500 dark:hover:bg-white/10",
+                          "aria-label": isSaved(p.id) ? "Remove from saved" : "Save item",
+                          "aria-pressed": isSaved(p.id),
+                          onClick: (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleSaved(p.id).catch(() => {});
+                          }
+                        },
+                        h(Heart, {
+                          className: `h-5 w-5 ${isSaved(p.id) ? "fill-rose-500 text-rose-500" : ""}`
+                        })
+                      )
+                    ]),
+                    h("div", { key: "vendor", className: "mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5" }, [
+                      h(Star, { className: "h-3.5 w-3.5 shrink-0 text-amber-400", "aria-hidden": true }),
+                      h(
+                        "span",
+                        { className: "text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+                        vendorNm
+                      )
+                    ]),
+                    svcCard
+                      ? h(
+                          "p",
+                          {
+                            key: "svc-pr",
+                            className: "mt-3 text-sm font-semibold leading-snug text-amber-800 dark:text-amber-100"
+                          },
+                          "See listing for pricing & scope"
+                        )
+                      : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
+                          strikeCmp
+                            ? h(
+                                "span",
+                                {
+                                  key: "strike",
+                                  className: "text-xs font-semibold text-slate-400 line-through dark:text-slate-500"
+                                },
+                                formatGhc(cmpAt)
+                              )
+                            : null,
+                          h("span", { key: "list", className: "text-lg font-extrabold text-sky-700 dark:text-sky-200" }, formatGhc(listP)),
+                          h(
+                            "span",
+                            {
+                              key: "stkg",
+                              className: "w-full shrink-0 text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:w-auto sm:translate-y-px"
+                            },
+                            `${p.stock ?? 0} in stock`
+                          )
+                        ])
+                  ]),
                   h(
-                    "p",
-                    { className: "text-xs text-slate-500 dark:text-slate-400" },
-                    CATEGORY_LABELS[p.category] || p.category
+                    Button,
+                    {
+                      key: "add",
+                      variant: "ghost",
+                      className:
+                        "mt-4 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !font-semibold !text-sky-700 hover:!bg-sky-50 dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
+                      type: "button",
+                      disabled: !isServicesCategory(p) && (p.stock ?? 0) <= 0,
+                      onClick: () => {
+                        if (isServicesCategory(p)) {
+                          nav(detailTo);
+                          return;
+                        }
+                        tryAddToCart(p);
+                      }
+                    },
+                    [
+                      isServicesCategory(p) ? null : h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
+                      h(
+                        "span",
+                        { key: "tx" },
+                        isServicesCategory(p)
+                          ? "View listing"
+                          : (p.stock ?? 0) <= 0
+                            ? "Out of stock"
+                            : accessToken
+                              ? "Add to cart"
+                              : "Sign in to add"
+                      )
+                    ].filter(Boolean)
                   )
-                ])
-              ),
-              h(
-                "button",
-                {
-                  key: "wish",
-                  type: "button",
-                  className: "tap-target shrink-0 rounded-xl p-2 text-slate-400 hover:bg-white/10 hover:text-rose-400",
-                  "aria-label": "Wishlist"
-                },
-                h(Heart, { className: "h-5 w-5" })
-              )
-            ]),
-            h(
-              Link,
-              {
-                key: "price-l",
-                to: detailTo,
-                className: "mt-2 flex items-center justify-between rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-              },
-              [
-                h("span", { key: "pr", className: "text-lg font-bold text-sky-600 dark:text-sky-300" }, formatGhc(p.price)),
-                h("span", { key: "st", className: "text-xs text-slate-500 dark:text-slate-400" }, `${p.stock ?? 0} in stock`)
-              ]
-            ),
-            formatSellerPaymentSnippet(p.sellerPayment) &&
-              h(
-                Link,
-                {
-                  key: "pay-snippet",
-                  to: detailTo,
-                  className: "mt-2 block line-clamp-2 rounded text-left text-[11px] leading-snug text-slate-500 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:text-slate-400 dark:hover:text-slate-200"
-                },
-                formatSellerPaymentSnippet(p.sellerPayment)
-              ),
-            h(
-              Button,
-              {
-                key: "add",
-                variant: "ghost",
-                className: "mt-3 w-full !justify-center !rounded-2xl border-sky-500/30",
-                type: "button",
-                disabled: (p.stock ?? 0) <= 0,
-                onClick: () => tryAddToCart(p)
-              },
-              [
-                h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
-                h(
-                  "span",
-                  { key: "tx" },
-                  (p.stock ?? 0) <= 0 ? "Out of stock" : accessToken ? "Add to cart" : "Sign in to add"
-                )
-              ]
-            )
-          ]);
-        })
-      )
+                ].filter(Boolean)
+              );
+            })
+          ),
+          h(StorefrontTrustBar, { key: "trust-bar" })
         ]
       )
     ])
@@ -1870,7 +3093,7 @@ export function ShopPage() {
         key: "fab-cart",
         type: "button",
         className:
-          "fixed bottom-4 right-4 z-30 flex items-center gap-2 rounded-full bg-gradient-to-r from-sky-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-xl shadow-sky-900/40 sm:hidden",
+          "fixed bottom-4 right-4 z-30 flex items-center gap-2 rounded-full bg-gradient-to-r from-sky-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-xl shadow-sky-900/30 sm:hidden",
         onClick: () => setCartOpen(true)
       },
       [h(ShoppingCart, { key: "i", className: "h-5 w-5" }), h("span", { key: "t" }, "Cart")]
@@ -2135,22 +3358,6 @@ export function ProfilePage() {
   ]);
 }
 
-function formatBuyerOrderStatus(s) {
-  return String(s || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function buyerOrderStatusTone(status) {
-  if (status === "delivered") return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
-  if (status === "sent_for_delivery") return "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300";
-  if (status === "processing") return "bg-sky-500/15 text-sky-700 dark:text-sky-300";
-  if (status === "paid") return "bg-teal-500/15 text-teal-700 dark:text-teal-300";
-  if (status === "awaiting_vendor_payment") return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
-  if (status === "pending_payment") return "bg-slate-500/15 text-slate-700 dark:text-slate-300";
-  return "bg-rose-500/15 text-rose-700 dark:text-rose-300";
-}
-
 function paymentMethodLabel(method) {
   if (method === "momo") return "Mobile money";
   if (method === "bank") return "Bank card";
@@ -2191,10 +3398,11 @@ function BuyerReceiptModal({ order, onClose }) {
         h("div", { className: "mt-3 rounded-xl border border-white/10 bg-white/30 p-3 dark:bg-night-900/30" }, [
           h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Items"),
           ...items.map((it, idx) =>
-            h("div", { key: `${it.productId || it.name}-${idx}`, className: "mt-2 flex justify-between gap-3 text-sm" }, [
-              h("span", { className: "min-w-0 flex-1" }, `${it.name} ×${it.quantity ?? 1}`),
-              h("span", { className: "shrink-0 font-medium" }, formatGhc((Number(it.unitPrice) || 0) * (Number(it.quantity) || 1)))
-            ])
+            h(
+              "div",
+              { key: `${it.productId || it.name}-${idx}`, className: "mt-2 text-sm" },
+              `${it.name} ×${it.quantity ?? 1}`
+            )
           )
         ]),
         h("div", { className: "mt-2 flex justify-between border-t border-white/10 pt-3 text-base font-semibold text-slate-900 dark:text-white" }, [
@@ -2207,6 +3415,149 @@ function BuyerReceiptModal({ order, onClose }) {
         h(Button, { type: "button", onClick: printReceipt }, "Print")
       ])
     ])
+  ]);
+}
+
+/** Help & support — contact marketplace admin (in-app messages + optional email from platform settings). */
+export function BuyerHelpSupportPage() {
+  const { accessToken, user } = useAuth();
+  const nav = useNavigate();
+  const [cartOpen, setCartOpen] = useState(false);
+  const [cfg, setCfg] = useState(null);
+  const [cfgErr, setCfgErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/platform/config")
+      .then((d) => {
+        if (!cancelled) setCfg(d);
+      })
+      .catch((ex) => {
+        if (!cancelled) setCfgErr(ex.message || "Could not load contact options");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const siteName = cfg?.siteName || "Campus Mart";
+  const supportEmail = (cfg?.supportEmail || "").trim();
+
+  return h(f, null, [
+    h(
+      BuyerLayout,
+      {
+        key: "layout",
+        onOpenCart: () => setCartOpen(true),
+        hideSearch: true,
+        title: "Help & support"
+      },
+      h("div", { key: "main", className: "mx-auto w-full max-w-2xl px-4 py-8 sm:px-6 lg:px-8" }, [
+        h(
+          Link,
+          {
+            key: "back",
+            to: "/",
+            className: "mb-6 inline-flex items-center gap-2 text-sm font-medium text-sky-600 hover:underline dark:text-sky-300"
+          },
+          [h(ArrowLeft, { className: "h-4 w-4" }), h("span", null, "Back to shop")]
+        ),
+        h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Help & support"),
+        h(
+          "p",
+          { className: "mt-2 text-sm text-slate-600 dark:text-slate-300" },
+          `Questions, payments, or safety issues? ${siteName} admins are here to help.`
+        ),
+        cfgErr &&
+          h(InlineNotice, { key: "ce", variant: "error", className: "mt-6", onDismiss: () => setCfgErr("") }, cfgErr),
+        h(GlassPanel, { key: "msg", className: "mt-6 !border-sky-500/25" }, [
+          h("div", { className: "flex items-start gap-3" }, [
+            h(Headphones, { className: "mt-0.5 h-5 w-5 shrink-0 text-sky-600 dark:text-sky-400" }),
+            h("div", { className: "min-w-0 flex-1" }, [
+              h("h2", { className: "font-semibold text-slate-900 dark:text-white" }, "Message Campus Mart Support"),
+              h(
+                "p",
+                { className: "mt-1 text-sm text-slate-600 dark:text-slate-300" },
+                "Chat with an admin for account help, disputes, and general questions. Support appears in your messages list."
+              ),
+              accessToken && user?.role === "buyer"
+                ? h(
+                    Button,
+                    { key: "open-msg", type: "button", className: "mt-4 !rounded-xl", onClick: () => nav("/messages") },
+                    "Open messages"
+                  )
+                : h("div", { key: "guest", className: "mt-4" }, [
+                    h(
+                      Button,
+                      {
+                        key: "li",
+                        type: "button",
+                        variant: "primary",
+                        className: "!rounded-xl",
+                        onClick: () => nav("/login", { state: { from: "/support" } })
+                      },
+                      "Sign in to message support"
+                    ),
+                    h(
+                      "p",
+                      { className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
+                      "We connect your conversation to your account so staff can help you safely."
+                    )
+                  ])
+            ])
+          ])
+        ]),
+        supportEmail
+          ? h(GlassPanel, { key: "em", className: "mt-4 !border-white/10" }, [
+              h("div", { className: "flex items-start gap-3" }, [
+                h(Mail, { className: "mt-0.5 h-5 w-5 shrink-0 text-slate-500 dark:text-slate-400" }),
+                h("div", { className: "min-w-0 flex-1" }, [
+                  h("h2", { className: "font-semibold text-slate-900 dark:text-white" }, "Email the team"),
+                  h("p", { className: "mt-1 text-sm text-slate-600 dark:text-slate-300" }, "Prefer email? Reach the address configured by your marketplace operator."),
+                  h(
+                    "a",
+                    {
+                      href: `mailto:${supportEmail}`,
+                      className:
+                        "mt-3 inline-flex max-w-full break-all text-sm font-medium text-sky-600 hover:underline dark:text-sky-300"
+                    },
+                    supportEmail
+                  )
+                ])
+              ])
+            ])
+          : null,
+        h(GlassPanel, { key: "rep", className: "mt-4 !border-white/10" }, [
+          h("div", { className: "flex items-start gap-3" }, [
+            h(AlertTriangle, { className: "mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" }),
+            h("div", { className: "min-w-0 flex-1" }, [
+              h("h2", { className: "font-semibold text-slate-900 dark:text-white" }, "Report a listing or order problem"),
+              h(
+                "p",
+                { className: "mt-1 text-sm text-slate-600 dark:text-slate-300" },
+                "Use Reports when you need to flag a specific product or order for moderation."
+              ),
+              accessToken && user?.role === "buyer"
+                ? h(
+                    Link,
+                    {
+                      key: "to-rep",
+                      to: "/reports",
+                      className: "mt-3 inline-block text-sm font-medium text-sky-600 hover:underline dark:text-sky-300"
+                    },
+                    "Go to reports →"
+                  )
+                : h(
+                    "p",
+                    { className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
+                    "Sign in to submit a report from your account."
+                  )
+            ])
+          ])
+        ])
+      ])
+    ),
+    h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })
   ]);
 }
 
@@ -2514,8 +3865,30 @@ export function BuyerMessagesPage() {
   ]);
 }
 
+export function BuyerNotificationsPage() {
+  const [cartOpen, setCartOpen] = useState(false);
+  return h(f, null, [
+    h(
+      BuyerLayout,
+      {
+        key: "layout",
+        onOpenCart: () => setCartOpen(true),
+        hideSearch: true,
+        title: "Notifications"
+      },
+      h(NotificationsContent, {
+        ordersLink: "/orders",
+        backLink: "/",
+        backLabel: "Shop"
+      })
+    ),
+    h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })
+  ]);
+}
+
 export function BuyerOrdersPage() {
   const [cartOpen, setCartOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
   const { accessToken } = useAuth();
   const { toast, confirm } = useNotice();
   const [orders, setOrders] = useState([]);
@@ -2524,6 +3897,8 @@ export function BuyerOrdersPage() {
   const [reviewModal, setReviewModal] = useState(null);
   const [receiptOrder, setReceiptOrder] = useState(null);
   const [cancellingId, setCancellingId] = useState("");
+  const [trackModalOpen, setTrackModalOpen] = useState(false);
+  const [trackPresetOrderId, setTrackPresetOrderId] = useState(null);
   const closeReviewModal = useCallback(() => setReviewModal(null), []);
 
   const cancelOrder = async (order) => {
@@ -2592,6 +3967,33 @@ export function BuyerOrdersPage() {
     };
   }, [accessToken]);
 
+  const trackUrlFlag = searchParams.get("track");
+  useEffect(() => {
+    if (!(trackUrlFlag === "1" || String(trackUrlFlag || "").toLowerCase() === "true")) return;
+    if (!accessToken || loading) return;
+    setTrackPresetOrderId(null);
+    setTrackModalOpen(true);
+    setSearchParams(
+      (p) => {
+        const n = new URLSearchParams(p);
+        n.delete("track");
+        return n;
+      },
+      { replace: true }
+    );
+  }, [trackUrlFlag, accessToken, loading, setSearchParams]);
+
+  const openOrderId = (searchParams.get("openOrder") || "").trim();
+
+  useEffect(() => {
+    if (!openOrderId || loading || orders.length === 0) return;
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(`order-card-${openOrderId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+    return () => window.clearTimeout(t);
+  }, [openOrderId, loading, orders]);
+
   const rateableStatuses = ["paid", "processing", "sent_for_delivery", "delivered"];
   const ordersSorted = useMemo(
     () =>
@@ -2608,7 +4010,11 @@ export function BuyerOrdersPage() {
   const paidTotal = useMemo(
     () =>
       orders
-        .filter((o) => ["paid", "processing", "sent_for_delivery", "delivered"].includes(o.status))
+        .filter(
+          (o) =>
+            ["paid", "processing", "sent_for_delivery", "delivered"].includes(o.status) &&
+            (o.refundStatus || "none") !== "refunded"
+        )
         .reduce((sum, o) => sum + (Number(o.total) || 0), 0),
     [orders]
   );
@@ -2624,6 +4030,46 @@ export function BuyerOrdersPage() {
         { key: "hint", className: "mb-4 text-sm text-slate-600 dark:text-slate-400" },
         "After payment, tap Rate next to an item to leave a star rating and optional review here — no need to open the product page."
       ),
+      accessToken &&
+        !loading &&
+        !err &&
+        h(GlassCard, {
+          key: "track-invite",
+          className:
+            "mb-4 !border-violet-400/35 !bg-gradient-to-br from-violet-100/90 via-white to-white !p-4 dark:!from-violet-950/50 dark:!via-night-950/90 dark:!to-night-950"
+        }, [
+          h("div", { className: "flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between" }, [
+            h("div", { key: "txt", className: "flex min-w-0 flex-1 gap-3" }, [
+              h(
+                "div",
+                {
+                  className:
+                    "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-violet-600 text-white shadow-lg shadow-violet-900/25"
+                },
+                h(Truck, { className: "h-6 w-6", "aria-hidden": true })
+              ),
+              h("div", { className: "min-w-0" }, [
+                h("p", { className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "Track your delivery"),
+                h(
+                  "p",
+                  { className: "mt-1 text-sm text-slate-600 dark:text-slate-400" },
+                  "Live map with courier GPS (when shared), drop-off marker, ETA, and a clear timeline."
+                )
+              ])
+            ]),
+            h(Button, {
+              key: "go",
+              type: "button",
+              variant: "primary",
+              className:
+                "!h-11 !rounded-full !px-6 !text-[15px] !font-semibold shadow-lg shadow-sky-600/25 sm:shrink-0",
+              onClick: () => {
+                setTrackPresetOrderId(null);
+                setTrackModalOpen(true);
+              }
+            }, [h(Navigation, { key: "i", className: "mr-2 h-4 w-4" }), " Track order"])
+          ])
+        ]),
       !loading &&
         !err &&
         h("div", { key: "stats", className: "mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3" }, [
@@ -2661,17 +4107,32 @@ export function BuyerOrdersPage() {
             { className: "mt-3 space-y-4" },
             ordersSorted.map((o) => {
               const lines = o.items || [];
-              const canRate = rateableStatuses.includes(o.status);
+              const canRate =
+                rateableStatuses.includes(o.status) && (o.refundStatus || "none") !== "refunded";
               const hasReceiptMeta = !!(o.paymentMethod || o.paymentReference || o.paymentDetails);
               const summaryLine = hasReceiptMeta
                 ? `${paymentMethodLabel(o.paymentMethod)} · ${formatGhc(o.total || 0)}`
                 : formatGhc(o.total || 0);
-              return h("div", { key: `ord-${o.id}`, className: "rounded-xl border border-white/10 bg-white/30 dark:bg-night-900/30" }, [
+              return h(
+                "div",
+                {
+                  id: `order-card-${o.id}`,
+                  key: `ord-${o.id}`,
+                  className: `rounded-xl border border-white/10 bg-white/30 dark:bg-night-900/30 ${
+                    openOrderId && String(o.id) === openOrderId ? "ring-2 ring-sky-500/70" : ""
+                  }`
+                },
                 h("div", { className: "flex flex-wrap items-center justify-between gap-2 px-3 py-2 sm:px-4" }, [
                   h("div", { className: "min-w-0 flex-1" }, [
                     h("p", { className: "font-mono text-xs text-slate-500" }, `#${String(o.id).slice(-8)}`),
                     h("p", { className: "mt-1 text-sm font-medium text-slate-800 dark:text-slate-100" }, summaryLine),
-                    h("p", { className: `mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${buyerOrderStatusTone(o.status)}` }, formatBuyerOrderStatus(o.status))
+                    h(
+                      "p",
+                      {
+                        className: `mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${buyerOrderFulfillmentPillClass(o)}`
+                      },
+                      formatOrderFulfillmentLabel(o)
+                    )
                   ]),
                   hasReceiptMeta
                     ? h(Button, {
@@ -2782,8 +4243,50 @@ export function BuyerOrdersPage() {
                         ].filter(Boolean)
                       )
                     )
-                  ])
-              ].filter(Boolean));
+                  ]),
+                ["paid", "processing", "sent_for_delivery", "delivered"].includes(o.status)
+                  ? h(
+                      "div",
+                      {
+                        key: "dl-teaser",
+                        className:
+                          "border-t border-white/10 bg-gradient-to-r from-violet-500/[0.07] via-transparent to-sky-500/[0.07] px-3 py-3 sm:px-4"
+                      },
+                      [
+                        h("div", { className: "flex flex-wrap items-center justify-between gap-3" }, [
+                          h("div", { className: "min-w-0 flex-1" }, [
+                            h(
+                              "p",
+                              {
+                                className:
+                                  "text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                              },
+                              "Campus delivery · live GPS"
+                            ),
+                            h(
+                              "p",
+                              { className: "mt-1 text-xs text-slate-600 dark:text-slate-300" },
+                              "Follow your courier in real time once they share location."
+                            )
+                          ]),
+                          h(Button, {
+                            type: "button",
+                            variant: "primary",
+                            className:
+                              "!h-10 !rounded-full !px-4 !text-sm !font-semibold shadow-md shadow-sky-800/15",
+                            onClick: () => {
+                              setTrackPresetOrderId(String(o.id));
+                              setTrackModalOpen(true);
+                            }
+                          }, [
+                            h(Navigation, { key: "n", className: "mr-1.5 h-4 w-4" }),
+                            "Track live"
+                          ])
+                        ])
+                      ]
+                    )
+                  : null
+              );
             })
           )
         ])
@@ -2799,7 +4302,17 @@ export function BuyerOrdersPage() {
         orderId: reviewModal.orderId,
         productTitle: reviewModal.productTitle
       }),
-    receiptOrder && h(BuyerReceiptModal, { key: "receipt-modal", order: receiptOrder, onClose: () => setReceiptOrder(null) })
+    receiptOrder && h(BuyerReceiptModal, { key: "receipt-modal", order: receiptOrder, onClose: () => setReceiptOrder(null) }),
+    h(TrackOrderModal, {
+      key: "track-order-modal",
+      open: trackModalOpen,
+      onClose: () => {
+        setTrackModalOpen(false);
+        setTrackPresetOrderId(null);
+      },
+      orders,
+      initialOrderId: trackPresetOrderId
+    })
   ]);
 }
 
@@ -2900,6 +4413,10 @@ export function PaymentSuccessPage() {
             headers: { Authorization: `Bearer ${accessToken}` },
             json: { orderId }
           });
+        }
+        if (!cancelled && !cartClearedRef.current) {
+          cartClearedRef.current = true;
+          clearCart();
         }
       } catch {
         /* Non-Paystack flow or already finalized */

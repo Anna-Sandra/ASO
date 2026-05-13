@@ -15,8 +15,10 @@ import {
   createGhanaSubaccount,
   listPaystackBanksGhana
 } from "../payments/paystackPayouts";
+import { notifyBuyerOrderStatus, notifyOrderCancelledForCounterparties, notifyOrderPaid } from "../notifications/notification.service";
 import type { VendorAnalyticsEventType } from "./vendorAnalyticsEvent.model";
 import { VendorAnalyticsEvent } from "./vendorAnalyticsEvent.model";
+import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
 
 const PAID_ORDER_STATUSES = ["paid", "processing", "sent_for_delivery", "delivered"] as const;
 
@@ -112,6 +114,18 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
   }
 
   await order.save();
+
+  await mirrorOrderStatusToDelivery(order);
+
+  if (status === "cancelled") {
+    void notifyOrderCancelledForCounterparties(orderId, "seller", sid);
+  } else {
+    const label = String(status || "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c: string) => c.toUpperCase());
+    void notifyBuyerOrderStatus(orderId, order.buyerId, label);
+  }
+
   const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
   res.json({ order: serialized });
 });
@@ -176,11 +190,15 @@ export const confirmVendorPaymentReceived = asyncHandler(async (req: Request, re
   }
 
   await order.save();
+  if (allConfirmed) {
+    void notifyOrderPaid(orderId);
+    await mirrorOrderStatusToDelivery(order);
+  }
   try {
     await VendorAnalyticsEvent.create({
       sellerId: new mongoose.Types.ObjectId(sid),
       type: "order_status_update",
-      meta: { orderId, status }
+      meta: { orderId, status: order.status }
     });
   } catch {
     /* analytics must never block order updates */

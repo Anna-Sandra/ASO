@@ -20,13 +20,21 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useAuth } from "./AuthContext";
-import { useNotice } from "./NoticeContext";
-import { useTheme } from "./ThemeContext";
-import { apiFetch, apiUploadProductImages, apiUploadProfileImage, deleteAuthenticatedAccount } from "./api";
+import { useAuth, useNotice, useTheme } from "./contexts";
+import { NotificationBell, NotificationsContent } from "./screensNotifications";
+import { apiFetch, apiUploadBookPdf, apiUploadProductImages, apiUploadProfileImage, deleteAuthenticatedAccount } from "./api";
 import { trackVendorAnalyticsEvent, VendorRevenueLineChart } from "./vendorCharts";
 import { CATEGORY_LABELS, PRODUCT_CATEGORY_VALUES, refFromId } from "./catalog";
+import {
+  buildCategoryAttributesPayload,
+  emptyAttrsForCategory,
+  getListingMeta,
+  listingEditPageHeading,
+  mergeAttrsFromServer,
+  renderListingCategoryFields
+} from "./listingCategoryFields";
 import { formatGhc } from "./money";
+import { formatOrderFulfillmentLabel } from "./orderStatusDisplay";
 import { h, f } from "./h";
 import {
   Badge,
@@ -47,6 +55,8 @@ import {
 const MAX_PRODUCT_IMAGES = 500;
 /** Must match backend `MAX_PRODUCT_IMAGES_PER_UPLOAD`. */
 const UPLOAD_IMAGES_CHUNK = 40;
+/** Sent for category `services` so buyers can checkout (buyer UI blocks when stock is 0). */
+const SERVICE_LISTING_STOCK = 999;
 
 /**
  * Avatar letter: display name first, else email local-part.
@@ -83,7 +93,7 @@ function vendorUserAvatarNode(u, { sizeClass = "h-8 w-8", initialTextClass = "te
   );
 }
 
-function VendorProductPhotos({ accessToken, imageList, setImageList, setErr }) {
+function VendorProductPhotos({ accessToken, imageList, setImageList, setErr, label = "Product photos", hintTail = "" }) {
   const fileInputId = useId().replace(/:/g, "");
   const onPick = async (e) => {
     setErr("");
@@ -111,12 +121,10 @@ function VendorProductPhotos({ accessToken, imageList, setImageList, setErr }) {
   };
   const remove = (idx) => setImageList((prev) => prev.filter((_, i) => i !== idx));
 
-  return h(Field, { label: "Product photos" }, h("div", { className: "space-y-3" }, [
-    h(
-      "p",
-      { key: "ph-hint", className: "text-xs text-slate-500 dark:text-slate-400" },
-      `Add many photos (JPEG, PNG, WebP, or GIF — max 5 MB each, up to ${MAX_PRODUCT_IMAGES} per product). Large selections upload in batches. They appear on the buyer storefront.`
-    ),
+  const hint = `Add many photos (JPEG, PNG, WebP, or GIF — max 5 MB each, up to ${MAX_PRODUCT_IMAGES} per product). Large selections upload in batches. They appear on the buyer storefront.${hintTail || ""}`;
+
+  return h(Field, { label }, h("div", { className: "space-y-3" }, [
+    h("p", { key: "ph-hint", className: "text-xs text-slate-500 dark:text-slate-400" }, hint),
     h("div", { key: "row", className: "flex flex-wrap items-center gap-2" }, [
       h("input", {
         key: "inp",
@@ -164,6 +172,81 @@ function VendorProductPhotos({ accessToken, imageList, setImageList, setErr }) {
   ].filter(Boolean)));
 }
 
+function VendorBookPdfRow({ accessToken, pdfUrl, onPdfUrlChange, setErr }) {
+  const inputId = useId().replace(/:/g, "");
+  const pick = async (e) => {
+    setErr("");
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file || !accessToken) return;
+    try {
+      const data = await apiUploadBookPdf(file, accessToken);
+      if (data && data.url) onPdfUrlChange(String(data.url));
+    } catch (ex) {
+      setErr(ex.message || "PDF upload failed");
+    }
+  };
+  return h(Field, { label: "PDF companion (optional)" }, h("div", { className: "space-y-2" }, [
+    h(
+      "p",
+      { key: "h", className: "text-xs text-slate-500 dark:text-slate-400" },
+      "Sell or bundle a syllabus pack, worksheet set, or reading PDF. Maximum 15 MB. Only PDF."
+    ),
+    h("div", { key: "r", className: "flex flex-wrap items-center gap-2" }, [
+      h("input", {
+        key: "in",
+        id: inputId,
+        type: "file",
+        accept: "application/pdf",
+        className: "sr-only",
+        onChange: pick
+      }),
+      h(
+        "label",
+        {
+          key: "lb",
+          htmlFor: inputId,
+          className:
+            "tap-target inline-flex cursor-pointer items-center justify-center rounded-2xl border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-500/20 dark:text-sky-200 dark:hover:bg-sky-500/15"
+        },
+        "Upload PDF"
+      ),
+      pdfUrl
+        ? h(
+            Button,
+            {
+              key: "clr",
+              type: "button",
+              variant: "ghost",
+              className: "!min-h-[36px] !px-3 !py-1.5 !text-xs",
+              onClick: () => onPdfUrlChange("")
+            },
+            "Remove PDF"
+          )
+        : null
+    ]),
+    h(TextInput, {
+      key: "url",
+      value: pdfUrl || "",
+      onChange: (e) => onPdfUrlChange(e.target.value),
+      placeholder: "Or paste a hosted PDF URL"
+    }),
+    pdfUrl
+      ? h(
+          "a",
+          {
+            key: "open",
+            href: pdfUrl,
+            target: "_blank",
+            rel: "noreferrer",
+            className: "inline-block text-sm font-medium text-sky-600 underline hover:text-sky-500 dark:text-sky-300"
+          },
+          "Open current PDF"
+        )
+      : null
+  ].filter(Boolean)));
+}
+
 function NavItem({ to, icon: Icon, children, badge, end }) {
   return h(NavLink, {
     to,
@@ -194,12 +277,6 @@ function NavItem({ to, icon: Icon, children, badge, end }) {
           )
       ])
   });
-}
-
-function humanizeOrderStatus(s) {
-  return String(s || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** Match API enums even if a legacy payload used spaces or different casing. */
@@ -357,6 +434,7 @@ export function VendorShell() {
             ]),
             h("div", { key: "actions", className: "flex items-center gap-2 sm:gap-3" }, [
               h(ThemeToggleButton, { key: "theme", dark, onToggle: toggle }),
+              h(NotificationBell, { key: "bell", to: "/vendor/notifications" }),
               h(
                 "div",
                 {
@@ -410,7 +488,7 @@ export function VendorShell() {
                   h(
                     "p",
                     { key: "blurb", className: "min-w-0" },
-                    "You need to link your bank in Store settings so Paystack can pay out your share when buyers use card or MoMo. Do this as soon as you can."
+                    "You need to link your payment details in Store settings so Paystack can pay out your share when buyers use card or MoMo. Do this as soon as you can."
                   ),
                   h(
                     Link,
@@ -572,7 +650,7 @@ export function VendorDashboardPage() {
                   [
                     h("span", { key: "id", className: "font-mono text-sm text-slate-600 dark:text-slate-300" }, `#${o.id.slice(-8)}`),
                     h("span", { key: "total", className: "text-sm text-slate-900 dark:text-white" }, formatGhc(o.vendorLineGross ?? o.total)),
-                    h(Badge, { key: "st", tone: "neutral" }, humanizeOrderStatus(o.status))
+                    h(Badge, { key: "st", tone: "neutral" }, formatOrderFulfillmentLabel(o))
                   ]
                 )
               )
@@ -691,7 +769,7 @@ export function VendorProductsPage() {
               h("span", { key: "nm", className: "font-medium text-slate-900 dark:text-white" }, row.name)
             ])),
             h("td", { key: "c-cat", className: "px-4 py-3 text-slate-600 dark:text-slate-300" }, CATEGORY_LABELS[row.category] || row.category),
-            h("td", { key: "c-price", className: "px-4 py-3 font-semibold text-slate-900 dark:text-white" }, formatGhc(row.price)),
+            h("td", { key: "c-price", className: "px-4 py-3 font-semibold text-slate-900 dark:text-white" }, row.category === "services" ? "Quote on request" : formatGhc(row.price)),
             h("td", { key: "c-stock", className: "px-4 py-3" }, String(row.stock ?? 0)),
             h("td", { key: "c-st", className: "px-4 py-3" }, h(Badge, { tone: productStatusTone(row.status) }, formatProductStatus(row.status))),
             h("td", { key: "c-act", className: "px-4 py-3" }, h("div", { className: "flex flex-wrap gap-2" }, [
@@ -734,45 +812,60 @@ export function VendorAddProductPage() {
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("25");
   const [tags, setTags] = useState("");
+  const [attrs, setAttrs] = useState(() => emptyAttrsForCategory("food_drinks"));
   const [imageList, setImageList] = useState([]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const meta = useMemo(() => getListingMeta(category), [category]);
+
+  useEffect(() => {
+    setAttrs(emptyAttrsForCategory(category));
+  }, [category]);
+
   const submit = async (asDraft) => {
     setErr("");
     if (!accessToken) return;
+    const m = getListingMeta(category);
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setErr("Product name is required.");
+      setErr(`${m.nameLabel} is required.`);
       return;
     }
-    const priceNum = Number(price);
-    if (!Number.isFinite(priceNum) || priceNum <= 0) {
-      setErr("Enter a valid price greater than zero.");
-      return;
+    let priceNum = 0;
+    if (!m.hidePrice) {
+      priceNum = Number(price);
+      if (!Number.isFinite(priceNum) || priceNum <= 0) {
+        setErr("Enter a valid price greater than zero.");
+        return;
+      }
     }
     setLoading(true);
     try {
-      const tagList = tags
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .slice(0, 10);
+      const tagList = m.showTags
+        ? tags
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 10)
+        : [];
       const urls = imageList.slice(0, MAX_PRODUCT_IMAGES);
       const nextStatus = asDraft ? "draft" : "active";
+      const attrsPayload = buildCategoryAttributesPayload(category, attrs);
       const body = {
         name: trimmedName,
         description: description.trim(),
         category,
         price: priceNum,
         compareAtPrice: null,
-        stock: Math.max(0, Math.floor(Number(stock) || 0)),
+        stock: m.isService ? SERVICE_LISTING_STOCK : Math.max(0, Math.floor(Number(stock) || 0)),
         status: nextStatus,
         tags: tagList,
-        imageUrls: urls
+        imageUrls: urls,
+        ...(Object.keys(attrsPayload).length ? { categoryAttributes: attrsPayload } : {})
       };
       if (!asDraft && urls.length === 0) {
-        setErr("Add at least one product photo before publishing.");
+        setErr(m.isService ? "Add at least one portfolio image before publishing." : "Add at least one product photo before publishing.");
         setLoading(false);
         return;
       }
@@ -789,56 +882,102 @@ export function VendorAddProductPage() {
     }
   };
 
+  const priceStockRow = h(
+    "div",
+    { key: "row-price-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" },
+    [
+      h(Field, { key: "fld-price", label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value), placeholder: "18.99" })),
+      meta.showStock
+        ? h(Field, { key: "fld-stock", label: meta.stockLabel }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value), placeholder: "42" }))
+        : null
+    ].filter(Boolean)
+  );
+
+  const catFieldsNodes = renderListingCategoryFields(h, {
+    Field,
+    TextInput,
+    TextArea,
+    SelectInput,
+    category,
+    attrs,
+    setAttrs
+  });
+
+  const innerFields = [
+    h(
+      Field,
+      { key: "fld-cat", label: "Listing category" },
+      h(
+        SelectInput,
+        { value: category, onChange: (e) => setCategory(e.target.value) },
+        PRODUCT_CATEGORY_VALUES.map((c) => h("option", { key: c, value: c }, CATEGORY_LABELS[c] || c))
+      )
+    ),
+    meta.isService
+      ? h(
+          "div",
+          {
+            key: "svc-intro",
+            className:
+              "rounded-2xl border border-amber-400/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-100"
+          },
+          "You're creating a service listing — graphic design, hair, typing, laundry, photography, tutoring, etc. Describe how you work and what buyers should send. Pricing is not listed on the shop: buyers use seller contact details on the listing to agree a price with you."
+        )
+      : null,
+    h(Field, { key: "fld-name", label: meta.nameLabel }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value), placeholder: meta.namePlaceholder })),
+    h(Field, { key: "fld-desc", label: meta.descLabel }, h(TextArea, { value: description, onChange: (e) => setDescription(e.target.value), placeholder: meta.descPlaceholder }))
+  ].filter(Boolean);
+
+  if (!meta.hidePrice && category !== "groceries_essentials") innerFields.push(priceStockRow);
+  innerFields.push(...catFieldsNodes);
+  if (!meta.hidePrice && category === "groceries_essentials") innerFields.push(priceStockRow);
+  if (category === "books_academic") {
+    innerFields.push(
+      h(VendorBookPdfRow, {
+        key: "pdf",
+        accessToken,
+        pdfUrl: attrs.pdfUrl || "",
+        onPdfUrlChange: (v) => setAttrs((prev) => ({ ...prev, pdfUrl: v })),
+        setErr
+      })
+    );
+  }
+  if (meta.showTags) {
+    innerFields.push(h(Field, { key: "fld-tags", label: "Tags (comma-separated)" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value), placeholder: "new, popular" })));
+  }
+  innerFields.push(
+    h(VendorProductPhotos, {
+      key: "photos",
+      accessToken,
+      imageList,
+      setImageList,
+      setErr,
+      label: meta.photosLabel,
+      hintTail: meta.photosHintTail
+    })
+  );
+
+  const publishAside = [
+    h("p", { className: "text-xs text-slate-500 dark:text-slate-400" }, `${meta.publishBlurb}${meta.draftHelp ? ` ${meta.draftHelp}` : ""}`)
+  ];
+
   return h(f, null, [
     err ? h(InlineNotice, { key: "err", variant: "error", className: "mb-4", onDismiss: () => setErr("") }, err) : null,
     h("div", { key: "add-hdr", className: "mb-6 flex flex-wrap items-center justify-between gap-3" }, [
-      h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Add new product"),
+      h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, meta.pageHeading),
       h(Link, { to: "/vendor/products" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "← Back to products"))
     ]),
     h("div", { key: "add-grid", className: "grid grid-cols-1 gap-6 lg:grid-cols-3" }, [
       h("div", { key: "add-main", className: "space-y-6 lg:col-span-2" }, [
         h(GlassPanel, { key: "add-details" }, [
-          h("h2", { className: "mb-4 font-semibold text-slate-900 dark:text-white" }, "Product details"),
-          h("div", { className: "space-y-4" }, [
-            h(Field, { key: "fld-name", label: "Product name" }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Scientific calculator, rice bowl meal kit" })),
-            h(Field, { key: "fld-desc", label: "Description" }, h(TextArea, { value: description, onChange: (e) => setDescription(e.target.value), placeholder: "Tell buyers what makes this special…" })),
-            h("div", { key: "row-price-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
-              h(Field, { key: "fld-price", label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value), placeholder: "18.99" })),
-              h(Field, { key: "fld-stock", label: "Stock quantity" }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value), placeholder: "42" }))
-            ]),
-            h("div", { key: "row-cat-tags", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
-              h(
-                Field,
-                { key: "fld-cat", label: "Category" },
-                h("div", { className: "space-y-2" }, [
-                 
-                  h(
-                    SelectInput,
-                    { key: "cat-sel", value: category, onChange: (e) => setCategory(e.target.value) },
-                    PRODUCT_CATEGORY_VALUES.map((c) => h("option", { key: c, value: c }, CATEGORY_LABELS[c] || c))
-                  )
-                ])
-              ),
-              h(Field, { key: "fld-tags", label: "Tags (comma-separated)" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value), placeholder: "new, popular" }))
-            ]),
-            h(VendorProductPhotos, {
-              key: "photos",
-              accessToken,
-              imageList,
-              setImageList,
-              setErr
-            })
-          ])
+          h("h2", { className: "mb-4 font-semibold text-slate-900 dark:text-white" }, meta.formPanelTitle),
+          h("div", { className: "space-y-4" }, innerFields)
         ])
       ]),
       h("div", { key: "add-side", className: "space-y-6" }, [
         h(GlassPanel, { key: "add-publish" }, [
-          h("h2", { className: "mb-2 font-semibold text-slate-900 dark:text-white" }, "Publish"),
-          h(
-            "p",
-            { className: "text-xs text-slate-500 dark:text-slate-400" },
-            "Submits your listing for admin review. It only appears in the shop after approval (usually quick)."
-          ),
+          h("h2", { className: "mb-2 font-semibold text-slate-900 dark:text-white" }, meta.publishTitle),
+          ...publishAside,
           h(
             Button,
             {
@@ -847,7 +986,7 @@ export function VendorAddProductPage() {
               type: "button",
               onClick: () => submit(false)
             },
-            "Submit for review"
+            meta.isService ? "Submit service for review" : "Submit for review"
           ),
           h(
             Button,
@@ -873,10 +1012,13 @@ export function VendorEditProductPage() {
   const [serverStatus, setServerStatus] = useState(null);
   const [rejectionReason, setRejectionReason] = useState(null);
   const [tags, setTags] = useState("");
+  const [attrs, setAttrs] = useState(() => emptyAttrsForCategory("food_drinks"));
   const [imageList, setImageList] = useState([]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const meta = useMemo(() => getListingMeta(category), [category]);
 
   useEffect(() => {
     if (!accessToken || !productId) return;
@@ -890,9 +1032,10 @@ export function VendorEditProductPage() {
       .then((d) => {
         if (cancelled || !d.product) return;
         const p = d.product;
+        const cat = p.category || "food_drinks";
         setName(p.name || "");
         setDescription(p.description || "");
-        setCategory(p.category || "food_drinks");
+        setCategory(cat);
         setPrice(String(p.price ?? ""));
         setStock(String(p.stock ?? 0));
         setServerStatus(p.status || "draft");
@@ -903,6 +1046,7 @@ export function VendorEditProductPage() {
           setStatus("draft");
         }
         setTags((p.tags || []).join(", "));
+        setAttrs(mergeAttrsFromServer(cat, p.categoryAttributes));
         setImageList(Array.isArray(p.imageUrls) ? [...p.imageUrls] : []);
       })
       .catch((ex) => {
@@ -916,21 +1060,39 @@ export function VendorEditProductPage() {
     };
   }, [accessToken, productId]);
 
+  const onCategoryPick = (e) => {
+    const c = e.target.value;
+    setCategory(c);
+    setAttrs(emptyAttrsForCategory(c));
+  };
+
   const save = async () => {
     setErr("");
     if (!accessToken || !productId) return;
+    const m = getListingMeta(category);
     setSaving(true);
     try {
-      const tagList = tags
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .slice(0, 10);
+      const tagList = m.showTags
+        ? tags
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 10)
+        : [];
       const urls = imageList.slice(0, MAX_PRODUCT_IMAGES);
       if (status === "active" && urls.length === 0) {
-        setErr("Add at least one product photo before setting status to Active.");
+        setErr(m.isService ? "Add at least one portfolio image before setting status to Active." : "Add at least one product photo before setting status to Active.");
         setSaving(false);
         return;
+      }
+      let patchPrice = 0;
+      if (!m.hidePrice) {
+        patchPrice = Number(price);
+        if (!Number.isFinite(patchPrice) || patchPrice <= 0) {
+          setErr("Enter a valid price greater than zero.");
+          setSaving(false);
+          return;
+        }
       }
       await apiFetch(`/api/products/${productId}`, {
         method: "PATCH",
@@ -939,12 +1101,13 @@ export function VendorEditProductPage() {
           name: name.trim(),
           description: description.trim(),
           category,
-          price: Number(price),
+          price: patchPrice,
           compareAtPrice: null,
-          stock: Number(stock) || 0,
+          stock: m.isService ? SERVICE_LISTING_STOCK : Number(stock) || 0,
           status,
           tags: tagList,
-          imageUrls: urls
+          imageUrls: urls,
+          categoryAttributes: buildCategoryAttributesPayload(category, attrs)
         }
       });
       nav("/vendor/products");
@@ -955,76 +1118,220 @@ export function VendorEditProductPage() {
     }
   };
 
+  const priceStockRow = h(
+    "div",
+    { key: "row-price-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" },
+    [
+      h(Field, { key: "fld-price", label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value) })),
+      meta.showStock
+        ? h(Field, { key: "fld-stock", label: meta.stockLabel }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value) }))
+        : null
+    ].filter(Boolean)
+  );
+
+  const catFieldsNodes = renderListingCategoryFields(h, {
+    Field,
+    TextInput,
+    TextArea,
+    SelectInput,
+    category,
+    attrs,
+    setAttrs
+  });
+
+  const innerFields = [
+    h(
+      Field,
+      { key: "fld-cat", label: "Listing category" },
+      h(
+        SelectInput,
+        { value: category, onChange: onCategoryPick },
+        PRODUCT_CATEGORY_VALUES.map((c) => h("option", { key: c, value: c }, CATEGORY_LABELS[c] || c))
+      )
+    ),
+    meta.isService
+      ? h(
+          "div",
+          {
+            key: "svc-intro-edit",
+            className:
+              "rounded-2xl border border-amber-400/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-100"
+          },
+          "This is a service listing — pricing is not fixed here. Buyers use seller contact info on your listing and Messages to arrange details."
+        )
+      : null,
+    h(Field, { key: "fld-name", label: meta.nameLabel }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value), placeholder: meta.namePlaceholder })),
+    h(Field, { key: "fld-desc", label: meta.descLabel }, h(TextArea, { value: description, onChange: (e) => setDescription(e.target.value), placeholder: meta.descPlaceholder }))
+  ].filter(Boolean);
+
+  if (!meta.hidePrice && category !== "groceries_essentials") innerFields.push(priceStockRow);
+  innerFields.push(...catFieldsNodes);
+  if (!meta.hidePrice && category === "groceries_essentials") innerFields.push(priceStockRow);
+  if (category === "books_academic") {
+    innerFields.push(
+      h(VendorBookPdfRow, {
+        key: "pdf",
+        accessToken,
+        pdfUrl: attrs.pdfUrl || "",
+        onPdfUrlChange: (v) => setAttrs((prev) => ({ ...prev, pdfUrl: v })),
+        setErr
+      })
+    );
+  }
+  if (meta.showTags) {
+    innerFields.push(h(Field, { key: "fld-tags", label: "Tags (comma-separated)" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value), placeholder: "new, popular" })));
+  }
+
+  innerFields.push(
+    ...[
+      rejectionReason && serverStatus === "rejected"
+        ? h(InlineNotice, { key: "rej", variant: "warning", className: "mb-2", size: "sm" }, [
+            h("strong", { key: "t" }, "Listing rejected. "),
+            h("span", { key: "r" }, String(rejectionReason))
+          ])
+        : null,
+      serverStatus === "pending_approval"
+        ? h(
+            "p",
+            { key: "pend", className: "mb-2 text-sm text-amber-800 dark:text-amber-200" },
+            "This listing is waiting for admin approval. You can save as draft to withdraw, or keep it submitted."
+          )
+        : null,
+      h(
+        Field,
+        { key: "fld-st", label: "Status" },
+        h(f, { key: "st" }, [
+          h(SelectInput, { value: status, onChange: (e) => setStatus(e.target.value) }, [
+            h("option", { value: "draft" }, "Draft (not in shop)"),
+            h("option", { value: "active" }, serverStatus === "active" ? "Live in shop" : "Submit / stay submitted for review")
+          ]),
+          h(
+            "p",
+            { key: "h", className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
+            serverStatus === "active"
+              ? "While live, changing the title, description, price, images, category, tags, or category-specific details removes the item from the shop until an admin re-approves. Stock-only changes stay live."
+              : "“Submit for review” means the listing must be approved before buyers see it in the shop."
+          )
+        ])
+      ),
+      h(VendorProductPhotos, {
+        key: "photos",
+        accessToken,
+        imageList,
+        setImageList,
+        setErr,
+        label: meta.photosLabel,
+        hintTail: meta.photosHintTail
+      })
+    ].filter(Boolean)
+  );
+
+  const publishAside = `${meta.publishBlurb}${meta.draftHelp ? ` ${meta.draftHelp}` : ""}`;
+
   if (loading) return h("p", { className: "text-slate-500" }, "Loading product…");
 
   return h(f, null, [
     err ? h(InlineNotice, { key: "err", variant: "error", className: "mb-4", onDismiss: () => setErr("") }, err) : null,
     h("div", { key: "edit-hdr", className: "mb-6 flex flex-wrap items-center justify-between gap-3" }, [
-      h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Edit product"),
+      h(
+        "h1",
+        { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" },
+        listingEditPageHeading(category)
+      ),
       h(Link, { to: "/vendor/products" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "← Back"))
     ]),
-    h(GlassPanel, { key: "edit-panel" }, [
-      h("div", { key: "edit-fields", className: "space-y-4" }, [
-        h(Field, { label: "Product name" }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value) })),
-        h(Field, { label: "Description" }, h(TextArea, { value: description, onChange: (e) => setDescription(e.target.value) })),
-        h("div", { className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
-          h(Field, { label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value) })),
-          h(Field, { label: "Stock" }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value) }))
-        ]),
-        h("div", { key: "row-cat-tags", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
-          h(
-            Field,
-            { key: "fld-cat", label: "Category" },
-            h("div", { className: "space-y-2" }, [
-              h(
-                SelectInput,
-                { key: "cat-sel", value: category, onChange: (e) => setCategory(e.target.value) },
-                PRODUCT_CATEGORY_VALUES.map((c) => h("option", { key: c, value: c }, CATEGORY_LABELS[c] || c))
-              )
-            ])
-          ),
-          h(Field, { key: "fld-tags", label: "Tags (comma-separated)" }, h(TextInput, { value: tags, onChange: (e) => setTags(e.target.value), placeholder: "new, popular" }))
-        ]),
-        rejectionReason && serverStatus === "rejected"
-          ? h(InlineNotice, { key: "rej", variant: "warning", className: "mb-2", size: "sm" }, [
-              h("strong", { key: "t" }, "Listing rejected. "),
-              h("span", { key: "r" }, String(rejectionReason))
-            ])
-          : null,
-        serverStatus === "pending_approval"
-          ? h(
-              "p",
-              { key: "pend", className: "mb-2 text-sm text-amber-800 dark:text-amber-200" },
-              "This listing is waiting for admin approval. You can save as draft to withdraw, or keep it submitted."
-            )
-          : null,
-        h(
-          Field,
-          { key: "fld-st", label: "Status" },
-          h(f, { key: "st" }, [
-            h(SelectInput, { value: status, onChange: (e) => setStatus(e.target.value) }, [
-              h("option", { value: "draft" }, "Draft (not in shop)"),
-              h("option", { value: "active" }, serverStatus === "active" ? "Live in shop" : "Submit / stay submitted for review")
-            ]),
-            h(
-              "p",
-              { key: "h", className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
-              serverStatus === "active"
-                ? "While live, changing the title, description, price, images, category, or tags will remove the item from the shop until an admin re-approves. Stock-only changes stay live."
-                : "“Submit for review” means the listing must be approved before buyers see it in the shop."
-            )
-          ])
-        ),
-        h(VendorProductPhotos, { key: "photos", accessToken, imageList, setImageList, setErr }),
-        h(Button, { type: "button", onClick: save, loading: saving }, "Save changes")
+    h("div", { key: "edit-grid", className: "grid grid-cols-1 gap-6 lg:grid-cols-3" }, [
+      h(
+        "div",
+        { key: "edit-main", className: "space-y-6 lg:col-span-2" },
+        h(GlassPanel, { key: "edit-panel" }, [
+          h("h2", { className: "mb-4 font-semibold text-slate-900 dark:text-white" }, meta.formPanelTitle),
+          h("div", { key: "edit-fields", className: "space-y-4" }, innerFields)
+        ])
+      ),
+      h("div", { key: "edit-side", className: "space-y-6" }, [
+        h(GlassPanel, { key: "save-side" }, [
+          h("h2", { className: "mb-2 font-semibold text-slate-900 dark:text-white" }, "Save listing"),
+          h("p", { className: "text-xs text-slate-500 dark:text-slate-400" }, publishAside),
+          h(Button, { className: "mt-4 w-full", type: "button", onClick: save, loading: saving }, "Save changes")
+        ])
       ])
     ])
   ]);
 }
 
+function VendorCampusCourierAssign({ accessToken, orderId, onAssigned }) {
+  const { toast } = useNotice();
+  const [riderUserId, setRiderUserId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const assign = async () => {
+    const id = riderUserId.trim();
+    if (!accessToken || !id) return;
+    setBusy(true);
+    try {
+      await apiFetch(`/api/deliveries/order/${orderId}/assign-rider`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { riderUserId: id }
+      });
+      toast("Rider assigned for this order.", { variant: "success" });
+      setRiderUserId("");
+      onAssigned?.();
+    } catch (ex) {
+      toast(ex?.message || "Could not assign rider", { variant: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Single short row (+ optional wrapped line on narrow cells) — keeps order table rows from stretching. */
+  return h(
+    "details",
+    {
+      className:
+        "max-w-[min(100%,20rem)] rounded-lg border border-sky-400/25 bg-sky-500/[0.07] [&_summary::-webkit-details-marker]:hidden dark:border-sky-500/30 dark:bg-sky-950/30"
+    },
+    [
+      h(
+        "summary",
+        {
+          className:
+            "cursor-pointer list-none rounded-lg px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-800 hover:bg-sky-500/10 dark:text-sky-100 dark:hover:bg-sky-500/10"
+        },
+        'assign rider \u2192'
+      ),
+      h(
+        "div",
+        { className: "flex min-w-0 flex-wrap items-stretch gap-1 border-t border-sky-400/15 px-2 py-1.5 dark:border-white/10" },
+        [
+          h(TextInput, {
+            value: riderUserId,
+            onChange: (e) => setRiderUserId(e.target.value),
+            placeholder: "Rider user ID",
+            title: "User ID from admin → Riders",
+            className: "!min-h-[30px] min-w-[7rem] flex-1 !py-1 !text-xs"
+          }),
+          h(
+            Button,
+            {
+              type: "button",
+              className: "!min-h-[30px] shrink-0 !px-2.5 !py-1 !text-xs",
+              disabled: busy || !riderUserId.trim(),
+              onClick: assign
+            },
+            busy ? "…" : "Assign"
+          )
+        ]
+      )
+    ]
+  );
+}
+
 export function VendorOrdersPage() {
   const { accessToken, user } = useAuth();
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
   const { alert, confirm } = useNotice();
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
@@ -1054,6 +1361,17 @@ export function VendorOrdersPage() {
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [accessToken]);
+
+  const openOrderId = (searchParams.get("openOrder") || "").trim();
+
+  useEffect(() => {
+    if (!openOrderId || loading || orders.length === 0) return;
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(`vendor-order-row-${openOrderId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+    return () => window.clearTimeout(t);
+  }, [openOrderId, loading, orders]);
 
   const updateStatus = async (orderId, status) => {
     if (!accessToken) return;
@@ -1163,26 +1481,34 @@ export function VendorOrdersPage() {
             o.vendorSellerProceeds != null && Number.isFinite(o.vendorSellerProceeds)
               ? o.vendorSellerProceeds
               : lines.reduce((s, it) => s + (Number(it.sellerProceeds) || 0), 0);
-          return h("tr", { key: o.id, className: "group hover:bg-slate-50/90 dark:hover:bg-white/5" }, [
+          return h(
+            "tr",
+            {
+              id: `vendor-order-row-${o.id}`,
+              key: o.id,
+              className: `group hover:bg-slate-50/90 dark:hover:bg-white/5 ${
+                openOrderId && String(o.id) === openOrderId ? "bg-sky-50/90 ring-2 ring-inset ring-sky-400/50 dark:bg-sky-950/40" : ""
+              }`
+            },
             h(
               "td",
-              { className: "min-w-0 px-3 py-3.5 align-top whitespace-nowrap font-mono text-xs text-slate-700 dark:text-slate-300" },
+              { className: "min-w-0 px-3 py-2.5 align-middle whitespace-nowrap font-mono text-xs text-slate-700 dark:text-slate-300" },
               `#${o.id.slice(-8)}`
             ),
             h(
               "td",
-              { className: "min-w-0 px-3 py-3.5 align-top break-words leading-relaxed text-slate-800 dark:text-slate-100" },
+              { className: "min-w-0 px-3 py-2.5 align-middle break-words leading-snug text-slate-800 dark:text-slate-100" },
               lineLabel
             ),
-            h("td", { className: "min-w-0 whitespace-nowrap px-3 py-3.5 align-top font-semibold text-emerald-600 dark:text-emerald-400" }, formatGhc(myEarn)),
-            h("td", { className: "min-w-0 px-3 py-3.5 align-top" }, h(Badge, { tone: "neutral" }, humanizeOrderStatus(o.status))),
+            h("td", { className: "min-w-0 whitespace-nowrap px-3 py-2.5 align-middle font-semibold text-emerald-600 dark:text-emerald-400" }, formatGhc(myEarn)),
+            h("td", { className: "min-w-0 px-3 py-2.5 align-middle" }, h(Badge, { tone: "neutral" }, formatOrderFulfillmentLabel(o))),
             h(
               "td",
-              { className: "min-w-0 px-3 py-3.5 align-top" },
-              h("div", { className: "flex flex-col gap-2" }, [
+              { className: "min-w-0 px-3 py-2.5 align-middle" },
+              h("div", { className: "flex flex-col gap-1.5" }, [
                 h(
                   "div",
-                  { className: "flex flex-wrap gap-1.5" },
+                  { className: "flex flex-wrap items-center gap-1.5" },
                   [
                     status === "awaiting_vendor_payment" &&
                       !(o.confirmedSellerIds || []).includes(user?.id) &&
@@ -1191,7 +1517,7 @@ export function VendorOrdersPage() {
                         {
                           key: "pay-ok",
                           variant: "primary",
-                          className: "!min-h-[34px] !px-2.5 !py-1.5 !text-xs",
+                          className: "!min-h-[32px] !px-2.5 !py-1 !text-xs",
                           type: "button",
                           onClick: () => confirmPayment(o.id)
                         },
@@ -1203,7 +1529,7 @@ export function VendorOrdersPage() {
                         "span",
                         {
                           key: "pay-wait",
-                          className: "block max-w-[14rem] text-[11px] leading-snug text-emerald-700 dark:text-emerald-400"
+                          className: "max-w-[14rem] text-[11px] leading-snug text-emerald-700 dark:text-emerald-400"
                         },
                         "You confirmed · waiting others"
                       ),
@@ -1214,7 +1540,7 @@ export function VendorOrdersPage() {
                           key: "proc",
                           variant: "ghost",
                           className:
-                            "!min-h-[34px] !px-2.5 !py-1.5 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                            "!min-h-[32px] !px-2.5 !py-1 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
                           type: "button",
                           onClick: () => updateStatus(o.id, "processing")
                         },
@@ -1227,7 +1553,7 @@ export function VendorOrdersPage() {
                           key: "sent_for_delivery",
                           variant: "ghost",
                           className:
-                            "!min-h-[34px] !px-2.5 !py-1.5 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                            "!min-h-[32px] !px-2.5 !py-1 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
                           type: "button",
                           onClick: () => updateStatus(o.id, "sent_for_delivery")
                         },
@@ -1240,37 +1566,45 @@ export function VendorOrdersPage() {
                           key: "del",
                           variant: "ghost",
                           className:
-                            "!min-h-[34px] !px-2.5 !py-1.5 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                            "!min-h-[32px] !px-2.5 !py-1 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
                           type: "button",
                           onClick: () => updateStatus(o.id, "delivered")
                         },
                         "Delivered"
-                      )
+                      ),
+                    h(Button, {
+                      key: "to-msg",
+                      variant: "ghost",
+                      className:
+                        "!min-h-[32px] !inline-flex !px-2.5 !py-1 !text-xs !text-sky-700 hover:!bg-sky-50 hover:!text-sky-800 dark:!text-sky-400 dark:hover:!bg-white/10 dark:hover:!text-sky-300",
+                      type: "button",
+                      onClick: () =>
+                        nav(
+                          o.buyerContact?.id
+                            ? `/vendor/messages?peer=${encodeURIComponent(String(o.buyerContact.id))}`
+                            : "/vendor/messages"
+                        )
+                    }, [
+                      h(MessageSquare, { key: "ic-m", className: "h-3.5 w-3.5 shrink-0" }),
+                      h("span", { key: "l-m", className: "ml-1" }, "Message")
+                    ])
                   ].filter(Boolean)
                 ),
-                h(Button, {
-                  key: "to-msg",
-                  variant: "ghost",
-                  className:
-                    "!min-h-[34px] w-full !px-2.5 !py-1.5 !text-xs !text-sky-700 hover:!bg-sky-50 hover:!text-sky-800 sm:w-fit dark:!text-sky-400 dark:hover:!bg-white/10 dark:hover:!text-sky-300",
-                  type: "button",
-                  onClick: () =>
-                    nav(
-                      o.buyerContact?.id
-                        ? `/vendor/messages?peer=${encodeURIComponent(String(o.buyerContact.id))}`
-                        : "/vendor/messages"
-                    )
-                }, [
-                  h(MessageSquare, { key: "ic-m", className: "h-3.5 w-3.5 shrink-0" }),
-                  h("span", { key: "l-m", className: "ml-1" }, "Message")
-                ])
-              ])
+                ["paid", "processing", "sent_for_delivery"].includes(status)
+                  ? h(VendorCampusCourierAssign, {
+                      key: `cc-${o.id}`,
+                      accessToken,
+                      orderId: o.id,
+                      onAssigned: load
+                    })
+                  : null
+              ].filter(Boolean))
             ),
             h(
               "td",
               {
                 className:
-                  "min-w-0 px-3 py-3.5 align-top sticky right-0 z-20 min-w-[10.5rem] border-l border-slate-200 bg-white shadow-[-10px_0_18px_-10px_rgba(15,23,42,0.14)] group-hover:bg-slate-50 dark:border-white/10 dark:bg-night-950 dark:shadow-[-10px_0_24px_-10px_rgba(0,0,0,0.45)] dark:group-hover:bg-night-900/95"
+                  "min-w-0 px-3 py-2.5 align-middle sticky right-0 z-20 min-w-[10.5rem] border-l border-slate-200 bg-white shadow-[-10px_0_18px_-10px_rgba(15,23,42,0.14)] group-hover:bg-slate-50 dark:border-white/10 dark:bg-night-950 dark:shadow-[-10px_0_24px_-10px_rgba(0,0,0,0.45)] dark:group-hover:bg-night-900/95"
               },
               (() => {
                 const actionEls = [
@@ -1293,7 +1627,7 @@ export function VendorOrdersPage() {
                     }, [h(Trash2, { className: "h-3.5 w-3.5 shrink-0" }), h("span", { className: "ml-1" }, "Delete")])
                 ].filter(Boolean);
                 return actionEls.length
-                  ? h("div", { className: "flex flex-col items-stretch gap-2 sm:items-start" }, actionEls)
+                  ? h("div", { className: "flex flex-col items-stretch gap-1.5 sm:flex-row sm:flex-wrap sm:items-center" }, actionEls)
                   : h(
                       "span",
                       { className: "block text-xs leading-snug text-slate-500 dark:text-slate-400" },
@@ -1301,7 +1635,7 @@ export function VendorOrdersPage() {
                     );
               })()
             )
-          ]);
+          );
         })
       )
     ]))
@@ -2209,4 +2543,12 @@ export function VendorProfilePage() {
     ]),
     h(Link, { to: "/vendor/settings" }, h(Button, { variant: "ghost", className: "mt-6" }, "Edit in settings"))
   ]);
+}
+
+export function VendorNotificationsPage() {
+  return h(NotificationsContent, {
+    ordersLink: "/vendor/orders",
+    backLink: "/vendor/dashboard",
+    backLabel: "Dashboard"
+  });
 }

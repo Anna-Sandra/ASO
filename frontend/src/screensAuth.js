@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
-import { useAuth } from "./AuthContext";
-import { useNotice } from "./NoticeContext";
-import { useTheme } from "./ThemeContext";
-import { h, f } from "./h";
+import { useAuth, useNotice, useTheme } from "./contexts";
+import { h } from "./h";
 import { apiFetch, fetchPublicPlatformConfig } from "./api";
 import { Button, Field, GlassPanel, InlineNotice, LogoMark, OtpCodeInput, RefImage, TextInput, ThemeToggleButton } from "./ui";
 
@@ -82,6 +80,9 @@ function routeAfterSession(data, { identifierFallback, redirectState, nav, toast
   } else if (role === "seller") {
     if (typeof toastText === "string" && toastText.length) toast(t, { variant: "success" });
     nav("/vendor/dashboard", { replace: true });
+  } else if (role === "rider") {
+    toast(t, { variant: "success" });
+    nav("/rider", { replace: true });
   } else {
     toast(t, { variant: "success" });
     nav(postBuyerAuthRedirectPath(redirectState), { replace: true });
