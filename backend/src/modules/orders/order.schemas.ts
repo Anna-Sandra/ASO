@@ -5,7 +5,8 @@ export const checkoutSchema = z.object({
     .array(
       z.object({
         productId: z.string().min(1),
-        quantity: z.coerce.number().int().positive()
+        quantity: z.coerce.number().int().positive(),
+        customization: z.string().trim().max(280).optional().default("")
       })
     )
     .min(1)

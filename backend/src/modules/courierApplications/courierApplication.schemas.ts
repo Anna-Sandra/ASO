@@ -11,9 +11,11 @@ export const submitCourierApplicationSchema = z.object({
   phone: z.string().trim().min(5).max(40),
   vehicleType: z.string().trim().min(1).max(80),
   notes: z.string().trim().min(15).max(800),
-  idDocUrl: z.string().trim().max(500).optional().default(""),
+  idDocUrl: z.string().trim().min(1, { message: "Upload a Ghana Card or valid ID photo / PDF." }).max(500),
   agreeToTerms: z.boolean().refine((v) => v === true, { message: "You must accept the Terms & Conditions." }),
-  agreeCourierRules: z.boolean().refine((v) => v === true, { message: "You must acknowledge the courier requirements." })
+  agreeCourierRules: z.boolean().refine((v) => v === true, { message: "You must acknowledge the courier requirements." }),
+  /** Required when submitting as a guest; ignored when signed in as a shopper (profile email wins). */
+  email: z.union([z.literal(""), z.string().trim().email().max(200)]).optional()
 });
 
 export const adminCourierApplicationsQuerySchema = z.object({

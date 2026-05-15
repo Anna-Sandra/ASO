@@ -55,6 +55,18 @@ export function isServicesCategory(entity) {
   return entity.category === "services";
 }
 
+/** Food & drinks — no guaranteed fixed price online; storefront shows “Call to order”. */
+export function isFoodCallToOrderCategory(entity) {
+  if (!entity || typeof entity !== "object") return false;
+  return entity.category === "food_drinks";
+}
+
+/** Categories that skip cart / Paystack totals (quoted or called in). */
+export function isOfflineQuoteCategory(entity) {
+  return isServicesCategory(entity) || isFoodCallToOrderCategory(entity);
+}
+
+
 /** @param {Record<string, unknown>} p */
 export function productMatchesFilter(p, filId) {
   const tags = /** @type {string[]} */ (p.tags || []);

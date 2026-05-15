@@ -13,9 +13,21 @@ export type ProductCategory = (typeof PRODUCT_CATEGORIES)[number];
 
 export type ProductStatus = "draft" | "pending_approval" | "active" | "rejected";
 
+export const LISTING_KINDS = ["catalog", "menu", "service"] as const;
+export type ListingKind = (typeof LISTING_KINDS)[number];
+
+export type ProductAddonDoc = { label: string; priceDelta: number };
+
 export interface ProductDoc {
   _id: mongoose.Types.ObjectId;
   sellerId: mongoose.Types.ObjectId;
+  /** Optional link to a seller-owned business store (multi-vendor storefront). */
+  businessId?: mongoose.Types.ObjectId | null;
+  menuSectionId?: mongoose.Types.ObjectId | null;
+  /** Drives category-specific listing/edit UX; omitted treated as catalog semantics. */
+  listingKind?: ListingKind;
+  prepTimeMinutes?: number | null;
+  addons?: ProductAddonDoc[];
   name: string;
   description: string;
   category: ProductCategory;
@@ -35,9 +47,22 @@ export interface ProductDoc {
   updatedAt: Date;
 }
 
+const productAddonSchema = new Schema<ProductAddonDoc>(
+  {
+    label: { type: String, required: true, trim: true, maxlength: 80 },
+    priceDelta: { type: Number, required: true, min: 0, default: 0 }
+  },
+  { _id: false }
+);
+
 const productSchema = new Schema<ProductDoc>(
   {
     sellerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    businessId: { type: Schema.Types.ObjectId, ref: "Business", default: null, index: true },
+    menuSectionId: { type: Schema.Types.ObjectId, ref: "MenuSection", default: null, index: true },
+    listingKind: { type: String, enum: LISTING_KINDS, default: undefined },
+    prepTimeMinutes: { type: Number, min: 1, max: 10080, default: null },
+    addons: { type: [productAddonSchema], default: [] },
     name: { type: String, required: true, trim: true },
     description: { type: String, default: "" },
     category: { type: String, required: true, enum: PRODUCT_CATEGORIES },
@@ -55,6 +80,7 @@ const productSchema = new Schema<ProductDoc>(
 );
 
 productSchema.index({ category: 1, status: 1 });
+productSchema.index({ businessId: 1, status: 1 });
 productSchema.index({ name: "text", description: "text" });
 
 export const Product = mongoose.model<ProductDoc>("Product", productSchema);

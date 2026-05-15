@@ -1,9 +1,72 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles, X } from "lucide-react";
-import { apiFetch } from "./api";
+import { getApiBase } from "./api";
+import { getOrCreateSaveSessionId } from "./saveSession";
 import { useAuth } from "./contexts";
 import { h } from "./h";
 import { Button, TextInput } from "./ui";
+
+/** @returns {Array<{type: 'text'|'img', value?: string, alt?: string, url?: string}>} */
+function splitAssistantMarkdown(text) {
+  if (typeof text !== "string" || !text.length) return [{ type: "text", value: "" }];
+  const re = /!\[([^\]]*)\]\((https?:[^)\s]+)\)/g;
+  const parts = [];
+  let last = 0;
+  let m = re.exec(text);
+  while (m !== null) {
+    if (m.index > last) parts.push({ type: "text", value: text.slice(last, m.index) });
+    parts.push({ type: "img", alt: m[1] || "", url: m[2] });
+    last = m.index + m[0].length;
+    m = re.exec(text);
+  }
+  if (last < text.length) parts.push({ type: "text", value: text.slice(last) });
+  return parts.length ? parts : [{ type: "text", value: text }];
+}
+
+function isAllowedAssistantImageUrl(url) {
+  const base = String(getApiBase() || "").trim().replace(/\/$/, "");
+  if (!base || typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
+  try {
+    return new URL(url).origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
+function BubbleContent({ mine, content }) {
+  if (mine || typeof content !== "string") {
+    return content;
+  }
+  const parts = splitAssistantMarkdown(content);
+  return h(
+    "div",
+    { className: "space-y-2" },
+    parts.map((p, idx) => {
+      if (p.type === "text") {
+        return h(
+          "div",
+          { key: `t-${idx}`, className: "whitespace-pre-wrap break-words leading-relaxed [word-break:break-word]" },
+          p.value || ""
+        );
+      }
+      if (!isAllowedAssistantImageUrl(p.url)) {
+        return h(
+          "p",
+          { key: `b-${idx}`, className: "text-[11px] text-slate-400 dark:text-slate-500" },
+          "[Image link only works for this store’s media]"
+        );
+      }
+      return h("img", {
+        key: `i-${idx}`,
+        src: p.url,
+        alt: p.alt || "Product",
+        loading: "lazy",
+        className: "max-h-40 w-full max-w-full rounded-xl border border-slate-200/80 object-cover dark:border-white/10",
+        decoding: "async"
+      });
+    })
+  );
+}
 
 function Bubble({ mine, children }) {
   return h(
@@ -13,19 +76,21 @@ function Bubble({ mine, children }) {
         mine ? "ml-auto bg-sky-600 text-white" : "mr-auto bg-white text-slate-800 dark:bg-night-800 dark:text-slate-100"
       }`
     },
-    children
+    h(BubbleContent, { mine, content: children })
   );
 }
 
 export function ShoppingAssistantFAB() {
   const { accessToken } = useAuth();
   const [open, setOpen] = useState(false);
-  /** @type {Array<{role: string, content: string}>} */
-  const [messages, setMessages] = useState([
+  const msgIdRef = useRef(0);
+  /** @type {Array<{id: number, role: string, content: string}>} */
+  const [messages, setMessages] = useState(() => [
     {
+      id: msgIdRef.current++,
       role: "assistant",
       content:
-        "Hi — I'm the Campus Mart guide. Ask about listings, budgets, campus delivery basics, or how to report an issue. If your server connects Ollama locally, replies get richer without paid APIs."
+        "Hi ✨ I'm your Campus Mart assistant. Replies stream in as they're generated so you don't wait on a blank bubble. Ask about products 🛒, checkout, or delivery — smaller Ollama models feel much snappier."
     }
   ]);
   const [draft, setDraft] = useState("");
@@ -43,31 +108,121 @@ export function ShoppingAssistantFAB() {
     const text = draft.trim();
     if (!text || busy) return;
     const prior = messages;
-    const userMsg = { role: "user", content: text };
+    const userMsg = { id: msgIdRef.current++, role: "user", content: text };
     setMessages((m) => [...m, userMsg]);
     setDraft("");
     setBusy(true);
     try {
       const history = prior
         .filter((m) => m.role === "user" || m.role === "assistant")
-        .slice(-14)
-        .map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
-      const hdr = {};
-      if (accessToken) hdr.Authorization = `Bearer ${accessToken}`;
-      const data = await apiFetch("/api/assistant/chat", {
+        .slice(-4)
+        .map((m) => ({
+          role: m.role === "user" ? "user" : "assistant",
+          content: m.content
+        }));
+
+      const apiBase = String(getApiBase() || "").trim().replace(/\/$/, "");
+      if (!apiBase) {
+        throw new Error("Set REACT_APP_API_URL in frontend/.env to your API URL and restart the dev server.");
+      }
+
+      const headers = new Headers({ "Content-Type": "application/json" });
+      if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+      const sid = getOrCreateSaveSessionId();
+      if (sid) headers.set("X-Save-Session", sid);
+
+      const res = await fetch(`${apiBase}/api/assistant/chat`, {
         method: "POST",
-        headers: hdr,
-        json: {
-          message: text,
-          history
-        }
+        headers,
+        credentials: "include",
+        body: JSON.stringify({ message: text, history, stream: true })
       });
-      const reply = typeof data?.reply === "string" ? data.reply.trim() : "No reply.";
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+
+      if (!res.ok) {
+        let msg = `Request failed (${res.status})`;
+        try {
+          const j = await res.json();
+          if (j?.error?.message) msg = j.error.message;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+
+      const ct = res.headers.get("content-type") || "";
+
+      if (!ct.includes("text/event-stream")) {
+        const data = await res.json();
+        const reply = typeof data?.reply === "string" ? data.reply.trim() : "No reply.";
+        setMessages((prev) => [...prev, { id: msgIdRef.current++, role: "assistant", content: reply }]);
+        return;
+      }
+
+      const assistantId = msgIdRef.current++;
+      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "" }]);
+
+      const reader = res.body && res.body.getReader();
+      if (!reader) throw new Error("No response stream from assistant.");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullText = "";
+
+      const flushBlocks = () => {
+        for (;;) {
+          const sep = buffer.indexOf("\n\n");
+          if (sep < 0) break;
+          const block = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          const line = block.split("\n").find((ln) => ln.startsWith("data:"));
+          if (!line) continue;
+          const raw = line.replace(/^data:\s*/, "").trim();
+          if (!raw) continue;
+          let j;
+          try {
+            j = JSON.parse(raw);
+          } catch {
+            continue;
+          }
+          if (typeof j.delta === "string" && j.delta.length) {
+            fullText += j.delta;
+            const t = fullText;
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: t } : m)));
+          }
+          if (j.done === true && typeof j.reply === "string") {
+            fullText = j.reply;
+            const t = fullText;
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: t } : m)));
+          }
+          if (j.error && typeof j.reply === "string") {
+            fullText = j.reply;
+            const t = fullText;
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: t } : m)));
+          }
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        flushBlocks();
+      }
+      flushBlocks();
+      buffer += "\n\n";
+      flushBlocks();
+
+      const final = fullText.trim();
+      if (!final) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, content: "No response text — is Ollama running with a model pulled?" } : m))
+        );
+      }
     } catch (ex) {
       setMessages((prev) => [
         ...prev,
         {
+          id: msgIdRef.current++,
           role: "assistant",
           content: typeof ex?.message === "string" ? ex.message : "Could not reach the assistant endpoint."
         }
@@ -110,13 +265,18 @@ export function ShoppingAssistantFAB() {
                     "flex shrink-0 items-center justify-between border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-violet-50 px-4 py-3 dark:border-white/10 dark:from-indigo-950/40 dark:to-violet-950/30"
                 },
                 [
-                  h("div", { className: "flex items-center gap-2" }, [
-                    h(Sparkles, { className: "h-5 w-5 text-violet-600 dark:text-violet-300", "aria-hidden": true }),
-                    h("span", { className: "font-display text-sm font-bold text-slate-900 dark:text-white" }, "Mart assistant")
-                  ]),
+                  h(
+                    "div",
+                    { key: "title-row", className: "flex items-center gap-2" },
+                    [
+                      h(Sparkles, { key: "ic", className: "h-5 w-5 text-violet-600 dark:text-violet-300", "aria-hidden": true }),
+                      h("span", { key: "ttl", className: "font-display text-sm font-bold text-slate-900 dark:text-white" }, "Mart assistant")
+                    ]
+                  ),
                   h(
                     "button",
                     {
+                      key: "close-panel",
                       type: "button",
                       className: "tap-target rounded-xl border border-white/70 p-1.5 hover:bg-white/60 dark:border-white/10 dark:hover:bg-white/10",
                       onClick: () => setOpen(false),
@@ -129,7 +289,7 @@ export function ShoppingAssistantFAB() {
               h(
                 "div",
                 { ref: scrollRef, className: "min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3 text-sm sm:min-h-[220px]" },
-                messages.map((m, i) => h(Bubble, { key: i, mine: m.role === "user" }, m.content))
+                messages.map((m) => h(Bubble, { key: m.id, mine: m.role === "user" }, m.content))
               ),
               h("div", { key: "in", className: "flex shrink-0 gap-2 border-t border-white/15 bg-white/90 p-2 dark:bg-night-950/90" }, [
                 h(TextInput, {

@@ -6,6 +6,7 @@ const CartContext = createContext({
   add: () => {},
   remove: () => {},
   setQty: () => {},
+  setCustomization: () => {},
   clear: () => {},
   subtotal: 0,
   count: 0
@@ -13,13 +14,32 @@ const CartContext = createContext({
 
 const KEY = "campusmart_cart_v1";
 
+const NO_CART_CATEGORIES = new Set(["services", "food_drinks"]);
+
+function normalizeCustomization(s) {
+  const t = String(s || "").trim();
+  return t.length > 280 ? t.slice(0, 280) : t;
+}
+
+function stableLineKey(productId, customization) {
+  return `${String(productId)}::${normalizeCustomization(customization)}`;
+}
+
+function migrateLoadedItem(p) {
+  if (!p || typeof p !== "object") return null;
+  if (NO_CART_CATEGORIES.has(p.category)) return null;
+  const cust = normalizeCustomization(p.customization);
+  const lk = stableLineKey(p.id, cust);
+  return { ...p, customization: cust, _lineKey: p._lineKey || lk };
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((p) => p && typeof p === "object" && p.category !== "services");
+    return parsed.map(migrateLoadedItem).filter(Boolean);
   } catch {
     return [];
   }
@@ -36,35 +56,64 @@ export function CartProvider({ children }) {
     }
   }, [items]);
 
-  const add = useCallback((product, qty = 1) => {
-    if (!product || product.category === "services") return;
+  const add = useCallback((product, qty = 1, customization = "") => {
+    if (!product || NO_CART_CATEGORIES.has(product.category)) return;
+    const q = Number(qty) || 1;
+    const cust = normalizeCustomization(customization);
+    const lk = stableLineKey(product.id, cust);
     setItems((prev) => {
-      const i = prev.findIndex((p) => p.id === product.id);
-      if (i === -1) return [...prev, { ...product, qty }];
+      const i = prev.findIndex((row) => row._lineKey === lk || (row.id === product.id && normalizeCustomization(row.customization) === cust));
+      if (i === -1) return [...prev, { ...product, qty: q, customization: cust, _lineKey: lk }];
       const next = [...prev];
-      next[i] = { ...next[i], qty: next[i].qty + qty };
+      next[i] = { ...next[i], qty: next[i].qty + q, customization: cust, _lineKey: lk };
       return next;
     });
   }, []);
 
-  const remove = useCallback((id) => setItems((prev) => prev.filter((p) => p.id !== id)), []);
+  /** Remove one cart line by its stable line key (`row._lineKey`). */
+  const remove = useCallback((lineKey) => setItems((prev) => prev.filter((p) => p._lineKey !== lineKey)), []);
 
-  const setQty = useCallback((id, qty) => {
+  const setQty = useCallback((lineKey, qty) => {
     setItems((prev) =>
       prev
-        .map((p) => (p.id === id ? { ...p, qty: Math.max(0, qty) } : p))
+        .map((p) => (p._lineKey === lineKey ? { ...p, qty: Math.max(0, Number(qty) || 0) } : p))
         .filter((p) => p.qty > 0)
     );
   }, []);
 
+  const setCustomization = useCallback((lineKey, text) => {
+    const cust = normalizeCustomization(text);
+    setItems((prev) => {
+      const idx = prev.findIndex((p) => p._lineKey === lineKey);
+      if (idx === -1) return prev;
+      const row = prev[idx];
+      const nextKey = stableLineKey(row.id, cust);
+      const clashIdx = prev.findIndex((j, ji) => ji !== idx && j.id === row.id && normalizeCustomization(j.customization) === cust);
+      if (clashIdx >= 0) {
+        const next = [...prev];
+        next[clashIdx] = {
+          ...next[clashIdx],
+          qty: next[clashIdx].qty + row.qty,
+          customization: cust,
+          _lineKey: stableLineKey(row.id, cust)
+        };
+        next.splice(idx, 1);
+        return next;
+      }
+      const next = [...prev];
+      next[idx] = { ...row, customization: cust, _lineKey: nextKey };
+      return next;
+    });
+  }, []);
+
   const clear = useCallback(() => setItems([]), []);
 
-  const subtotal = items.reduce((s, p) => s + p.price * p.qty, 0);
+  const subtotal = items.reduce((s, p) => s + (Number(p.price) || 0) * (Number(p.qty) || 0), 0);
   const count = items.reduce((s, p) => s + p.qty, 0);
 
   const value = useMemo(
-    () => ({ items, add, remove, setQty, clear, subtotal, count }),
-    [items, subtotal, count, add, remove, setQty, clear]
+    () => ({ items, add, remove, setQty, setCustomization, clear, subtotal, count }),
+    [items, subtotal, count, add, remove, setQty, setCustomization, clear]
   );
 
   return h(CartContext.Provider, { value }, children);

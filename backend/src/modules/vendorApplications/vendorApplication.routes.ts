@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { protect, authorize } from "../../middleware/auth";
+import { protect, authorize, optionalProtect } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import { getMyVendorApplicationStatus, submitVendorApplication } from "./vendorApplication.controller";
@@ -9,9 +9,8 @@ const router = Router();
 
 router.post(
   "/",
-  protect,
+  optionalProtect,
   requireActiveAccount,
-  authorize("buyer"),
   validateBody(submitVendorApplicationSchema),
   submitVendorApplication
 );

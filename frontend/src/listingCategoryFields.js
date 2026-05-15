@@ -131,7 +131,9 @@ export const LISTING_FORM_META = {
   food_drinks: {
     ...DEFAULT_META,
     formPanelTitle: "Food & drink listing",
-    stockLabel: "How many can you fulfill (inventory)",
+    /** Menu-style: buyers contact / call to order; storefront hides list price (stored as 0). */
+    hidePrice: true,
+    showStock: false,
     namePlaceholder: "e.g. Jollof lunch box, iced cocoa 500ml",
     photosLabel: "Food images",
     photosHintTail: " Clear shots help buyers decide quickly."

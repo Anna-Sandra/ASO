@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { protect, authorize } from "../../middleware/auth";
+import { protect, authorize, optionalProtect, authorizeGuestOrBuyerApplicationUpload } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import {
   uploadProductImages,
@@ -35,9 +35,9 @@ router.post(
 
 router.post(
   "/vendor-verification",
-  protect,
+  optionalProtect,
   requireActiveAccount,
-  authorize("buyer"),
+  authorizeGuestOrBuyerApplicationUpload,
   uploadVendorVerificationMiddleware,
   uploadVendorVerification
 );

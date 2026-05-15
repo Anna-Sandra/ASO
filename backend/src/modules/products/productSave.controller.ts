@@ -4,7 +4,7 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { Product } from "./product.model";
 import { ProductSave } from "./productSave.model";
-import { attachSellerPayments } from "./product.controller";
+import { attachSellerPayments } from "./product.publicSerialize";
 
 /** UUID v4 (guest save session from `X-Save-Session`). */
 const GUEST_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

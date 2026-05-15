@@ -4,7 +4,7 @@ export type CourierApplicationStatus = "pending" | "approved" | "rejected";
 
 export interface CourierApplicationDoc {
   _id: mongoose.Types.ObjectId;
-  userId: mongoose.Types.ObjectId;
+  userId?: mongoose.Types.ObjectId | null;
   fullName: string;
   email: string;
   phone: string;
@@ -20,7 +20,7 @@ export interface CourierApplicationDoc {
 
 const courierApplicationSchema = new Schema<CourierApplicationDoc>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: false, default: null, index: true, sparse: true },
     fullName: { type: String, required: true, trim: true, maxlength: 120 },
     email: { type: String, required: true, trim: true, lowercase: true, maxlength: 200 },
     phone: { type: String, required: true, trim: true, maxlength: 40 },

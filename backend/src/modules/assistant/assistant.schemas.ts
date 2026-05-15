@@ -9,7 +9,9 @@ export const assistantChatSchema = z.object({
         content: z.string().max(4000)
       })
     )
-    .max(20)
+    .max(16)
     .optional()
-    .default([])
+    .default([]),
+  /** When true, response is SSE (`text/event-stream`) with incremental `delta` events — feels much faster than waiting for JSON. */
+  stream: z.boolean().optional().default(false)
 });

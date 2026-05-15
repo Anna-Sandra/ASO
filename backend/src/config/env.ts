@@ -12,6 +12,12 @@ const envSchema = z.object({
   MONGODB_URI: z.string().min(1),
   APP_ORIGIN: z.string().url(),
 
+  /**
+   * Public URL origin of **this API** as the browser would load it (e.g. https://api.example.com or http://localhost:4000).
+   * Used to build absolute product image URLs for the shopping assistant. Defaults to http://localhost:PORT when empty.
+   */
+  API_PUBLIC_ORIGIN: z.string().optional().default(""),
+
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_TTL_MINUTES: z.coerce.number().int().positive().default(15),
@@ -123,6 +129,26 @@ const envSchema = z.object({
 
   /** Model name understood by local Ollama (e.g. llama3, mistral). */
   OLLAMA_MODEL: z.string().optional().default("llama3"),
+
+  /**
+   * How long the API waits for Ollama `/api/chat` (ms). First reply after `ollama pull` or a cold model can take minutes on CPU.
+   */
+  OLLAMA_TIMEOUT_MS: z.coerce.number().int().min(30000).max(900000).optional().default(300000),
+
+  /** Max new tokens per reply; lower = faster CPU decoding (80–140 typical for short chat). */
+  OLLAMA_NUM_PREDICT: z.coerce.number().int().min(64).max(4096).optional().default(112),
+
+  /** Context window tokens; lower = faster prefill on CPU. Raise if replies truncate mid-thought. */
+  OLLAMA_NUM_CTX: z.coerce.number().int().min(1024).max(131072).optional().default(1280),
+
+  /** Creative vs deterministic; slightly lower can decode a bit faster. */
+  OLLAMA_TEMPERATURE: z.coerce.number().min(0).max(2).optional().default(0.55),
+
+  /**
+   * Passed to Ollama as `num_thread` when > 0 (CPU threads). 0 = omit (Ollama picks automatically).
+   * On typical 8‑core desktops, values like 6–8 can help Mistral‑class models without a GPU.
+   */
+  OLLAMA_NUM_THREAD: z.coerce.number().int().min(0).max(256).optional().default(0),
 
   /**
    * Comma- or semicolon-separated emails that count as the platform "super" admin in addition

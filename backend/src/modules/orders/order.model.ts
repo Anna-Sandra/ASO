@@ -19,6 +19,8 @@ export interface OrderLineItem {
   /** Line list subtotal = unitPrice × quantity (vendor’s intended proceeds). */
   platformFee: number;
   sellerProceeds: number;
+  /** Optional buyer customization (portion swaps, exclusions, spelling, etc.). */
+  buyerNote?: string;
 }
 
 export interface OrderMessage {
@@ -104,7 +106,8 @@ const lineItemSchema = new Schema<OrderLineItem>(
     quantity: { type: Number, required: true, min: 1 },
     unitPrice: { type: Number, required: true, min: 0 },
     platformFee: { type: Number, required: true, min: 0, default: 0 },
-    sellerProceeds: { type: Number, required: true, min: 0, default: 0 }
+    sellerProceeds: { type: Number, required: true, min: 0, default: 0 },
+    buyerNote: { type: String, trim: true, maxlength: 280, default: "" }
   },
   { _id: false }
 );

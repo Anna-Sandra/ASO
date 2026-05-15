@@ -61,7 +61,8 @@ export function VendorApplicationPage() {
   const fileRef = useRef(null);
 
   const [fullName, setFullName] = useState(() => String(user?.displayName || "").trim());
-  const [email] = useState(() => String(user?.email || "").trim());
+  const accountEmail = String(user?.email || "").trim();
+  const [guestEmail, setGuestEmail] = useState("");
   const [shopName, setShopName] = useState("");
   const [category, setCategory] = useState(PRODUCT_CATEGORY_VALUES[0]);
   const [sellsDescription, setSellsDescription] = useState("");
@@ -106,7 +107,7 @@ export function VendorApplicationPage() {
   const onPickFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !accessToken) return;
+    if (!file) return;
     const okMime = file.type === "image/jpeg" || file.type === "image/png" || file.type === "application/pdf";
     if (!okMime) {
       setErr("Please upload a PNG, JPG, or PDF (max 5 MB).");
@@ -121,9 +122,10 @@ export function VendorApplicationPage() {
     try {
       const fd = new FormData();
       fd.append("file", file);
+      const hdr = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
       const res = await fetch(`${getApiBase()}/api/uploads/vendor-verification`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: hdr,
         body: fd,
         credentials: "include"
       });
@@ -143,8 +145,15 @@ export function VendorApplicationPage() {
   const onSubmit = async (e) => {
     e.preventDefault();
     setErr("");
+    const resolvedEmail = accessToken ? accountEmail : String(guestEmail || "").trim().toLowerCase();
     if (!accessToken) {
-      nav("/login", { state: { from: "/apply-vendor" } });
+      if (!resolvedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedEmail)) {
+        setErr("Enter a valid email so we can reply about your application.");
+        return;
+      }
+    }
+    if (accessToken && !resolvedEmail) {
+      setErr("Your account needs an email. Add one under Profile, then try again.");
       return;
     }
     if (applyBlocked) {
@@ -157,6 +166,10 @@ export function VendorApplicationPage() {
     }
     if (!agreeTerms || !agreeVendorRules) {
       setErr("Please accept the Terms & Conditions and the vendor rules to continue.");
+      return;
+    }
+    if (!String(verificationDocUrl).trim()) {
+      setErr("Ghana Card (or equivalent ID) upload is required. Use the upload section above.");
       return;
     }
     if (!String(nearbyArea).trim()) {
@@ -175,25 +188,30 @@ export function VendorApplicationPage() {
     }
     setLoading(true);
     try {
+      const reqHeaders = {};
+      if (accessToken) reqHeaders.Authorization = `Bearer ${accessToken}`;
+      /** @type {Record<string, unknown>} */
+      const json = {
+        fullName: fullName.trim(),
+        shopName: shopName.trim(),
+        category,
+        sellsDescription: sellsDescription.trim(),
+        phone: phone.trim(),
+        altPhone: altPhone.trim(),
+        shopDescription: shopDescription.trim(),
+        verificationDocUrl: verificationDocUrl.trim(),
+        locationBase,
+        nearbyArea: nearbyArea.trim(),
+        agreeToTerms: true,
+        agreeToVendorRules: true
+      };
+      if (!accessToken) json.email = resolvedEmail;
       await apiFetch("/api/vendor-applications", {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        json: {
-          fullName: fullName.trim(),
-          shopName: shopName.trim(),
-          category,
-          sellsDescription: sellsDescription.trim(),
-          phone: phone.trim(),
-          altPhone: altPhone.trim(),
-          shopDescription: shopDescription.trim(),
-          verificationDocUrl: verificationDocUrl.trim(),
-          locationBase,
-          nearbyArea: nearbyArea.trim(),
-          agreeToTerms: true,
-          agreeToVendorRules: true
-        }
+        headers: reqHeaders,
+        json
       });
-      setUser((prev) => (prev ? { ...prev, vendorStatus: "pending" } : prev));
+      if (user && accessToken) setUser((prev) => (prev ? { ...prev, vendorStatus: "pending" } : prev));
       toast("Application submitted! We will email you after review.", { variant: "success" });
       nav("/", { replace: true });
     } catch (ex) {
@@ -302,13 +320,53 @@ export function VendorApplicationPage() {
           platformCfg && platformCfg.allowVendorApplications === false
             ? h(InlineNotice, { key: "closed", variant: "warning", title: "Applications closed" }, "The operator has temporarily stopped new vendor applications.")
             : null,
+          !accessToken
+            ? h(
+                InlineNotice,
+                { key: "guest", variant: "info", title: "Applying as a guest?" },
+                "You can submit without an account — use your email and upload ID below. Signing in works too; signed-in shoppers use their profile email for contact."
+              )
+            : null,
           h(
             "form",
             { className: "mt-6 space-y-5", onSubmit },
             [
               h("div", { key: "r1", className: "grid gap-4 sm:grid-cols-2" }, [
                 h(Field, { label: h("span", { className: "inline-flex items-center gap-1" }, [h(User, { className: "h-3.5 w-3.5" }), " Full name"]) }, h(TextInput, { value: fullName, onChange: (e) => setFullName(e.target.value), required: true })),
-                h(Field, { label: h("span", { className: "inline-flex items-center gap-1" }, [h(Mail, { className: "h-3.5 w-3.5" }), " Email"]) }, h(TextInput, { type: "email", value: email, readOnly: true, className: "opacity-80" }))
+                accessToken
+                  ? h(
+                      Field,
+                      {
+                        label: h("span", { className: "inline-flex items-center gap-1" }, [
+                          h(Mail, { className: "h-3.5 w-3.5" }),
+                          " Email (from your account)"
+                        ])
+                      },
+                      h(TextInput, {
+                        type: "email",
+                        value: accountEmail,
+                        placeholder: accountEmail ? undefined : "Add email on Profile.",
+                        readOnly: true,
+                        className: "opacity-90"
+                      })
+                    )
+                  : h(
+                      Field,
+                      {
+                        label: h("span", { className: "inline-flex items-center gap-1" }, [
+                          h(Mail, { className: "h-3.5 w-3.5" }),
+                          " Email (we’ll reply here)"
+                        ])
+                      },
+                      h(TextInput, {
+                        type: "email",
+                        value: guestEmail,
+                        onChange: (e) => setGuestEmail(e.target.value),
+                        placeholder: "you@example.com",
+                        required: true,
+                        autoComplete: "email"
+                      })
+                    )
               ]),
               h(Field, { key: "shop", label: "Shop / business name" }, h(TextInput, { value: shopName, onChange: (e) => setShopName(e.target.value), required: true })),
               h("div", { key: "r3", className: "grid gap-4 sm:grid-cols-2" }, [
@@ -341,7 +399,7 @@ export function VendorApplicationPage() {
                 ])
               ]),
               h("div", { key: "up", className: "space-y-2" }, [
-                h("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400" }, "Ghana Card"),
+                h("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400" }, "Ghana Card (required)"),
                 h(
                   "button",
                   {
@@ -353,7 +411,7 @@ export function VendorApplicationPage() {
                   [
                     h(CloudUpload, { key: "upl-ic", className: "h-10 w-10 text-sky-600 dark:text-sky-400" }),
                     h("p", { key: "upl-t1", className: "text-sm font-medium text-slate-800 dark:text-slate-100" }, "Click to upload or drag and drop"),
-                    h("p", { key: "upl-t2", className: "text-xs text-slate-500" }, "PNG, JPG or PDF (max. 5 MB) — optional but recommended.")
+                    h("p", { key: "upl-t2", className: "text-xs text-slate-500" }, "PNG, JPG or PDF (max. 5 MB). Required.")
                   ]
                 ),
                 h("input", { ref: fileRef, type: "file", accept: "image/png,image/jpeg,application/pdf", className: "hidden", onChange: onPickFile }),

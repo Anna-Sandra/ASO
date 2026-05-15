@@ -49,6 +49,8 @@ import {
   FILTERS,
   formatSellerPaymentSnippet,
   groupCartItemsBySeller,
+  isFoodCallToOrderCategory,
+  isOfflineQuoteCategory,
   isServicesCategory,
   productBadge,
   productMatchesFilter,
@@ -84,6 +86,17 @@ function buyerServicePricingPanel() {
       "p",
       { className: "mt-1 text-xs leading-relaxed text-amber-950/90 dark:text-amber-100/90" },
       "Contact vendor for more details — use the seller details below to reach them and agree scope and payment."
+    )
+  ]);
+}
+
+function buyerFoodCallPricingPanel() {
+  return h(GlassPanel, { key: "food-c2o", className: "!border-violet-500/25 !bg-violet-500/10" }, [
+    h("h3", { className: "text-sm font-semibold text-violet-950 dark:text-violet-50" }, "Pricing"),
+    h(
+      "p",
+      { className: "mt-1 text-xs leading-relaxed text-violet-950/90 dark:text-violet-100/90" },
+      "Call to order — portions and sides can change the price. Use seller contact details below to confirm before you pay."
     )
   ]);
 }
@@ -452,6 +465,7 @@ export function ProductDetailPage() {
   const [searchParams] = useSearchParams();
   const orderIdFromUrl = searchParams.get("orderId") || "";
   const { accessToken } = useAuth();
+  const { toast } = useNotice();
   const { add } = useCart();
   const { isSaved, toggleSaved } = useSavedProducts();
   const [product, setProduct] = useState(null);
@@ -466,6 +480,11 @@ export function ProductDetailPage() {
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [reviewMsg, setReviewMsg] = useState("");
+  /** Notes passed with “Add to cart” (preferences, exclusions, etc.). */
+  const [detailCustomization, setDetailCustomization] = useState("");
+  const [svcPreferredTime, setSvcPreferredTime] = useState("");
+  const [svcMessage, setSvcMessage] = useState("");
+  const [svcSubmitting, setSvcSubmitting] = useState(false);
   const [relatedExplore, setRelatedExplore] = useState([]);
   const [relatedSimilar, setRelatedSimilar] = useState([]);
   const [relatedExploreTitle, setRelatedExploreTitle] = useState("Explore your interests");
@@ -483,6 +502,9 @@ export function ProductDetailPage() {
         setProduct(pd.product || null);
         setReviews(rv.reviews || []);
         setPhotoIdx(0);
+        setDetailCustomization("");
+        setSvcPreferredTime("");
+        setSvcMessage("");
       })
       .catch((ex) => {
         if (!cancelled) {
@@ -550,13 +572,45 @@ export function ProductDetailPage() {
   }, [productId]);
 
   const tryAdd = () => {
-    if (!product || isServicesCategory(product) || (product.stock ?? 0) <= 0) return;
+    if (!product || isOfflineQuoteCategory(product) || (product.stock ?? 0) <= 0) return;
     if (!accessToken) {
       nav("/login", { state: { from: loc.pathname } });
       return;
     }
-    add(product, 1);
+    add(product, 1, detailCustomization);
     setCartOpen(true);
+  };
+
+  const submitServiceBooking = async () => {
+    if (!productId || !product || !isServicesCategory(product)) return;
+    if (!accessToken) {
+      nav("/login", { state: { from: loc.pathname } });
+      return;
+    }
+    const msg = svcMessage.trim();
+    if (msg.length < 10) {
+      toast("Please describe what you need (at least 10 characters).", { variant: "error" });
+      return;
+    }
+    setSvcSubmitting(true);
+    try {
+      await apiFetch("/api/service-inquiries", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: {
+          productId,
+          message: msg,
+          preferredTime: svcPreferredTime.trim()
+        }
+      });
+      setSvcMessage("");
+      setSvcPreferredTime("");
+      toast("Request sent. The seller was notified in-app.", { variant: "success" });
+    } catch (ex) {
+      toast(ex.message || "Could not send request.", { variant: "error" });
+    } finally {
+      setSvcSubmitting(false);
+    }
   };
 
   const submitReview = async () => {
@@ -649,8 +703,25 @@ export function ProductDetailPage() {
   const mainSrc = imgs[photoIdx] || imgs[0];
   const titleShort = product.name.length > 28 ? `${product.name.slice(0, 26)}…` : product.name;
   const svc = isServicesCategory(product);
+  const foodC2O = isFoodCallToOrderCategory(product);
+  const offlineListing = svc || foodC2O;
   const listPx = Number(product.price) || 0;
-  const unitPayTotal = !svc && pricingOpts ? buyerTotalFromSellerSubtotal(listPx, pricingOpts) : null;
+  const unitPayTotal = !offlineListing && pricingOpts ? buyerTotalFromSellerSubtotal(listPx, pricingOpts) : null;
+
+  const pricingPanel = svc
+    ? buyerServicePricingPanel()
+    : foodC2O
+      ? buyerFoodCallPricingPanel()
+      : h("div", { key: "pr", className: "flex flex-col gap-1" }, [
+          h("span", { className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx)),
+          unitPayTotal != null && Math.abs(unitPayTotal - listPx) > 0.005
+            ? h(
+                "span",
+                { className: "text-xs text-slate-500 dark:text-slate-400" },
+                `Listing ${formatGhc(listPx)} · Total includes estimated service & payment fees`
+              )
+            : null
+        ].filter(Boolean));
 
   return h(f, null, [
     h(
@@ -807,19 +878,8 @@ export function ProductDetailPage() {
                 h("span", { className: "text-slate-500" }, `(${reviews.length} review${reviews.length === 1 ? "" : "s"})`)
               ])
           ]),
-          svc
-            ? buyerServicePricingPanel()
-            : h("div", { key: "pr", className: "flex flex-col gap-1" }, [
-                h("span", { className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx)),
-                unitPayTotal != null && Math.abs(unitPayTotal - listPx) > 0.005
-                  ? h(
-                      "span",
-                      { className: "text-xs text-slate-500 dark:text-slate-400" },
-                      `Listing ${formatGhc(listPx)} · Total includes estimated service & payment fees`
-                    )
-                  : null
-              ].filter(Boolean)),
-          !svc ? h("p", { key: "st", className: "text-sm text-slate-600 dark:text-slate-300" }, `${product.stock ?? 0} in stock`) : null,
+          pricingPanel,
+          !offlineListing ? h("p", { key: "st", className: "text-sm text-slate-600 dark:text-slate-300" }, `${product.stock ?? 0} in stock`) : null,
           (product.tags || []).length > 0 &&
             h(
               "div",
@@ -839,29 +899,86 @@ export function ProductDetailPage() {
             h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Description"),
             h("p", { className: "mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200" }, product.description || "No description provided.")
           ]),
+          !offlineListing &&
+            h(GlassPanel, { key: "cust", className: "!border-sky-500/20" }, [
+              h("div", { className: "flex flex-wrap items-baseline justify-between gap-2" }, [
+                h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Customization"),
+                h("span", { className: "text-[10px] font-semibold uppercase tracking-wide text-slate-400" }, "Optional")
+              ]),
+              h("p", { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, "Allergies, no wele/extras, spice level — sellers see this on the order."),
+              h("div", { className: "mt-3" }, h(Field, { label: "Notes for seller" }, h(TextArea, {
+                value: detailCustomization,
+                onChange: (e) => setDetailCustomization(e.target.value.slice(0, 280)),
+                rows: 3,
+                placeholder: "Example: No wele · extra shito on the side"
+              })))
+            ]),
           buyerVendorPayPanel(product.sellerPayment, { paystackOnly: pricingOpts?.paystackOnly }),
+          svc &&
+            h(GlassPanel, { key: "svc-book", className: "!mt-4 !border-sky-500/25" }, [
+              h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Request this service"),
+              h(
+                "p",
+                { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" },
+                "Send a booking-style message to the seller. They get an in-app notification (and can follow up however you agree)."
+              ),
+              h(
+                Field,
+                { key: "svc-when", label: "Preferred timing (optional)" },
+                h(TextInput, {
+                  value: svcPreferredTime,
+                  onChange: (e) => setSvcPreferredTime(e.target.value.slice(0, 500)),
+                  placeholder: "e.g. Weekday afternoons · before 6pm Saturday"
+                })
+              ),
+              h(
+                Field,
+                { key: "svc-msg", label: "What do you need?" },
+                h(TextArea, {
+                  value: svcMessage,
+                  onChange: (e) => setSvcMessage(e.target.value.slice(0, 4000)),
+                  rows: 5,
+                  placeholder: "Scope, deadline, budget range, how to reach you, …"
+                })
+              ),
+              h(
+                Button,
+                {
+                  key: "svc-go",
+                  className: "mt-3 w-full sm:w-auto",
+                  type: "button",
+                  variant: "primary",
+                  loading: svcSubmitting,
+                  disabled: !accessToken,
+                  onClick: () => void submitServiceBooking()
+                },
+                accessToken ? "Send request to seller" : "Sign in to send a request"
+              )
+            ]),
           h(
             Button,
             {
               key: "add",
-              variant: svc ? "ghost" : "primary",
-              className: `w-full !rounded-2xl !py-3 sm:w-auto sm:!px-10 ${svc ? "!border-slate-300/60 dark:!border-white/20" : ""}`,
+              variant: offlineListing ? "ghost" : "primary",
+              className: `w-full !rounded-2xl !py-3 sm:w-auto sm:!px-10 ${offlineListing ? "!border-slate-300/60 dark:!border-white/20" : ""}`,
               type: "button",
-              disabled: svc || (product.stock ?? 0) <= 0,
+              disabled: offlineListing || (product.stock ?? 0) <= 0,
               onClick: tryAdd
             },
             [
-              svc ? null : h(ShoppingCart, { key: "ic", className: "h-5 w-5" }),
+              offlineListing ? null : h(ShoppingCart, { key: "ic", className: "h-5 w-5" }),
               h(
                 "span",
                 { key: "tx" },
                 svc
                   ? "Contact vendor for more details"
-                  : (product.stock ?? 0) <= 0
-                    ? "Out of stock"
-                    : accessToken
-                      ? "Add to cart"
-                      : "Sign in to add to cart"
+                  : foodC2O
+                    ? "Call seller to order"
+                    : (product.stock ?? 0) <= 0
+                      ? "Out of stock"
+                      : accessToken
+                        ? "Add to cart"
+                        : "Sign in to add to cart"
               )
             ].filter(Boolean)
           ),
@@ -1027,6 +1144,26 @@ function BuyerNavbarNavLink({ to, end, icon: Icon, label, activeWhen, labelOnMob
   });
 }
 
+/**
+ * Scrollable tab row: centered when it fits (`mx-auto` + `w-max`); when wider than the slot,
+ * overflow scroll starts at the first tab (avoids `justify-center` on the flex + overflow clipping).
+ */
+function buyerTabsScrollWrap(pillNodes) {
+  return h(
+    "div",
+    {
+      className: "no-scrollbar min-w-0 max-w-full overflow-x-auto [-webkit-overflow-scrolling:touch]"
+    },
+    h(
+      "div",
+      {
+        className: "mx-auto flex w-max shrink-0 items-center justify-start gap-1 px-0.5 pb-0.5 sm:gap-1.5"
+      },
+      pillNodes
+    )
+  );
+}
+
 /** Storefront sidebar: discover links, profile / apply, price filters (categories stay in main-area chips only). */
 function BuyerStorefrontAside({
   fil,
@@ -1112,7 +1249,7 @@ function BuyerStorefrontAside({
       linkRow("help", Headphones, "Help & support", "/support"),
       divider("dv-sell"),
       showVendorNavLink ? linkRow("vend-side", Store, "Become a vendor", "/apply-vendor") : null,
-      showCourierNavLink ? linkRow("cour-side", Truck, "Become a courier", "/apply-courier") : null,
+      showCourierNavLink ? linkRow("cour-side", Truck, "Become a rider", "/apply-courier") : null,
       h(
         "div",
         {
@@ -1272,14 +1409,12 @@ export function BuyerLayout({
     accessToken && h(BuyerNavbarNavLink, { key: "msg", to: "/messages", icon: MessageSquare, label: "Messages" }),
     accessToken && h(BuyerNavbarNavLink, { key: "rep", to: "/reports", icon: AlertTriangle, label: "Reports" }),
     h(BuyerNavbarNavLink, { key: "prof", to: "/profile", icon: User, label: "Profile" }),
-    accessToken &&
-      user?.role === "buyer" &&
-      !["pending", "approved"].includes(user?.vendorStatus) &&
+    (!accessToken ||
+      (accessToken && user?.role === "buyer" && !["pending", "approved"].includes(String(user?.vendorStatus ?? "")))) &&
       h(BuyerNavbarNavLink, { key: "apply", to: "/apply-vendor", icon: Store, label: "Become a vendor" }),
-    accessToken &&
-      user?.role === "buyer" &&
-      user?.riderApplicationStatus !== "pending" &&
-      h(BuyerNavbarNavLink, { key: "cour", to: "/apply-courier", icon: Truck, label: "Become a courier" })
+    (!accessToken ||
+      (accessToken && user?.role === "buyer" && String(user?.riderApplicationStatus || "") !== "pending")) &&
+      h(BuyerNavbarNavLink, { key: "cour", to: "/apply-courier", icon: Truck, label: "Become a rider" })
   ].filter(Boolean);
 
   const vendorPendingBanner =
@@ -1307,7 +1442,7 @@ export function BuyerLayout({
         className:
           "rounded-lg border border-emerald-400/35 bg-emerald-500/10 px-2 py-1 text-center text-[10px] font-medium text-emerald-950 dark:text-emerald-100 sm:text-xs"
       },
-      "Courier application pending review"
+      "Rider application pending review"
     );
 
   const profileChip =
@@ -1474,8 +1609,8 @@ export function BuyerLayout({
                     { key: "sf-nav-wrap", className: "hidden min-w-0 flex-1 items-center justify-center lg:flex" },
                     h(
                       "nav",
-                      { className: "no-scrollbar flex w-full max-w-full items-center justify-center gap-1 overflow-x-auto [-webkit-overflow-scrolling:touch]", "aria-label": "Main" },
-                      sfNavLinksArr
+                      { "aria-label": "Main", className: "min-w-0 w-full max-w-full" },
+                      buyerTabsScrollWrap(sfNavLinksArr)
                     )
                   ),
                   h("div", { key: "sf-actions", className: "ml-auto flex flex-wrap items-center justify-end gap-1 sm:gap-2" }, headerActionsSf)
@@ -1487,10 +1622,10 @@ export function BuyerLayout({
                 "nav",
                 {
                   key: "sf-nav-m",
-                  className: "no-scrollbar flex justify-center gap-1 overflow-x-auto pb-0.5 lg:hidden [-webkit-overflow-scrolling:touch]",
+                  className: "pb-0.5 lg:hidden",
                   "aria-label": "Main"
                 },
-                sfNavLinksArr
+                buyerTabsScrollWrap(sfNavLinksArr)
               )
             ])
           ),
@@ -1596,14 +1731,7 @@ export function BuyerLayout({
                 className: "justify-self-center min-w-0 max-w-full",
                 "aria-label": "Main"
               },
-              h(
-                "div",
-                {
-                  className:
-                    "no-scrollbar mx-auto flex w-max max-w-full items-center justify-center gap-1 overflow-x-auto px-0.5 pb-0.5 [-webkit-overflow-scrolling:touch] sm:gap-1.5"
-                },
-                topNavLinks
-              )
+              buyerTabsScrollWrap(topNavLinks)
             ),
             h("div", { key: "actions", className: "justify-self-end flex shrink-0 flex-wrap items-center justify-end gap-1 sm:gap-2" }, headerActions)
           ]),
@@ -1824,7 +1952,7 @@ function StorefrontTrustBar() {
 }
 
 export function CartDrawer({ open, onClose }) {
-  const { items, subtotal, setQty, remove, clear } = useCart();
+  const { items, subtotal, setQty, remove, clear, setCustomization } = useCart();
   const { accessToken } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
@@ -1832,7 +1960,7 @@ export function CartDrawer({ open, onClose }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const hasServiceInCart = items.some((p) => isServicesCategory(p));
+  const hasBlockedLine = items.some((p) => isOfflineQuoteCategory(p));
 
   const breakdown =
     pricingOpts && subtotal > 0
@@ -1851,7 +1979,7 @@ export function CartDrawer({ open, onClose }) {
       nav("/login", { state: { from: "/checkout" } });
       return;
     }
-    if (items.length === 0 || subtotal <= 0 || hasServiceInCart) return;
+    if (items.length === 0 || subtotal <= 0 || hasBlockedLine) return;
     onClose?.();
     nav("/checkout");
   };
@@ -1895,8 +2023,10 @@ export function CartDrawer({ open, onClose }) {
           h("div", { key: "items", className: "mt-4 flex max-h-[55vh] flex-col gap-3 overflow-y-auto pr-1" }, [
             items.length === 0 &&
               h("p", { key: "empty", className: "text-sm text-slate-500 dark:text-slate-400" }, "Your cart is empty."),
-            items.map((p) =>
-              h(GlassCard, { key: p.id, className: "!p-3" }, [
+            items.map((p) => {
+              const lk = p._lineKey || `${p.id}::`;
+              const blocked = isOfflineQuoteCategory(p);
+              return h(GlassCard, { key: lk, className: "!p-3" }, [
                 h("div", { key: "row", className: "flex gap-3" }, [
                   h(RefImage, {
                     key: "img",
@@ -1912,10 +2042,12 @@ export function CartDrawer({ open, onClose }) {
                       "p",
                       {
                         key: "price",
-                        className: `mt-1 text-sm font-bold ${isServicesCategory(p) ? "text-amber-700 dark:text-amber-200" : "text-sky-600 dark:text-sky-300"}`
+                        className: `mt-1 text-sm font-bold ${blocked ? "text-amber-700 dark:text-amber-200" : "text-sky-600 dark:text-sky-300"}`
                       },
-                      isServicesCategory(p)
-                        ? "Contact vendor — remove to check out other items"
+                      blocked
+                        ? isFoodCallToOrderCategory(p)
+                          ? "Food: call to order — remove to check out other items"
+                          : "Services: contact vendor — remove to check out other items"
                         : formatGhc(
                             pricingOpts
                               ? buyerTotalFromSellerSubtotal(
@@ -1925,6 +2057,23 @@ export function CartDrawer({ open, onClose }) {
                               : (Number(p.price) || 0) * (Number(p.qty) || 1)
                           )
                     ),
+                    !blocked
+                      ? h("div", { key: "cust", className: "mt-2" }, [
+                          h(
+                            "label",
+                            { key: "lb", className: "mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500" },
+                            "Customization"
+                          ),
+                          h(TextArea, {
+                            value: String(p.customization || ""),
+                            onChange: (e) => setCustomization(lk, e.target.value),
+                            rows: 2,
+                            className: "!min-h-[72px] !rounded-xl !text-xs",
+                            placeholder: "No wele, allergies, spice level…",
+                            "aria-label": `Customization for ${p.name}`
+                          })
+                        ])
+                      : null,
                     h("div", { key: "qty", className: "mt-2 flex items-center gap-2" }, [
                       h(
                         "button",
@@ -1932,7 +2081,7 @@ export function CartDrawer({ open, onClose }) {
                           key: "dec",
                           type: "button",
                           className: "tap-target rounded-xl border border-white/15 p-2 hover:bg-white/10",
-                          onClick: () => setQty(p.id, p.qty - 1)
+                          onClick: () => setQty(lk, p.qty - 1)
                         },
                         h(Minus, { className: "h-4 w-4" })
                       ),
@@ -1949,7 +2098,7 @@ export function CartDrawer({ open, onClose }) {
                               nav("/login", { state: { from: loc.pathname + (loc.search || "") } });
                               return;
                             }
-                            setQty(p.id, p.qty + 1);
+                            setQty(lk, p.qty + 1);
                           }
                         },
                         h(Plus, { className: "h-4 w-4" })
@@ -1960,15 +2109,15 @@ export function CartDrawer({ open, onClose }) {
                           key: "rm",
                           type: "button",
                           className: "ml-auto text-xs font-semibold text-rose-400 hover:underline",
-                          onClick: () => remove(p.id)
+                          onClick: () => remove(lk)
                         },
                         "Remove"
                       )
                     ])
                   ])
                 ])
-              ])
-            )
+              ]);
+            })
           ]),
           err
             ? h(InlineNotice, { key: "err", variant: "error", className: "mt-3", onDismiss: () => setErr("") }, err)
@@ -1993,7 +2142,7 @@ export function CartDrawer({ open, onClose }) {
               className: "mt-3 w-full !rounded-2xl",
               onClick: checkout,
               loading,
-              disabled: items.length === 0 || subtotal <= 0 || hasServiceInCart
+              disabled: items.length === 0 || subtotal <= 0 || hasBlockedLine
             },
             [h("span", { key: "tx" }, "Proceed to checkout "), h(ChevronRight, { key: "ic", className: "h-4 w-4" })]
           )
@@ -2045,7 +2194,7 @@ export function CheckoutPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
-  const hasServiceLine = items.some((p) => isServicesCategory(p));
+  const hasBlockedLine = items.some((p) => isOfflineQuoteCategory(p));
 
   const breakdown =
     pricingOpts && subtotal > 0
@@ -2076,15 +2225,23 @@ export function CheckoutPage() {
       setErr("Your cart is empty.");
       return;
     }
-    if (hasServiceLine || !(subtotal > 0)) {
+    if (hasBlockedLine || !(subtotal > 0)) {
       setErr(
-        "Service listings are not paid through this cart. Remove them and contact each vendor from their listing for pricing."
+        hasBlockedLine
+          ? "Food or services can’t use cart checkout together with other items until you remove them — call/message those vendors separately."
+          : "Your cart has nothing to bill."
       );
       return;
     }
     setLoading(true);
     try {
-      const checkoutBody = { items: items.map((p) => ({ productId: p.id, quantity: p.qty })) };
+      const checkoutBody = {
+        items: items.map((p) => ({
+          productId: p.id,
+          quantity: p.qty,
+          customization: String(p.customization || "").trim().slice(0, 280)
+        }))
+      };
       const { order } = await apiFetch("/api/orders/checkout", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -2210,8 +2367,11 @@ export function CheckoutPage() {
       [
         h("p", { key: "lab", className: "text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Your items"),
         ...items.map((p) =>
-          h("div", { key: p.id, className: "flex gap-3 text-sm" }, [
-            h("span", { className: "min-w-0 text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)])
+          h("div", { key: p._lineKey || p.id, className: "flex flex-col gap-1 rounded-lg border border-white/10 bg-white/30 px-2 py-2 text-sm dark:bg-night-900/40" }, [
+            h("span", { className: "min-w-0 text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)]),
+            String(p.customization || "").trim()
+              ? h("span", { className: "text-xs text-violet-800 dark:text-violet-200" }, `Preferences: ${String(p.customization).trim()}`)
+              : null
           ])
         )
       ]
@@ -2255,7 +2415,7 @@ export function SavedProductsPage() {
   const pricingOpts = useCheckoutPricingOptions();
 
   const tryAddToCart = (p) => {
-    if (isServicesCategory(p) || (p.stock ?? 0) <= 0) return;
+    if (isOfflineQuoteCategory(p) || (p.stock ?? 0) <= 0) return;
     if (!accessToken) {
       nav("/login", { state: { from: loc.pathname + (loc.search || "") } });
       return;
@@ -2334,7 +2494,8 @@ export function SavedProductsPage() {
                 },
                 products.map((p) => {
                   const detailTo = `/products/${p.id}`;
-                  const svcCard = isServicesCategory(p);
+                  const quoteCard = isOfflineQuoteCategory(p);
+                  const foodCard = isFoodCallToOrderCategory(p);
                   const listP = Number(p.price) || 0;
                   const cmpAt = Number(p.compareAtPrice);
                   const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
@@ -2409,14 +2570,15 @@ export function SavedProductsPage() {
                             vendorNm
                           )
                         ]),
-                        svcCard
+                        quoteCard
                           ? h(
                               "p",
                               {
                                 key: "svc-pr",
-                                className: "mt-3 text-sm font-semibold leading-snug text-amber-800 dark:text-amber-100"
+                                className:
+                                  `mt-3 text-sm font-semibold leading-snug ${foodCard ? "text-violet-900 dark:text-violet-50" : "text-amber-800 dark:text-amber-100"}`
                               },
-                              "See listing for pricing & scope"
+                              foodCard ? "Call to order — seller confirms price & portions" : "See listing for pricing & scope"
                             )
                           : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
                               strikeCmp
@@ -2447,9 +2609,9 @@ export function SavedProductsPage() {
                             className:
                               "mt-4 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !font-semibold !text-sky-700 hover:!bg-sky-50 dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
                             type: "button",
-                            disabled: !isServicesCategory(p) && (p.stock ?? 0) <= 0,
+                            disabled: !quoteCard && (p.stock ?? 0) <= 0,
                             onClick: () => {
-                              if (isServicesCategory(p)) {
+                              if (quoteCard) {
                                 nav(detailTo);
                                 return;
                               }
@@ -2457,12 +2619,14 @@ export function SavedProductsPage() {
                             }
                           },
                           [
-                            isServicesCategory(p) ? null : h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
+                            quoteCard ? null : h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
                             h(
                               "span",
                               { key: "tx" },
-                              isServicesCategory(p)
-                                ? "View listing"
+                              quoteCard
+                                ? foodCard
+                                  ? "View · call to order"
+                                  : "View listing"
                                 : (p.stock ?? 0) <= 0
                                   ? "Out of stock"
                                   : accessToken
@@ -2499,6 +2663,8 @@ export function ShopPage() {
   const [recLoading, setRecLoading] = useState(false);
   const [recErr, setRecErr] = useState("");
   const [recPreferValue, setRecPreferValue] = useState(true);
+  const [storefronts, setStorefronts] = useState([]);
+  const [storesLoading, setStoresLoading] = useState(true);
   const { add } = useCart();
   const { accessToken } = useAuth();
   const { isSaved, toggleSaved } = useSavedProducts();
@@ -2506,7 +2672,7 @@ export function ShopPage() {
   const loc = useLocation();
 
   const tryAddToCart = (p) => {
-    if (isServicesCategory(p) || (p.stock ?? 0) <= 0) return;
+    if (isOfflineQuoteCategory(p) || (p.stock ?? 0) <= 0) return;
     if (!accessToken) {
       nav("/login", { state: { from: loc.pathname + (loc.search || "") } });
       return;
@@ -2587,6 +2753,24 @@ export function ShopPage() {
       cancelled = true;
     };
   }, [accessToken, recPreferValue]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setStoresLoading(true);
+    apiFetch("/api/businesses?limit=16")
+      .then((d) => {
+        if (!cancelled) setStorefronts(Array.isArray(d.businesses) ? d.businesses : []);
+      })
+      .catch(() => {
+        if (!cancelled) setStorefronts([]);
+      })
+      .finally(() => {
+        if (!cancelled) setStoresLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const applyPriceRange = () => {
     const minRaw = parseFloat(String(minPriceIn).trim());
@@ -2772,6 +2956,121 @@ export function ShopPage() {
         ]
       )
     ]),
+      h("section", { key: "browse-stores", className: "mb-6", "aria-label": "Campus stores" }, [
+        h("div", { key: "st-hdr", className: "mb-3 flex flex-wrap items-end justify-between gap-3" }, [
+          h("div", { key: "st-titles", className: "min-w-0 space-y-1" }, [
+            h(
+              "p",
+              {
+                key: "st-eyebrow",
+                className: "text-[10px] font-bold uppercase tracking-[0.22em] text-sky-600 dark:text-sky-400"
+              },
+              "Stores"
+            ),
+            h(
+              "h2",
+              { key: "st-h2", className: "font-display text-lg font-bold tracking-tight text-slate-900 dark:text-white sm:text-xl" },
+              "Browse campus storefronts"
+            ),
+            h(
+              "p",
+              { key: "st-sub", className: "max-w-xl text-xs text-slate-600 dark:text-slate-400 sm:text-sm" },
+              "Each vendor has a public page with their listings. Explore by category or open a store."
+            )
+          ]),
+          h(
+            "div",
+            { key: "st-hubs", className: "flex flex-wrap justify-end gap-x-3 gap-y-1 text-xs font-semibold" },
+            [
+              ["Food", "/food"],
+              ["Fashion", "/fashion"],
+              ["Electronics", "/electronics"],
+              ["Beauty", "/beauty"],
+              ["Groceries", "/groceries"],
+              ["Books", "/books"],
+              ["Services", "/services"]
+            ].map(([label, path]) =>
+              h(
+                Link,
+                {
+                  key: path,
+                  to: path,
+                  className: "text-sky-700 underline decoration-sky-700/30 underline-offset-2 hover:decoration-sky-700 dark:text-sky-300"
+                },
+                label
+              )
+            )
+          )
+        ]),
+        storesLoading
+          ? h("p", { key: "st-ld", className: "text-sm text-slate-500 dark:text-slate-400" }, "Loading stores…")
+          : storefronts.length === 0
+            ? h(
+                "p",
+                { key: "st-empty", className: "text-sm text-slate-500 dark:text-slate-400" },
+                "Storefronts will show here as vendors publish active businesses."
+              )
+            : h(
+                "div",
+                {
+                  key: "st-rail",
+                  className:
+                    "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:mx-0 sm:gap-3.5 sm:px-0"
+                },
+                storefronts.filter((b) => String(b.slug || "").trim()).map((b) => {
+                  const slug = String(b.slug || "").trim();
+                  const logo =
+                    b.logoUrl && String(b.logoUrl).trim()
+                      ? h("img", {
+                          src: b.logoUrl,
+                          alt: "",
+                          className: "h-12 w-12 shrink-0 rounded-2xl border border-white/20 object-cover shadow-md"
+                        })
+                      : h(
+                          "span",
+                          {
+                            className:
+                              "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-100 text-sm font-bold text-slate-500 dark:border-white/15 dark:bg-night-950/50 dark:text-slate-400"
+                          },
+                          String(b.name || "?")
+                            .slice(0, 1)
+                            .toUpperCase()
+                        );
+                  return h(
+                    Link,
+                    {
+                      key: b.id || slug,
+                      to: `/store/${encodeURIComponent(slug)}`,
+                      className:
+                        "group flex min-w-[min(85vw,16rem)] max-w-[16rem] shrink-0 snap-start gap-3 rounded-2xl border border-white/70 bg-white/85 p-3 shadow-sm backdrop-blur-sm transition hover:-translate-y-0.5 hover:border-sky-300/80 hover:shadow-md dark:border-white/10 dark:bg-night-900/55 dark:hover:border-sky-500/35 sm:min-w-0 sm:max-w-[14rem]"
+                    },
+                    [
+                      logo,
+                      h("div", { key: "txt", className: "min-w-0 flex-1" }, [
+                        h(
+                          "p",
+                          {
+                            className:
+                              "line-clamp-2 font-display text-sm font-bold leading-snug text-slate-900 group-hover:text-sky-700 dark:text-white dark:group-hover:text-sky-300"
+                          },
+                          b.name || "Store"
+                        ),
+                        h(
+                          "p",
+                          { className: "mt-0.5 truncate text-[10px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+                          String(b.businessType || "").replace(/_/g, " ")
+                        ),
+                        h(
+                          "p",
+                          { className: "mt-1 font-mono text-[10px] font-semibold text-emerald-600 dark:text-emerald-400" },
+                          `/store/${slug}`
+                        )
+                      ])
+                    ]
+                  );
+                })
+              )
+      ]),
       h("section", { key: "quick-cats", className: "mb-5", "aria-label": "Categories" }, h(StorefrontCategoryChips, { active: cat, onSelect: setCat })),
       h("div", { key: "filters-row", className: "mb-6 flex flex-wrap items-center gap-2 rounded-[1rem] border border-white/70 bg-white/80 px-3 py-2.5 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-night-900/55" }, [
         h("span", { key: "flabel", className: "text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500" }, "Browse"),
@@ -2930,7 +3229,8 @@ export function ShopPage() {
             { key: "product-grid", className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" },
             filtered.map((p) => {
               const detailTo = `/products/${p.id}`;
-              const svcCard = isServicesCategory(p);
+              const quoteCard = isOfflineQuoteCategory(p);
+              const foodCard = isFoodCallToOrderCategory(p);
               const listP = Number(p.price) || 0;
               const cmpAt = Number(p.compareAtPrice);
               const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
@@ -3014,14 +3314,15 @@ export function ShopPage() {
                         vendorNm
                       )
                     ]),
-                    svcCard
+                    quoteCard
                       ? h(
                           "p",
                           {
                             key: "svc-pr",
-                            className: "mt-3 text-sm font-semibold leading-snug text-amber-800 dark:text-amber-100"
+                            className:
+                              `mt-3 text-sm font-semibold leading-snug ${foodCard ? "text-violet-900 dark:text-violet-50" : "text-amber-800 dark:text-amber-100"}`
                           },
-                          "See listing for pricing & scope"
+                          foodCard ? "Call to order — seller confirms price & portions" : "See listing for pricing & scope"
                         )
                       : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
                           strikeCmp
@@ -3053,9 +3354,9 @@ export function ShopPage() {
                       className:
                         "mt-4 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !font-semibold !text-sky-700 hover:!bg-sky-50 dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
                       type: "button",
-                      disabled: !isServicesCategory(p) && (p.stock ?? 0) <= 0,
+                      disabled: !quoteCard && (p.stock ?? 0) <= 0,
                       onClick: () => {
-                        if (isServicesCategory(p)) {
+                        if (quoteCard) {
                           nav(detailTo);
                           return;
                         }
@@ -3063,12 +3364,14 @@ export function ShopPage() {
                       }
                     },
                     [
-                      isServicesCategory(p) ? null : h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
+                      quoteCard ? null : h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
                       h(
                         "span",
                         { key: "tx" },
-                        isServicesCategory(p)
-                          ? "View listing"
+                        quoteCard
+                          ? foodCard
+                            ? "View · call to order"
+                            : "View listing"
                           : (p.stock ?? 0) <= 0
                             ? "Out of stock"
                             : accessToken
@@ -3398,11 +3701,10 @@ function BuyerReceiptModal({ order, onClose }) {
         h("div", { className: "mt-3 rounded-xl border border-white/10 bg-white/30 p-3 dark:bg-night-900/30" }, [
           h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Items"),
           ...items.map((it, idx) =>
-            h(
-              "div",
-              { key: `${it.productId || it.name}-${idx}`, className: "mt-2 text-sm" },
-              `${it.name} ×${it.quantity ?? 1}`
-            )
+            h("div", { key: `${it.productId || it.name}-${idx}`, className: "mt-2 text-sm" }, [
+              h("span", null, `${it.name} ×${it.quantity ?? 1}`),
+              it.buyerNote ? h("p", { className: "mt-0.5 text-xs text-violet-800 dark:text-violet-100" }, `Notes: ${it.buyerNote}`) : null
+            ])
           )
         ]),
         h("div", { className: "mt-2 flex justify-between border-t border-white/10 pt-3 text-base font-semibold text-slate-900 dark:text-white" }, [
@@ -4224,7 +4526,24 @@ export function BuyerOrdersPage() {
                             "mb-1 flex flex-wrap items-center justify-between gap-1.5 border-b border-white/5 pb-1 last:mb-0 last:border-0 last:pb-0"
                         },
                         [
-                          h("span", { className: "min-w-0 flex-1 text-xs leading-snug text-slate-800 dark:text-slate-100" }, `${it.name} ×${it.quantity ?? 1}`),
+                          h(
+                            "div",
+                            { key: "nm", className: "min-w-0 flex-1" },
+                            [
+                              h(
+                                "span",
+                                { className: "block text-xs leading-snug text-slate-800 dark:text-slate-100" },
+                                `${it.name} ×${it.quantity ?? 1}`
+                              ),
+                              it.buyerNote
+                                ? h(
+                                    "span",
+                                    { className: "mt-0.5 block text-[10px] leading-snug text-violet-800 dark:text-violet-200/90" },
+                                    `Notes: ${String(it.buyerNote)}`
+                                  )
+                                : null
+                            ].filter(Boolean)
+                          ),
                           canRate && it.productId
                             ? h(
                                 "button",

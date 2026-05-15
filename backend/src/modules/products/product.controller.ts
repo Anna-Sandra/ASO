@@ -2,15 +2,16 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
-import { User } from "../auth/user.model";
 import { Order } from "../orders/order.model";
 import { Review } from "../reviews/review.model";
-import { getEffectiveCommissionPercent, getOrCreateSettings } from "../platform/platformSettings.service";
+import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { resolveListingPublishOutcome } from "../platform/listingPolicyApply";
 import type { ProductCategory, ProductDoc } from "./product.model";
 import { Product } from "./product.model";
 import { normalizeCategoryAttributes } from "./categoryAttributes.schema";
 import { listProductsQuerySchema, recommendedProductsQuerySchema } from "./product.schemas";
+import { attachSellerPayments } from "./product.publicSerialize";
+import { assertProductBusinessLink } from "../businesses/business.controller";
 
 /** Public-facing fields; changes require re-approval if the listing was already live. */
 const SELLER_UPDATE_KEYS = [
@@ -22,7 +23,12 @@ const SELLER_UPDATE_KEYS = [
   "stock",
   "tags",
   "imageUrls",
-  "categoryAttributes"
+  "categoryAttributes",
+  "businessId",
+  "menuSectionId",
+  "listingKind",
+  "prepTimeMinutes",
+  "addons"
 ] as const;
 
 const MODERATION_REAPPROVE_KEYS = [
@@ -67,65 +73,12 @@ function sellerModerationTouched(
   return false;
 }
 
-function toPublicProduct(p: Record<string, unknown>) {
-  return {
-    id: (p._id as mongoose.Types.ObjectId).toString(),
-    sellerId: (p.sellerId as mongoose.Types.ObjectId).toString(),
-    name: p.name,
-    description: p.description,
-    category: p.category,
-    categoryAttributes: (p.categoryAttributes && typeof p.categoryAttributes === "object" ? p.categoryAttributes : {}) as Record<
-      string,
-      unknown
-    >,
-    price: p.price,
-    compareAtPrice: p.compareAtPrice,
-    stock: p.stock,
-    status: p.status,
-    rejectionReason: p.rejectionReason,
-    tags: p.tags,
-    imageUrls: p.imageUrls,
-    createdAt: p.createdAt,
-    updatedAt: p.updatedAt
-  };
-}
-
-export async function attachSellerPayments(products: Record<string, unknown>[]) {
-  if (!products.length) return [];
-  const commissionPercent = await getEffectiveCommissionPercent();
-  const sellerIds = [...new Set(products.map((p) => (p.sellerId as mongoose.Types.ObjectId).toString()))];
-  const users = await User.find({
-    _id: { $in: sellerIds.map((id) => new mongoose.Types.ObjectId(id)) }
-  })
-    .select("_id displayName phone email bankName bankAccountNumber bankAccountName")
-    .lean();
-  const byId = new Map(users.map((u) => [u._id.toString(), u]));
-  return products.map((p) => {
-    const base = toPublicProduct(p);
-    const su = byId.get((p.sellerId as mongoose.Types.ObjectId).toString());
-    if (!su) return base;
-    return {
-      ...base,
-      /** Service fee rate on the seller’s list price; fees are added for the buyer at checkout (v2 orders). */
-      platformCommissionPercent: commissionPercent,
-      sellerPayment: {
-        displayName: su.displayName ?? "",
-        phone: su.phone ?? "",
-        email: su.email ?? "",
-        bankName: su.bankName ?? "",
-        bankAccountNumber: su.bankAccountNumber ?? "",
-        bankAccountName: su.bankAccountName ?? ""
-      }
-    };
-  });
-}
-
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
   const parsed = listProductsQuerySchema.safeParse(req.query);
   if (!parsed.success) throw new HttpError(400, "Invalid product filters.");
   const q = parsed.data;
   const filter: Record<string, unknown> = { status: "active" };
-  if (q.category) filter.category = q.category;
+  if (q.businessId) filter.businessId = new mongoose.Types.ObjectId(q.businessId);
   if (q.tag) filter.tags = q.tag;
 
   const priceCond: Record<string, number> = {};
@@ -477,7 +430,32 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     rejectionReason = outcome.rejectionReason ?? undefined;
   }
 
+  const bizIdRaw = body.businessId;
+  const menuSidRaw = body.menuSectionId;
+  delete body.businessId;
+  delete body.menuSectionId;
+
+  const categoryStr = String((body as { category?: string }).category || "");
+  const { businessIdOid, menuSectionIdOid } = await assertProductBusinessLink({
+    sellerId,
+    businessId:
+      bizIdRaw === undefined
+        ? undefined
+        : bizIdRaw === null
+          ? null
+          : String(bizIdRaw as string).trim() || undefined,
+    menuSectionId:
+      menuSidRaw === undefined
+        ? undefined
+        : menuSidRaw === null
+          ? null
+          : String(menuSidRaw as string).trim() || undefined,
+    category: categoryStr
+  });
+
   const createPayload: Record<string, unknown> = { ...body, status, sellerId };
+  createPayload.businessId = businessIdOid;
+  createPayload.menuSectionId = menuSectionIdOid;
   if (flagged) createPayload.flagged = true;
   if (rejectionReason) createPayload.rejectionReason = rejectionReason;
 
@@ -501,6 +479,7 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
 
   for (const key of SELLER_UPDATE_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
+    if (key === "businessId" || key === "menuSectionId") continue;
     if (key === "categoryAttributes") {
       const cat =
         body.category !== undefined ? (body.category as ProductCategory) : (p.category as ProductCategory);
@@ -548,11 +527,38 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   }
 
   const mergedCat = String(p.category) as ProductCategory;
+
+  const bizForAssert = Object.prototype.hasOwnProperty.call(body, "businessId")
+    ? body.businessId
+    : p.businessId ?? undefined;
+  const menuForAssert = Object.prototype.hasOwnProperty.call(body, "menuSectionId")
+    ? body.menuSectionId
+    : p.menuSectionId ?? undefined;
+
+  const { businessIdOid, menuSectionIdOid } = await assertProductBusinessLink({
+    sellerId: new mongoose.Types.ObjectId(req.user!.id),
+    businessId:
+      bizForAssert === undefined
+        ? undefined
+        : bizForAssert === null
+          ? null
+          : String(bizForAssert as mongoose.Types.ObjectId | string),
+    menuSectionId:
+      menuForAssert === undefined
+        ? undefined
+        : menuForAssert === null
+          ? null
+          : String(menuForAssert as mongoose.Types.ObjectId | string),
+    category: mergedCat
+  });
+  p.businessId = businessIdOid;
+  p.menuSectionId = menuSectionIdOid;
+
   const mergedPrice = Number(p.price);
-  if (mergedCat !== "services" && !(mergedPrice > 0)) {
+  if (mergedCat !== "services" && mergedCat !== "food_drinks" && !(mergedPrice > 0)) {
     throw new HttpError(
       400,
-      "Set a price greater than zero for this listing type, or choose Services for contact-based pricing."
+      "Set a price greater than zero for this listing type, or choose Services / Food & Drinks for contact- or call-to-order listings."
     );
   }
 

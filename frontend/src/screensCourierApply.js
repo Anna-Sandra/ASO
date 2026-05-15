@@ -45,7 +45,8 @@ export function CourierApplicationPage() {
   const fileRef = useRef(null);
 
   const [fullName, setFullName] = useState(() => String(user?.displayName || "").trim());
-  const [email] = useState(() => String(user?.email || "").trim());
+  const accountEmail = String(user?.email || "").trim();
+  const [guestEmail, setGuestEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [vehicleType, setVehicleType] = useState("bicycle");
   const [notes, setNotes] = useState("");
@@ -85,7 +86,7 @@ export function CourierApplicationPage() {
   const onPickFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !accessToken) return;
+    if (!file) return;
     const okMime = file.type === "image/jpeg" || file.type === "image/png" || file.type === "application/pdf";
     if (!okMime) {
       setErr("Please upload a PNG, JPG, or PDF (max 5 MB).");
@@ -100,9 +101,10 @@ export function CourierApplicationPage() {
     try {
       const fd = new FormData();
       fd.append("file", file);
+      const hdr = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
       const res = await fetch(`${getApiBase()}/api/uploads/vendor-verification`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: hdr,
         body: fd,
         credentials: "include"
       });
@@ -122,8 +124,15 @@ export function CourierApplicationPage() {
   const onSubmit = async (e) => {
     e.preventDefault();
     setErr("");
+    const resolvedEmail = accessToken ? accountEmail : String(guestEmail || "").trim().toLowerCase();
     if (!accessToken) {
-      nav("/login", { state: { from: "/apply-courier" } });
+      if (!resolvedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedEmail)) {
+        setErr("Enter a valid email so admins can reach you.");
+        return;
+      }
+    }
+    if (accessToken && !resolvedEmail) {
+      setErr("Your account needs an email. Add one under Profile, then try again.");
       return;
     }
     if (applyBlocked) {
@@ -132,6 +141,10 @@ export function CourierApplicationPage() {
           ? platformCfg.maintenanceMessage?.trim() || "Applications are paused during maintenance."
           : "The marketplace is not accepting new courier applications right now."
       );
+      return;
+    }
+    if (!String(idDocUrl).trim()) {
+      setErr("Government ID upload is required — use the upload section below.");
       return;
     }
     if (!agreeTerms || !agreeCourierRules) {
@@ -148,20 +161,24 @@ export function CourierApplicationPage() {
     }
     setLoading(true);
     try {
+      const reqHeaders = {};
+      if (accessToken) reqHeaders.Authorization = `Bearer ${accessToken}`;
+      const json = {
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        vehicleType: vehicleType.trim(),
+        notes: notes.trim(),
+        idDocUrl: idDocUrl.trim(),
+        agreeToTerms: true,
+        agreeCourierRules: true
+      };
+      if (!accessToken) json.email = resolvedEmail;
       await apiFetch("/api/courier-applications", {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        json: {
-          fullName: fullName.trim(),
-          phone: phone.trim(),
-          vehicleType: vehicleType.trim(),
-          notes: notes.trim(),
-          idDocUrl: idDocUrl.trim(),
-          agreeToTerms: true,
-          agreeCourierRules: true
-        }
+        headers: reqHeaders,
+        json
       });
-      setUser((prev) => (prev ? { ...prev, riderApplicationStatus: "pending" } : prev));
+      if (user && accessToken) setUser((prev) => (prev ? { ...prev, riderApplicationStatus: "pending" } : prev));
       toast("Application submitted! We’ll notify you after review.", { variant: "success" });
       nav("/", { replace: true });
     } catch (ex) {
@@ -202,7 +219,7 @@ export function CourierApplicationPage() {
         key: "layout",
         onOpenCart: () => setCartOpen(true),
         hideSearch: true,
-        title: "Become a courier"
+        title: "Become a rider"
       },
       h("div", { key: "grid", className: "mx-auto w-full max-w-6xl gap-8 px-4 py-8 lg:grid lg:grid-cols-[minmax(0,340px)_1fr] lg:items-start lg:gap-10 lg:px-6 lg:px-8" }, [
         h(GlassPanel, { key: "side", className: "mb-8 lg:sticky lg:top-6 lg:mb-0" }, [
@@ -251,6 +268,13 @@ export function CourierApplicationPage() {
             platformCfg && platformCfg.allowCourierApplications === false
               ? h(InlineNotice, { key: "closed", variant: "warning", title: "Applications closed" }, "The operator has temporarily stopped new courier applications.")
               : null,
+            !accessToken
+              ? h(
+                  InlineNotice,
+                  { key: "guest", variant: "info", title: "Applying as a guest?" },
+                  "You can submit without an account — add your email and ID below. Already registered? Signing in uses your profile email."
+                )
+              : null,
             h(
               "form",
               { className: "mt-6 space-y-5", onSubmit },
@@ -261,11 +285,40 @@ export function CourierApplicationPage() {
                     { label: h("span", { className: "inline-flex items-center gap-1" }, [h(User, { className: "h-3.5 w-3.5" }), " Full name"]) },
                     h(TextInput, { value: fullName, onChange: (e) => setFullName(e.target.value), required: true })
                   ),
-                  h(
-                    Field,
-                    { label: h("span", { className: "inline-flex items-center gap-1" }, [h(Mail, { className: "h-3.5 w-3.5" }), " Email"]) },
-                    h(TextInput, { type: "email", value: email, readOnly: true, className: "opacity-80" })
-                  )
+                  accessToken
+                    ? h(
+                        Field,
+                        {
+                          label: h("span", { className: "inline-flex items-center gap-1" }, [
+                            h(Mail, { className: "h-3.5 w-3.5" }),
+                            " Email (from your account)"
+                          ])
+                        },
+                        h(TextInput, {
+                          type: "email",
+                          value: accountEmail,
+                          placeholder: accountEmail ? undefined : "Add email on Profile.",
+                          readOnly: true,
+                          className: "opacity-90"
+                        })
+                      )
+                    : h(
+                        Field,
+                        {
+                          label: h("span", { className: "inline-flex items-center gap-1" }, [
+                            h(Mail, { className: "h-3.5 w-3.5" }),
+                            " Email (we’ll reply here)"
+                          ])
+                        },
+                        h(TextInput, {
+                          type: "email",
+                          value: guestEmail,
+                          onChange: (e) => setGuestEmail(e.target.value),
+                          placeholder: "you@example.com",
+                          required: true,
+                          autoComplete: "email"
+                        })
+                      )
                 ]),
                 h(
                   Field,
@@ -297,7 +350,7 @@ export function CourierApplicationPage() {
                   ])
                 ]),
                 h("div", { key: "up", className: "space-y-2" }, [
-                  h("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400" }, "ID (optional)"),
+                  h("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400" }, "Government ID (required)"),
                   h(
                     "button",
                     {
@@ -309,7 +362,7 @@ export function CourierApplicationPage() {
                     [
                       h(CloudUpload, { key: "upl-ic", className: "h-10 w-10 text-emerald-600 dark:text-emerald-400" }),
                       h("p", { key: "upl-t1", className: "text-sm font-medium text-slate-800 dark:text-slate-100" }, "Click to upload PNG, JPG, or PDF"),
-                      h("p", { key: "upl-t2", className: "text-xs text-slate-500" }, "Max 5 MB — helps admins verify you faster.")
+                      h("p", { key: "upl-t2", className: "text-xs text-slate-500" }, "Ghana Card or government ID — PNG/JPG/PDF, max 5 MB (required).")
                     ]
                   ),
                   h("input", { ref: fileRef, type: "file", accept: "image/png,image/jpeg,application/pdf", className: "hidden", onChange: onPickFile }),

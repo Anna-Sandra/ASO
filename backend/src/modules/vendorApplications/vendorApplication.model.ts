@@ -7,7 +7,8 @@ export type VendorLocationBase = (typeof VENDOR_LOCATION_BASE)[number];
 
 export interface VendorApplicationDoc {
   _id: mongoose.Types.ObjectId;
-  userId: mongoose.Types.ObjectId;
+  /** Set when applicant was signed in; guest applications use email only until an admin links an account on approval. */
+  userId?: mongoose.Types.ObjectId | null;
   fullName: string;
   email: string;
   shopName: string;
@@ -28,7 +29,7 @@ export interface VendorApplicationDoc {
 
 const vendorApplicationSchema = new Schema<VendorApplicationDoc>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: false, default: null, index: true, sparse: true },
     fullName: { type: String, required: true, trim: true, maxlength: 120 },
     email: { type: String, required: true, trim: true, lowercase: true, maxlength: 200 },
     shopName: { type: String, required: true, trim: true, maxlength: 120 },

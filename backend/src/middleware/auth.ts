@@ -44,6 +44,18 @@ export function authorize(...roles: UserRole[]) {
   };
 }
 
+/** Vendor/courier application ID uploads: guests allowed; signed-in shoppers allowed; other roles blocked. */
+export function authorizeGuestOrBuyerApplicationUpload(req: Request, _res: Response, next: NextFunction) {
+  if (!req.user) return next();
+  if (req.user.role === "buyer") return next();
+  next(
+    new HttpError(
+      403,
+      "Use a shopper account to upload ID while signed in, or sign out and apply as a guest."
+    )
+  );
+}
+
 /** Use after protect + admin routes: only JWT `al: "super"` (or bootstrap env admin). */
 export function requireSuperAdmin(req: Request, _res: Response, next: NextFunction) {
   if (req.user?.role !== "admin" || req.user?.adminLevel !== "super") {

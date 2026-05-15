@@ -40,7 +40,11 @@ export const submitVendorApplicationSchema = z.object({
         "Shop description must be at least 10 characters. Tell buyers what you offer, your standards, and how you fulfill orders."
     })
     .max(300, { message: "Shop description must be 300 characters or less." }),
-  verificationDocUrl: z.string().trim().max(500).optional().default(""),
+  verificationDocUrl: z
+    .string()
+    .trim()
+    .min(1, { message: "Upload a Ghana Card or ID photo / PDF." })
+    .max(500, { message: "Verification URL is invalid." }),
   locationBase: z.enum(VENDOR_LOCATION_BASE, { message: "Choose whether you are on-campus or off-campus." }),
   nearbyArea: z
     .string()
@@ -48,7 +52,9 @@ export const submitVendorApplicationSchema = z.object({
     .min(1, { message: "Please enter your nearby town or area (under Location)." })
     .max(200, { message: "Nearby area must be at most 200 characters." }),
   agreeToTerms: z.boolean().refine((v) => v === true, { message: "You must accept the Terms & Conditions." }),
-  agreeToVendorRules: z.boolean().refine((v) => v === true, { message: "You must accept the vendor rules." })
+  agreeToVendorRules: z.boolean().refine((v) => v === true, { message: "You must accept the vendor rules." }),
+  /** Required when submitting without signing in — ignored for authenticated shoppers (profile email wins). */
+  email: z.union([z.literal(""), z.string().trim().email().max(200)]).optional()
 });
 
 export const adminVendorApplicationsQuerySchema = z.object({

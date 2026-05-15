@@ -85,6 +85,7 @@ function serializeLineItem(it: Record<string, unknown>) {
     platformFee = s.platformFee;
     sellerProceeds = s.sellerProceeds;
   }
+  const bn = typeof it.buyerNote === "string" && it.buyerNote.trim() ? it.buyerNote.trim() : undefined;
   return {
     productId: (it.productId as mongoose.Types.ObjectId).toString(),
     sellerId: (it.sellerId as mongoose.Types.ObjectId).toString(),
@@ -93,7 +94,8 @@ function serializeLineItem(it: Record<string, unknown>) {
     unitPrice: it.unitPrice,
     lineGross,
     platformFee,
-    sellerProceeds
+    sellerProceeds,
+    ...(bn ? { buyerNote: bn } : {})
   };
 }
 

@@ -5,7 +5,9 @@ import {
   ArrowLeft,
   BarChart3,
   Box,
+  CalendarClock,
   Camera,
+  Building2,
   LayoutDashboard,
   LineChart,
   LogOut,
@@ -16,6 +18,7 @@ import {
   Send,
   Settings,
   ShoppingCart,
+  Sparkles,
   Star,
   Trash2,
   X
@@ -24,7 +27,7 @@ import { useAuth, useNotice, useTheme } from "./contexts";
 import { NotificationBell, NotificationsContent } from "./screensNotifications";
 import { apiFetch, apiUploadBookPdf, apiUploadProductImages, apiUploadProfileImage, deleteAuthenticatedAccount } from "./api";
 import { trackVendorAnalyticsEvent, VendorRevenueLineChart } from "./vendorCharts";
-import { CATEGORY_LABELS, PRODUCT_CATEGORY_VALUES, refFromId } from "./catalog";
+import { CATEGORY_LABELS, PRODUCT_CATEGORY_VALUES, isFoodCallToOrderCategory, refFromId } from "./catalog";
 import {
   buildCategoryAttributesPayload,
   emptyAttrsForCategory,
@@ -362,10 +365,13 @@ export function VendorShell() {
       h("div", { key: "main-title", className: "mb-6 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400" }, "Main"),
       h("nav", { key: "main-nav", className: "space-y-1" }, [
         h(NavItem, { key: "n-dash", to: "/vendor/dashboard", icon: LayoutDashboard }, "Dashboard"),
+        h(NavItem, { key: "n-onb", to: "/vendor/onboarding", icon: Sparkles }, "Get started"),
+        h(NavItem, { key: "n-str", to: "/vendor/stores", icon: Building2 }, "Stores"),
         h(NavItem, { key: "n-prod", to: "/vendor/products", icon: Box, end: true }, "My products"),
         h(NavItem, { key: "n-add", to: "/vendor/products/new", icon: PlusCircle }, "Add product"),
         h(NavItem, { key: "n-orders", to: "/vendor/orders", icon: ShoppingCart, badge: orderBadge }, "Orders"),
         h(NavItem, { key: "n-msg", to: "/vendor/messages", icon: MessageSquare }, "Messages"),
+        h(NavItem, { key: "n-svc", to: "/vendor/service-inquiries", icon: CalendarClock }, "Service requests"),
         h(NavItem, { key: "n-rep", to: "/vendor/reports", icon: AlertTriangle }, "Reports")
       ]),
       h("div", { key: "ins-title", className: "mb-2 mt-6 text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400" }, "Insights"),
@@ -528,6 +534,22 @@ export function VendorDashboardPage() {
   const [analytics, setAnalytics] = useState(null);
   const [recentOrders, setRecentOrders] = useState([]);
   const [err, setErr] = useState("");
+  const [storeCount, setStoreCount] = useState(null);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    apiFetch("/api/businesses/mine", { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((d) => {
+        if (!cancelled) setStoreCount(Array.isArray(d.businesses) ? d.businesses.length : 0);
+      })
+      .catch(() => {
+        if (!cancelled) setStoreCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -570,6 +592,23 @@ export function VendorDashboardPage() {
     err
       ? h(InlineNotice, { key: "err", variant: "error", className: "mb-4", onDismiss: () => setErr("") }, err)
       : null,
+    storeCount !== null && storeCount === 0 &&
+      h(
+        InlineNotice,
+        { key: "onb", variant: "info", className: "mb-4", title: "Create your first storefront" },
+        h("div", { className: "text-sm" }, [
+          h("p", { key: "a" }, "Multi-vendor Campus Mart works best when you add a business profile before listings — category hubs and /store/your-slug link to it."),
+          h(
+            Link,
+            {
+              key: "b",
+              to: "/vendor/onboarding",
+              className: "mt-2 inline-block font-semibold text-sky-700 underline dark:text-sky-300"
+            },
+            "Open the guided setup →"
+          )
+        ])
+      ),
     !analytics && !err && h("p", { key: "loading", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" }, "Loading dashboard…"),
     h("div", { key: "hero", className: "mb-6 flex flex-wrap items-center justify-between gap-3" }, [
       h("div", { key: "hero-copy" }, [
@@ -769,8 +808,8 @@ export function VendorProductsPage() {
               h("span", { key: "nm", className: "font-medium text-slate-900 dark:text-white" }, row.name)
             ])),
             h("td", { key: "c-cat", className: "px-4 py-3 text-slate-600 dark:text-slate-300" }, CATEGORY_LABELS[row.category] || row.category),
-            h("td", { key: "c-price", className: "px-4 py-3 font-semibold text-slate-900 dark:text-white" }, row.category === "services" ? "Quote on request" : formatGhc(row.price)),
-            h("td", { key: "c-stock", className: "px-4 py-3" }, String(row.stock ?? 0)),
+            h("td", { key: "c-price", className: "px-4 py-3 font-semibold text-slate-900 dark:text-white" }, row.category === "services" ? "Quote on request" : isFoodCallToOrderCategory(row) ? "Call to order" : formatGhc(row.price)),
+            h("td", { key: "c-stock", className: "px-4 py-3" }, row.category === "services" || isFoodCallToOrderCategory(row) ? "—" : String(row.stock ?? 0)),
             h("td", { key: "c-st", className: "px-4 py-3" }, h(Badge, { tone: productStatusTone(row.status) }, formatProductStatus(row.status))),
             h("td", { key: "c-act", className: "px-4 py-3" }, h("div", { className: "flex flex-wrap gap-2" }, [
               h(
@@ -858,7 +897,7 @@ export function VendorAddProductPage() {
         category,
         price: priceNum,
         compareAtPrice: null,
-        stock: m.isService ? SERVICE_LISTING_STOCK : Math.max(0, Math.floor(Number(stock) || 0)),
+        stock: m.showStock ? Math.max(0, Math.floor(Number(stock) || 0)) : SERVICE_LISTING_STOCK,
         status: nextStatus,
         tags: tagList,
         imageUrls: urls,
@@ -922,6 +961,17 @@ export function VendorAddProductPage() {
               "rounded-2xl border border-amber-400/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-100"
           },
           "You're creating a service listing — graphic design, hair, typing, laundry, photography, tutoring, etc. Describe how you work and what buyers should send. Pricing is not listed on the shop: buyers use seller contact details on the listing to agree a price with you."
+        )
+      : null,
+    category === "food_drinks" && m.hidePrice
+      ? h(
+          "div",
+          {
+            key: "food-intro",
+            className:
+              "rounded-2xl border border-emerald-400/35 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-100"
+          },
+          "Food & drinks use call-to-order on the shop: no list price or inventory count here. Set prep time and availability in the fields below; buyers reach you from the listing to confirm price and pickup or delivery."
         )
       : null,
     h(Field, { key: "fld-name", label: meta.nameLabel }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value), placeholder: meta.namePlaceholder })),
@@ -1103,7 +1153,7 @@ export function VendorEditProductPage() {
           category,
           price: patchPrice,
           compareAtPrice: null,
-          stock: m.isService ? SERVICE_LISTING_STOCK : Number(stock) || 0,
+          stock: m.showStock ? Number(stock) || 0 : SERVICE_LISTING_STOCK,
           status,
           tags: tagList,
           imageUrls: urls,
@@ -1158,6 +1208,17 @@ export function VendorEditProductPage() {
               "rounded-2xl border border-amber-400/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-100"
           },
           "This is a service listing — pricing is not fixed here. Buyers use seller contact info on your listing and Messages to arrange details."
+        )
+      : null,
+    category === "food_drinks" && m.hidePrice
+      ? h(
+          "div",
+          {
+            key: "food-intro-edit",
+            className:
+              "rounded-2xl border border-emerald-400/35 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-100"
+          },
+          "Food & drinks are call-to-order: list price and stock are not shown to buyers. Use prep time and availability below; buyers contact you to order."
         )
       : null,
     h(Field, { key: "fld-name", label: meta.nameLabel }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value), placeholder: meta.namePlaceholder })),

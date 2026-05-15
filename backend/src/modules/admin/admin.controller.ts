@@ -1823,15 +1823,24 @@ export const listVendorApplications = asyncHandler(async (req: Request, res: Res
     VendorApplication.find(filter).sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
     VendorApplication.countDocuments(filter)
   ]);
-  const userIds = [...new Set(rows.map((r) => r.userId.toString()))];
-  const users = await User.find({ _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } })
-    .select("displayName email")
-    .lean();
+  const knownUserIds = rows
+    .map((r) => (r.userId != null ? String((r.userId as mongoose.Types.ObjectId).toString()) : null))
+    .filter((id): id is string => Boolean(id));
+  const userIds = [...new Set(knownUserIds)];
+  const users =
+    userIds.length > 0
+      ? await User.find({ _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+          .select("displayName email")
+          .lean()
+      : [];
   const byId = new Map(users.map((u) => [u._id.toString(), u]));
   res.json({
-    applications: rows.map((r) => ({
+    applications: rows.map((r) => {
+      const uid = r.userId != null ? String((r.userId as mongoose.Types.ObjectId).toString()) : null;
+      return {
       id: r._id.toString(),
-      userId: r.userId.toString(),
+      userId: uid,
+      isGuestSubmission: !uid,
       fullName: r.fullName,
       email: r.email,
       shopName: r.shopName,
@@ -1847,8 +1856,9 @@ export const listVendorApplications = asyncHandler(async (req: Request, res: Res
       adminNote: r.adminNote,
       createdAt: r.createdAt,
       reviewedAt: r.reviewedAt,
-      accountDisplayName: byId.get(r.userId.toString())?.displayName || ""
-    })),
+      accountDisplayName: uid ? byId.get(uid)?.displayName || "" : "(guest — linked on approve)"
+    };
+    }),
     total,
     page: q.page,
     limit: q.limit
@@ -1863,15 +1873,17 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
   if (!app) throw new HttpError(404, "Application not found");
   if (app.status !== "pending") throw new HttpError(400, "Only pending applications can be reviewed.");
 
-  const applicant = await User.findById(app.userId);
-  if (!applicant) throw new HttpError(404, "Applicant not found");
+  let applicant = app.userId ? await User.findById(app.userId) : null;
+  const appEmailNorm = (app.email || "").trim().toLowerCase();
 
   if (body.action === "reject") {
     app.status = "rejected";
     app.adminNote = body.adminNote;
     app.reviewedAt = new Date();
     await app.save();
-    await User.updateOne({ _id: app.userId }, { $set: { vendorStatus: "rejected" } });
+    if (app.userId) {
+      await User.updateOne({ _id: app.userId }, { $set: { vendorStatus: "rejected" } });
+    }
     await recordAdminAuditEvent({
       actorId: req.user?.id,
       action: "application.reject",
@@ -1881,6 +1893,31 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
     res.json({ ok: true, status: "rejected" });
     return;
   }
+
+  /** Approve */
+  if (!applicant && appEmailNorm) {
+    applicant = await User.findOne({ email: appEmailNorm });
+  }
+  if (!applicant) {
+    throw new HttpError(
+      400,
+      `No shopper account uses ${app.email}. Ask the applicant to register with this exact email, then approve the application again.`
+    );
+  }
+  const applicantEmailNorm = ((applicant as { email?: string }).email || "").trim().toLowerCase();
+  if (!applicantEmailNorm || applicantEmailNorm !== appEmailNorm) {
+    throw new HttpError(
+      400,
+      "Applicant account email does not match the application email. Verify the shopper registered with the same address."
+    );
+  }
+
+  if (!app.userId) {
+    app.userId = applicant._id;
+    await app.save();
+  }
+
+  const applicantOid = applicant._id as mongoose.Types.ObjectId;
 
   if (normalizeUserRole(applicant.role) !== "buyer") {
     throw new HttpError(400, "Applicant is not a shopper account; cannot approve.");
@@ -1893,7 +1930,7 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
 
   const displayName = (applicant.displayName || "").trim() || app.fullName;
   await User.updateOne(
-    { _id: app.userId },
+    { _id: applicantOid },
     {
       $set: {
         role: "seller",
@@ -1928,27 +1965,37 @@ export const listCourierApplications = asyncHandler(async (req: Request, res: Re
     CourierApplication.find(filter).sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
     CourierApplication.countDocuments(filter)
   ]);
-  const userIds = [...new Set(rows.map((r) => r.userId.toString()))];
-  const users = await User.find({ _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } })
-    .select("displayName email")
-    .lean();
+  const knownUserIds = rows
+    .map((r) => (r.userId != null ? String((r.userId as mongoose.Types.ObjectId).toString()) : null))
+    .filter((id): id is string => Boolean(id));
+  const userIds = [...new Set(knownUserIds)];
+  const users =
+    userIds.length > 0
+      ? await User.find({ _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+          .select("displayName email")
+          .lean()
+      : [];
   const byId = new Map(users.map((u) => [u._id.toString(), u]));
   res.json({
-    applications: rows.map((r) => ({
-      id: r._id.toString(),
-      userId: r.userId.toString(),
-      fullName: r.fullName,
-      email: r.email,
-      phone: r.phone,
-      vehicleType: r.vehicleType,
-      notes: r.notes,
-      idDocUrl: r.idDocUrl,
-      status: r.status,
-      adminNote: r.adminNote,
-      createdAt: r.createdAt,
-      reviewedAt: r.reviewedAt,
-      accountDisplayName: byId.get(r.userId.toString())?.displayName || ""
-    })),
+    applications: rows.map((r) => {
+      const uid = r.userId != null ? String((r.userId as mongoose.Types.ObjectId).toString()) : null;
+      return {
+        id: r._id.toString(),
+        userId: uid,
+        isGuestSubmission: !uid,
+        fullName: r.fullName,
+        email: r.email,
+        phone: r.phone,
+        vehicleType: r.vehicleType,
+        notes: r.notes,
+        idDocUrl: r.idDocUrl,
+        status: r.status,
+        adminNote: r.adminNote,
+        createdAt: r.createdAt,
+        reviewedAt: r.reviewedAt,
+        accountDisplayName: uid ? byId.get(uid)?.displayName || "" : "(guest — linked on approve)"
+      };
+    }),
     total,
     page: q.page,
     limit: q.limit
@@ -1963,18 +2010,20 @@ export const patchAdminCourierApplication = asyncHandler(async (req: Request, re
   if (!ca) throw new HttpError(404, "Application not found");
   if (ca.status !== "pending") throw new HttpError(400, "Only pending applications can be reviewed.");
 
-  const applicant = await User.findById(ca.userId);
-  if (!applicant) throw new HttpError(404, "Applicant not found");
+  let applicant = ca.userId ? await User.findById(ca.userId) : null;
+  const appEmailNorm = (ca.email || "").trim().toLowerCase();
 
   if (body.action === "reject") {
     ca.status = "rejected";
     ca.adminNote = body.adminNote || "";
     ca.reviewedAt = new Date();
     await ca.save();
-    await User.updateOne(
-      { _id: ca.userId },
-      { $set: { riderApplicationStatus: "rejected" as RiderApplicationStatus } }
-    );
+    if (ca.userId) {
+      await User.updateOne(
+        { _id: ca.userId },
+        { $set: { riderApplicationStatus: "rejected" as RiderApplicationStatus } }
+      );
+    }
     await recordAdminAuditEvent({
       actorId: req.user?.id,
       action: "courier.reject",
@@ -1985,6 +2034,31 @@ export const patchAdminCourierApplication = asyncHandler(async (req: Request, re
     return;
   }
 
+  if (!applicant && appEmailNorm) {
+    applicant = await User.findOne({ email: appEmailNorm });
+  }
+  if (!applicant) {
+    throw new HttpError(
+      400,
+      `No shopper account uses ${ca.email}. Ask the applicant to register with this exact email, then approve again.`
+    );
+  }
+
+  const applicantEmailNorm = ((applicant as { email?: string }).email || "").trim().toLowerCase();
+  if (!applicantEmailNorm || applicantEmailNorm !== appEmailNorm) {
+    throw new HttpError(
+      400,
+      "Applicant account email must match the application email before approving a guest submission."
+    );
+  }
+
+  if (!ca.userId) {
+    ca.userId = applicant._id;
+    await ca.save();
+  }
+
+  const applicantOid = applicant._id as mongoose.Types.ObjectId;
+
   if (normalizeUserRole(applicant.role) !== "buyer") {
     throw new HttpError(400, "Applicant is not a shopper account; cannot approve as courier.");
   }
@@ -1994,7 +2068,7 @@ export const patchAdminCourierApplication = asyncHandler(async (req: Request, re
 
   const phoneTaken = await User.findOne({
     phone,
-    _id: { $ne: ca.userId }
+    _id: { $ne: applicantOid }
   })
     .select("_id")
     .lean();
@@ -2002,7 +2076,7 @@ export const patchAdminCourierApplication = asyncHandler(async (req: Request, re
     throw new HttpError(409, "That phone number is already on another account. Ask the applicant to use a unique number.");
   }
 
-  const existingRp = await RiderProfile.findOne({ userId: ca.userId }).lean();
+  const existingRp = await RiderProfile.findOne({ userId: applicantOid }).lean();
   if (existingRp) {
     throw new HttpError(400, "This user already has a rider profile.");
   }
@@ -2016,7 +2090,7 @@ export const patchAdminCourierApplication = asyncHandler(async (req: Request, re
     ((applicant as { displayName?: string }).displayName || "").trim() || ca.fullName.trim();
 
   await VendorApplication.updateMany(
-    { userId: ca.userId, status: "pending" },
+    { userId: applicantOid, status: "pending" },
     {
       $set: {
         status: "rejected",
@@ -2027,7 +2101,7 @@ export const patchAdminCourierApplication = asyncHandler(async (req: Request, re
   );
 
   await User.updateOne(
-    { _id: ca.userId },
+    { _id: applicantOid },
     {
       $set: {
         role: "rider",
@@ -2040,7 +2114,7 @@ export const patchAdminCourierApplication = asyncHandler(async (req: Request, re
   );
 
   await RiderProfile.create({
-    userId: ca.userId,
+    userId: applicantOid,
     vehicleType: ca.vehicleType.trim()
   });
 

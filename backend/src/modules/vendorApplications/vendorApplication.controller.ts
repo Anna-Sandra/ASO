@@ -1,5 +1,4 @@
 import type { Request, Response } from "express";
-import mongoose from "mongoose";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { User, normalizeUserRole, type VendorProfileStatus } from "../auth/user.model";
@@ -14,14 +13,6 @@ function resolveVendorStatus(u: { role?: unknown; vendorStatus?: VendorProfileSt
 }
 
 export const submitVendorApplication = asyncHandler(async (req: Request, res: Response) => {
-  const uid = req.user!.id;
-  const user = await User.findById(uid);
-  if (!user) throw new HttpError(404, "Account not found.");
-
-  const role = normalizeUserRole(user.role);
-  if (role === "admin") throw new HttpError(400, "Admins cannot submit vendor applications.");
-  if (role === "seller") throw new HttpError(400, "You are already a vendor.");
-
   const platform = await getOrCreateSettings();
   if (platform.maintenanceMode === true) {
     const msg = (platform.maintenanceMessage || "").trim();
@@ -30,9 +21,6 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
   if (platform.allowVendorApplications === false) {
     throw new HttpError(403, "Vendor applications are temporarily closed.");
   }
-
-  const vs = resolveVendorStatus(user as { role?: unknown; vendorStatus?: VendorProfileStatus });
-  if (vs === "pending") throw new HttpError(409, "You already have a pending vendor application.");
 
   const body = req.body as {
     fullName: string;
@@ -45,16 +33,67 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
     verificationDocUrl?: string;
     locationBase: string;
     nearbyArea: string;
+    email?: string;
   };
 
-  const email = (user.email || "").trim().toLowerCase();
-  if (!email) throw new HttpError(400, "Your account must have an email.");
+  let user: InstanceType<typeof User> | null = null;
+  if (req.user) {
+    const u = await User.findById(req.user.id);
+    if (!u) throw new HttpError(404, "Account not found.");
+    user = u;
+    const role = normalizeUserRole(user.role);
+    if (role === "admin") throw new HttpError(400, "Admins cannot submit vendor applications.");
+    if (role === "seller") throw new HttpError(400, "You are already a vendor.");
+    if (role !== "buyer") {
+      throw new HttpError(
+        400,
+        "Use a shopper account to apply while signed in, or sign out and apply as a guest with your email."
+      );
+    }
+    const vs = resolveVendorStatus(user as { role?: unknown; vendorStatus?: VendorProfileStatus });
+    if (vs === "pending") throw new HttpError(409, "You already have a pending vendor application.");
+  }
 
-  const existingPending = await VendorApplication.findOne({ userId: user._id, status: "pending" });
-  if (existingPending) throw new HttpError(409, "You already have a pending application.");
+  let email = "";
+  if (user) {
+    email = (user.email || "").trim().toLowerCase();
+    const fromBody =
+      typeof body.email === "string" && body.email.trim() ? body.email.trim().toLowerCase() : "";
+    if (!email && fromBody) email = fromBody;
+    if (!email) {
+      throw new HttpError(
+        400,
+        "Your profile has no email. Add one under Profile — or include an email address in your application payload."
+      );
+    }
+  } else {
+    email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!email) {
+      throw new HttpError(
+        400,
+        "Please enter a valid email address so admins can reply about your vendor application."
+      );
+    }
+  }
+
+  const orFilter: Array<Record<string, unknown>> = [{ email }];
+  if (user) orFilter.push({ userId: user._id });
+
+  const existingPending = await VendorApplication.exists({
+    status: "pending",
+    $or: orFilter
+  });
+  if (existingPending) {
+    throw new HttpError(
+      409,
+      user
+        ? "You already have a pending vendor application."
+        : "An application with this email is already pending review."
+    );
+  }
 
   await VendorApplication.create({
-    userId: user._id,
+    userId: user?._id ?? null,
     fullName: body.fullName.trim(),
     email,
     shopName: body.shopName.trim(),
@@ -69,7 +108,9 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
     status: "pending"
   });
 
-  await User.updateOne({ _id: user._id }, { $set: { vendorStatus: "pending" } });
+  if (user) {
+    await User.updateOne({ _id: user._id }, { $set: { vendorStatus: "pending" } });
+  }
 
   res.status(201).json({ message: "Application submitted. We will email you when it is reviewed." });
 });

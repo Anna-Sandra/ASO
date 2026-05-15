@@ -37,6 +37,8 @@ import { assistantChatSchema } from "./modules/assistant/assistant.schemas";
 import platformRoutes from "./modules/platform/platform.routes";
 import notificationRoutes from "./modules/notifications/notification.routes";
 import deliveryRoutes from "./modules/deliveries/delivery.routes";
+import businessRoutes from "./modules/businesses/business.routes";
+import serviceInquiryRoutes from "./modules/serviceInquiries/serviceInquiry.routes";
 import {
   initPaystackGuide,
   paystackWebhook,
@@ -152,6 +154,8 @@ export function createApp() {
     uploadBookPdf
   );
   app.use("/api/uploads", uploadRoutes);
+  app.use("/api/businesses", businessRoutes);
+  app.use("/api/service-inquiries", serviceInquiryRoutes);
   /**
    * Registered here (before `/api/products` router) so `GET …/recommended` is never swallowed by `GET …/:id`
    * when an older deployed `dist` lacks the `/recommended` entry under the products router (id becomes the

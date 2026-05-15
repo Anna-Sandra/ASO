@@ -2971,6 +2971,287 @@ export function AdminPage() {
     ].filter(Boolean));
   };
 
+  /* ---------------- Riders (delivery accounts) ---------------- */
+
+  const renderRiders = () => {
+    const totalPop = ridersCounts?.riders ?? ridersTotal ?? 0;
+    return h("div", { className: "space-y-4" }, [
+      h("p", { key: "hd", className: "text-sm text-slate-500 dark:text-slate-400" }, PAGE_TITLES.riders.hint),
+      h(
+        "div",
+        { key: "bar", className: "flex flex-wrap items-center justify-between gap-3" },
+        [
+          h(
+            "button",
+            {
+              key: "add-r",
+              type: "button",
+              onClick: () => setAddRiderOpen(true),
+              className:
+                "inline-flex shrink-0 items-center gap-1.5 rounded-2xl border border-sky-300/50 bg-sky-500/15 px-3 py-2 text-sm font-semibold text-sky-800 shadow-sm hover:bg-sky-500/25 dark:border-sky-500/30 dark:text-sky-100 dark:hover:bg-sky-500/20"
+            },
+            [h(Bike, { className: "h-4 w-4" }), "Add rider"]
+          ),
+          h(
+            "form",
+            {
+              key: "f",
+              className: "flex flex-1 flex-wrap items-center gap-2 lg:justify-end lg:gap-3",
+              onSubmit: (e) => {
+                e.preventDefault();
+                setRidersSearch(ridersSearchInput.trim());
+              }
+            },
+            [
+              h(SearchBox, {
+                key: "s",
+                value: ridersSearchInput,
+                onChange: setRidersSearchInput,
+                placeholder: "Search by email or name…",
+                className: "min-w-[12rem] flex-1 sm:max-w-xs"
+              }),
+              h(SelectInput, {
+                key: "st",
+                value: ridersStatus,
+                onChange: (e) => setRidersStatus(e.target.value),
+                className: "!min-h-[40px] !w-auto !px-3 !text-sm"
+              }, [
+                h("option", { key: "all", value: "all" }, "All statuses"),
+                h("option", { key: "a", value: "active" }, "Active"),
+                h("option", { key: "s", value: "suspended" }, "Suspended"),
+                h("option", { key: "b", value: "banned" }, "Banned")
+              ]),
+              h(SelectInput, {
+                key: "vf",
+                value: ridersVerified,
+                onChange: (e) => setRidersVerified(e.target.value),
+                className: "!min-h-[40px] !w-auto !px-3 !text-sm"
+              }, [
+                h("option", { key: "all", value: "all" }, "Email: any"),
+                h("option", { key: "y", value: "yes" }, "Verified"),
+                h("option", { key: "n", value: "no" }, "Not verified")
+              ]),
+              h(
+                "button",
+                {
+                  key: "go",
+                  type: "submit",
+                  className:
+                    "inline-flex items-center gap-1 rounded-2xl border border-slate-300/70 bg-white/50 px-3 py-2 text-sm font-medium hover:bg-white/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                },
+                [h(FilterIcon, { key: "i", className: "h-4 w-4" }), "Apply"]
+              )
+            ]
+          )
+        ]
+      ),
+      h(StatCard, {
+        key: "c-pop",
+        label: "Courier / rider accounts",
+        value: String(totalPop),
+        icon: Bike
+      }),
+      h(
+        GlassCard,
+        { key: "tbl", className: "!overflow-x-auto !p-0" },
+        h(
+          "table",
+          { className: "w-full min-w-[760px] text-left text-sm" },
+          [
+            h(
+              "thead",
+              {
+                className:
+                  "bg-slate-100/95 text-xs font-semibold uppercase text-slate-700 dark:bg-white/5 dark:text-slate-400"
+              },
+              h("tr", null, [
+                h("th", { className: "px-4 py-3" }, "Rider"),
+                h("th", { className: "px-4 py-3" }, "Contact"),
+                h("th", { className: "px-4 py-3" }, "Vehicle"),
+                h("th", { className: "px-4 py-3" }, "Email ✓"),
+                h("th", { className: "px-4 py-3" }, "Status"),
+                h("th", { className: "px-4 py-3" }, "Joined"),
+                h("th", { className: "min-w-[14rem] px-4 py-3" }, "Actions")
+              ])
+            ),
+            h(
+              "tbody",
+              { className: "divide-y divide-slate-200/90 dark:divide-white/10" },
+              riders.length === 0
+                ? h(
+                    "tr",
+                    { key: "e" },
+                    h(
+                      "td",
+                      { colSpan: 7, className: "px-4 py-12 text-center text-sm text-slate-500 dark:text-slate-400" },
+                      "No riders match the filters. Approve courier applications or use Add rider to create one."
+                    )
+                  )
+                : riders.map((r) =>
+                    h(
+                      "tr",
+                      { key: r.id, className: "hover:bg-white/5" },
+                      [
+                        h(
+                          "td",
+                          { className: "px-4 py-3" },
+                          h("div", { className: "flex items-center gap-3" }, [
+                            h(Avatar, { key: "a", user: r, size: 36 }),
+                            h(
+                              "div",
+                              { key: "m", className: "min-w-0 font-medium text-slate-900 dark:text-white" },
+                              r.displayName || "—"
+                            )
+                          ])
+                        ),
+                        h(
+                          "td",
+                          { className: "max-w-[14rem] px-4 py-3 text-xs leading-snug text-slate-700 dark:text-slate-200" },
+                          [
+                            h("p", { key: "e", className: "truncate" }, r.email || "—"),
+                            h("p", { key: "p", className: "truncate text-slate-500" }, r.phone || "—")
+                          ]
+                        ),
+                        h(
+                          "td",
+                          { className: "px-4 py-3 text-xs text-slate-700 dark:text-slate-200" },
+                          r.riderProfile?.vehicleType || "—"
+                        ),
+                        h(
+                          "td",
+                          { className: "px-4 py-3" },
+                          h(Badge, { tone: r.emailVerified ? "success" : "warn" }, r.emailVerified ? "Yes" : "No")
+                        ),
+                        h(
+                          "td",
+                          { className: "px-4 py-3" },
+                          h(Badge, { tone: accountStatusTone(r.accountStatus || "active") }, r.accountStatus || "active")
+                        ),
+                        h(
+                          "td",
+                          { className: "px-4 py-3 text-xs text-slate-500" },
+                          fmtDate(r.createdAt)
+                        ),
+                        h(
+                          "td",
+                          { className: "align-top whitespace-nowrap px-4 py-3" },
+                          h("div", { className: "flex flex-wrap gap-1" }, [
+                            r.accountStatus === "active"
+                              ? h(
+                                  "button",
+                                  {
+                                    key: "su",
+                                    type: "button",
+                                    className:
+                                      "shrink-0 rounded-xl border border-amber-300/50 bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-500/15 dark:text-amber-200",
+                                    onClick: () => patchUser(r.id, { accountStatus: "suspended" }, loadRiders)
+                                  },
+                                  "Suspend"
+                                )
+                              : h(
+                                  "button",
+                                  {
+                                    key: "act",
+                                    type: "button",
+                                    className:
+                                      "shrink-0 rounded-xl border border-emerald-300/50 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-500/15 dark:text-emerald-200",
+                                    onClick: () => patchUser(r.id, { accountStatus: "active" }, loadRiders)
+                                  },
+                                  "Activate"
+                                ),
+                            isSuperAdmin
+                              ? h(
+                                  "button",
+                                  {
+                                    key: "del",
+                                    type: "button",
+                                    className:
+                                      "shrink-0 rounded-xl border border-rose-300/60 bg-rose-600/10 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-600/20 dark:text-rose-200",
+                                    onClick: () => deleteRiderRow(r)
+                                  },
+                                  [h(Trash2, { key: "i", className: "h-3.5 w-3.5" }), " Delete"]
+                                )
+                              : null
+                          ].filter(Boolean))
+                        )
+                      ]
+                    )
+                  )
+            )
+          ]
+        )
+      ),
+      h(Pager, {
+        key: "p-r",
+        page: ridersPage,
+        total: ridersTotal,
+        limit: ridersLimit,
+        onPage: setRidersPage
+      }),
+      h(Modal, {
+        key: "addRiderModal",
+        open: addRiderOpen,
+        title: "Create rider account",
+        size: "sm",
+        onClose: () => {
+          if (!addRiderBusy) setAddRiderOpen(false);
+        }
+      }, [
+        h(
+          "p",
+          { key: "h", className: "mb-3 text-xs text-slate-600 dark:text-slate-300" },
+          "Creates a courier login with rider role + vehicle profile. They can sign in at /login after you share the temporary password."
+        ),
+        h(Field, { key: "em", label: "Email" }, h(TextInput, {
+          type: "email",
+          value: addRiderForm.email,
+          disabled: addRiderBusy,
+          onChange: (e) => setAddRiderForm((f) => ({ ...f, email: e.target.value }))
+        })),
+        h(Field, { key: "pw", label: "Temporary password (min 8)" }, h(TextInput, {
+          type: "password",
+          value: addRiderForm.password,
+          disabled: addRiderBusy,
+          autoComplete: "new-password",
+          onChange: (e) => setAddRiderForm((f) => ({ ...f, password: e.target.value }))
+        })),
+        h(Field, { key: "nm", label: "Display name (optional)" }, h(TextInput, {
+          value: addRiderForm.displayName,
+          disabled: addRiderBusy,
+          onChange: (e) => setAddRiderForm((f) => ({ ...f, displayName: e.target.value }))
+        })),
+        h(Field, { key: "ph", label: "Phone (optional)" }, h(TextInput, {
+          value: addRiderForm.phone,
+          disabled: addRiderBusy,
+          onChange: (e) => setAddRiderForm((f) => ({ ...f, phone: e.target.value }))
+        })),
+        h(Field, { key: "vt", label: "Vehicle type" }, h(TextInput, {
+          placeholder: "bicycle, motorcycle, …",
+          value: addRiderForm.vehicleType,
+          disabled: addRiderBusy,
+          onChange: (e) => setAddRiderForm((f) => ({ ...f, vehicleType: e.target.value }))
+        })),
+        h("div", { key: "row-btn", className: "mt-4 flex justify-end gap-2" }, [
+          h(
+            Button,
+            {
+              key: "cx",
+              variant: "ghost",
+              disabled: addRiderBusy,
+              onClick: () => !addRiderBusy && setAddRiderOpen(false)
+            },
+            "Cancel"
+          ),
+          h(Button, {
+            key: "ok",
+            loading: addRiderBusy,
+            onClick: () => void submitCreateRider()
+          }, "Create")
+        ])
+      ])
+    ]);
+  };
+
   /* ---------------- Vendor applications (buyer → seller) ---------------- */
 
   const renderVendorApplications = () => {
@@ -3219,7 +3500,7 @@ export function AdminPage() {
             title: "No applications",
             hint:
               courierAppsStatus === "pending"
-                ? "Pending requests appear when shoppers submit Become a courier."
+                ? "Pending requests appear when shoppers submit Become a rider."
                 : "Try another filter or search.",
             icon: Truck
           })
@@ -5570,6 +5851,7 @@ export function AdminPage() {
     }
     if (tab === "dashboard") return renderDashboard();
     if (tab === "users") return renderUsers();
+    if (tab === "riders") return renderRiders();
     if (tab === "vendor-apps") return renderVendorApplications();
     if (tab === "courier-apps") return renderCourierApplications();
     if (tab === "sellers") return renderSellers();

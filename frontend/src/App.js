@@ -32,6 +32,11 @@ import {
 } from "./screensBuyer";
 import { CourierApplicationPage } from "./screensCourierApply";
 import { VendorApplicationPage } from "./screensVendorApply";
+import { CategoryHubPage, BusinessStorefrontPage } from "./marketplaceHubScreens";
+import { VendorStoresPage } from "./vendorBusinessStudio";
+import { VendorStoreMenuPage } from "./vendorStoreMenu";
+import { VendorOnboardingPage } from "./vendorOnboardingWizard";
+import { VendorServiceInquiriesPage } from "./vendorServiceInquiries";
 import { BuyerReportsPage, VendorReportsPage } from "./screensUserReports";
 import { TermsAndConditionsPage, VendorRulesPage } from "./screensLegal";
 import { AdminPage } from "./screensAdmin";
@@ -151,6 +156,42 @@ function AppRoutes() {
     null,
     h(Route, { path: "/shop", element: h(Navigate, { to: "/", replace: true }), key: "r-shop-legacy" }),
     h(Route, { path: "/", element: h(BuyerGate, null, h(ShopPage)), key: "r-root" }),
+    h(Route, { path: "/food", element: h(BuyerGate, null, h(CategoryHubPage, { slug: "food" })), key: "r-food" }),
+    h(Route, {
+      path: "/fashion",
+      element: h(BuyerGate, null, h(CategoryHubPage, { slug: "fashion" })),
+      key: "r-fashion"
+    }),
+    h(Route, {
+      path: "/electronics",
+      element: h(BuyerGate, null, h(CategoryHubPage, { slug: "electronics" })),
+      key: "r-electron"
+    }),
+    h(Route, {
+      path: "/beauty",
+      element: h(BuyerGate, null, h(CategoryHubPage, { slug: "beauty" })),
+      key: "r-beauty"
+    }),
+    h(Route, {
+      path: "/groceries",
+      element: h(BuyerGate, null, h(CategoryHubPage, { slug: "groceries" })),
+      key: "r-groceries"
+    }),
+    h(Route, {
+      path: "/books",
+      element: h(BuyerGate, null, h(CategoryHubPage, { slug: "books" })),
+      key: "r-books"
+    }),
+    h(Route, {
+      path: "/services",
+      element: h(BuyerGate, null, h(CategoryHubPage, { slug: "services" })),
+      key: "r-services-hub"
+    }),
+    h(Route, {
+      path: "/store/:slug",
+      element: h(BuyerGate, null, h(BusinessStorefrontPage)),
+      key: "r-store"
+    }),
     h(Route, {
       path: "/products/:productId",
       element: h(BuyerGate, null, h(ProductDetailPage)),
@@ -181,12 +222,12 @@ function AppRoutes() {
     }),
     h(Route, {
       path: "/apply-vendor",
-      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(VendorApplicationPage))),
+      element: h(BuyerGate, null, h(VendorApplicationPage)),
       key: "r-apply-vendor"
     }),
     h(Route, {
       path: "/apply-courier",
-      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(CourierApplicationPage))),
+      element: h(BuyerGate, null, h(CourierApplicationPage)),
       key: "r-apply-courier"
     }),
     h(Route, {
@@ -229,6 +270,9 @@ function AppRoutes() {
       { path: "/vendor", element: h(VendorGate, null, h(VendorShell)), key: "r-vendor" },
       h(Route, { index: true, element: h(Navigate, { to: "dashboard", replace: true }), key: "r-v-idx" }),
       h(Route, { path: "dashboard", element: h(VendorDashboardPage), key: "r-v-dash" }),
+      h(Route, { path: "onboarding", element: h(VendorOnboardingPage), key: "r-v-onboard" }),
+      h(Route, { path: "service-inquiries", element: h(VendorServiceInquiriesPage), key: "r-v-svc-req" }),
+      h(Route, { path: "stores/:storeKey/menu", element: h(VendorStoreMenuPage), key: "r-v-store-menu" }),
       h(Route, { path: "products", element: h(VendorProductsPage), key: "r-v-products" }),
       h(Route, { path: "products/new", element: h(VendorAddProductPage), key: "r-v-new" }),
       h(Route, { path: "products/:productId", element: h(VendorEditProductPage), key: "r-v-edit" }),

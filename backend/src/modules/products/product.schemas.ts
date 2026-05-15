@@ -1,17 +1,33 @@
 import { z } from "zod";
 import mongoose from "mongoose";
 import { MAX_PRODUCT_GALLERY_IMAGES } from "../../config/productLimits";
-import { PRODUCT_CATEGORIES } from "./product.model";
+import { LISTING_KINDS, PRODUCT_CATEGORIES } from "./product.model";
 import { normalizeCategoryAttributes, safeParseCategoryAttributes } from "./categoryAttributes.schema";
 
 const categoryEnum = z.enum(PRODUCT_CATEGORIES);
+
+const listingKindEnum = z.enum(LISTING_KINDS);
+
+const productAddonSchema = z.object({
+  label: z.string().min(1).max(80),
+  priceDelta: z.coerce.number().min(0).optional().default(0)
+});
 
 const productCore = {
   name: z.string().min(1).max(200),
   description: z.string().max(10000).optional().default(""),
   category: categoryEnum,
   categoryAttributes: z.unknown().optional(),
-  /** Services use 0 (“contact vendor” in the UI); other categories must be positive. */
+  businessId: z
+    .union([z.string().refine((s) => mongoose.isValidObjectId(s), "Invalid business id"), z.null()])
+    .optional(),
+  menuSectionId: z
+    .union([z.string().refine((s) => mongoose.isValidObjectId(s), "Invalid menu section id"), z.null()])
+    .optional(),
+  listingKind: listingKindEnum.optional(),
+  prepTimeMinutes: z.coerce.number().int().min(1).max(10080).optional().nullable(),
+  addons: z.array(productAddonSchema).max(24).optional().default([]),
+  /** Services and food (call-to-order) use 0 (“contact vendor” / no list price in the UI). */
   price: z.coerce.number().min(0),
   compareAtPrice: z.coerce.number().positive().optional().nullable(),
   stock: z.coerce.number().int().min(0).default(25),
@@ -24,7 +40,7 @@ const createBody = z.object(productCore);
 
 export const createProductSchema = createBody
   .superRefine((data, ctx) => {
-    if (data.category !== "services") {
+    if (data.category !== "services" && data.category !== "food_drinks") {
       if (!Number.isFinite(data.price) || data.price <= 0) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Price must be greater than zero.", path: ["price"] });
       }
@@ -73,6 +89,10 @@ export const listProductsQuerySchema = z.object({
   category: categoryEnum.optional(),
   tag: z.string().max(32).optional(),
   q: z.string().max(200).optional(),
+  businessId: z
+    .string()
+    .refine((s) => mongoose.isValidObjectId(s), { message: "Invalid business id" })
+    .optional(),
   /** Inclusive min list price (seller price, GHS — same unit as `price` on products). */
   minPrice: z.coerce.number().min(0).optional(),
   /** Inclusive max list price. */

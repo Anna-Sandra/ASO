@@ -13,7 +13,9 @@ import { notifyOrderCancelledForCounterparties, notifyOrderMessageRecipients, no
 type InboxMsg = { senderRole: string; text: string; createdAt: Date; senderId: mongoose.Types.ObjectId | string };
 
 export const checkout = asyncHandler(async (req: Request, res: Response) => {
-  const { items } = req.body as { items: { productId: string; quantity: number }[] };
+  const { items } = req.body as {
+    items: { productId: string; quantity: number; customization?: string }[];
+  };
   const buyerId = new mongoose.Types.ObjectId(req.user!.id);
 
   const lineItems: Array<{
@@ -37,6 +39,12 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
         "Service listings are quoted with vendors directly. Remove them from your cart — open the listing and use seller contact details."
       );
     }
+    if (p.category === "food_drinks") {
+      throw new HttpError(
+        400,
+        "Food & drink items are priced on request. Remove them from your cart — call or message the vendor from the listing to order."
+      );
+    }
     if (!(Number(p.price) > 0)) {
       throw new HttpError(400, `Listing has no checkout price: ${p.name}`);
     }
@@ -45,6 +53,7 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     const vendorGross = roundMoney(p.price * row.quantity);
     const platformFee = serviceFeeOnVendorGross(vendorGross, commissionPct);
     const sellerProceeds = vendorGross;
+    const note = typeof row.customization === "string" ? row.customization.trim().slice(0, 280) : "";
     lineItems.push({
       productId: p._id,
       sellerId: p.sellerId,
@@ -52,7 +61,8 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
       quantity: row.quantity,
       unitPrice: p.price,
       platformFee,
-      sellerProceeds
+      sellerProceeds,
+      ...(note ? { buyerNote: note } : {})
     });
   }
 
