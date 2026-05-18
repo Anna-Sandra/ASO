@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import mongoose from "mongoose";
 import { env } from "../../config/env";
-import { Product } from "../products/product.model";
+import { Product, type ProductCategory } from "../products/product.model";
 import { Business } from "../businesses/business.model";
 import {
   activeStoreBusinessIds,
@@ -20,15 +20,34 @@ export function userWantsFoodSuggestions(message: string): boolean {
   return FOOD_KEYWORDS.test(String(message || ""));
 }
 
+/** Map casual shopper language to our catalog category (narrow fallback results). */
+export function detectCategoryFromMessage(message: string): ProductCategory | null {
+  const m = String(message || "").toLowerCase();
+  if (/shoe|heel|boot|sandal|footwear|sneaker|trainer|slipper/.test(m)) return "fashion_accessories";
+  if (/food|eat|eating|hungry|menu|dish|dishes|restaurant|cafeteria|waakye|jollof|fufu|snack\b/.test(m)) return "food_drinks";
+  if (/electronic|gadget|laptop|phone|charger|cable|earbud|headphone|tablet/.test(m)) return "electronics_gadgets";
+  if (/beauty|makeup|skin|hair|perfume|cosmetic|lipstick/.test(m)) return "beauty_personal_care";
+  if (/\bbook|novel|textbook|course ?book\b/.test(m)) return "books_academic";
+  if (/service|repair|fix|tutor|plumb|electrician|hire\b/.test(m)) return "services";
+  if (/grocery|groceries|vegetable|fruit\b|essentials\b/.test(m)) return "groceries_essentials";
+  if (/fashion|cloth|dress|shirt|pant|skirt|bag|purse|wallet|jewelry|watch|belt|accessor/.test(m)) return "fashion_accessories";
+  return null;
+}
+
 async function findProductsForFallback(message: string, limit = 6) {
   const activeIds = await activeStoreBusinessIds();
+  const trimmed = String(message || "").trim();
+  const detectedCategory = detectCategoryFromMessage(trimmed);
+
   const base: Record<string, unknown> = {
     status: "active",
     $or: [{ category: "services" }, { stock: { $gt: 0 } }, { category: "food_drinks" }],
     ...foodMenuStoreFilter(activeIds)
   };
+  if (detectedCategory) {
+    base.category = detectedCategory;
+  }
 
-  const trimmed = String(message || "").trim();
   const preferFood = userWantsFoodSuggestions(trimmed);
 
   let rows: Record<string, unknown>[] = [];
@@ -58,7 +77,12 @@ async function findProductsForFallback(message: string, limit = 6) {
   }
 
   if (!rows.length) {
-    const catFilter = preferFood ? { category: "food_drinks" as const } : {};
+    const catFilter =
+      detectedCategory != null
+        ? {}
+        : preferFood
+          ? { category: "food_drinks" as const }
+          : {};
     rows = (await Product.find({ ...base, ...catFilter })
       .sort({ updatedAt: -1 })
       .limit(limit)
@@ -96,12 +120,42 @@ export function formatProductLine(
   return `- ${prefix}[${name}](${origin}/products/${id})${storeBit} — ${price}`;
 }
 
+function isGreetingOnly(message: string): boolean {
+  const t = String(message || "").trim();
+  if (!t.length || t.length > 48) return false;
+  if (
+    /^(hi|hello|hey|hiya|howdy|sup|yo|good morning|good afternoon|good evening)\b[\s!,?.]*(there\b)?[\s!?.]*$/i.test(t)
+  )
+    return true;
+  if (/^(what'?s up|whats up)\b[!?.]*$/i.test(t)) return true;
+  return false;
+}
+
+const ORDER_HELP = /how.*(order|buy|purchase|checkout|pay)/i;
+
 /** User-friendly reply when Ollama is down, slow, or not configured — real listings, no dev jargon. */
 export async function buildAssistantCatalogReply(
   siteName: string,
   message: string,
   _req: Request
 ): Promise<string> {
+  const trimmed = String(message || "").trim();
+
+  if (isGreetingOnly(trimmed)) {
+    return (
+      `Hey! 👋 I'm your **${siteName}** shopping assistant. Ask me about food, fashion, electronics, or any products — I'll find real listings for you!`
+    );
+  }
+
+  if (ORDER_HELP.test(trimmed)) {
+    return (
+      `Here's how to order on **${siteName}**:\n\n` +
+        `**For food & services:** Open the listing and tap **Contact seller** to place your order directly.\n\n` +
+        `**For other products:** Sign in → **Add to cart** → **Checkout** → pay with **Paystack**.\n\n` +
+        `Need help finding something specific? Just ask! 🛒`
+    );
+  }
+
   const products = await findProductsForFallback(message, 6);
   const stores = await Business.find({ status: "active", businessType: "food_restaurant" })
     .sort({ updatedAt: -1 })

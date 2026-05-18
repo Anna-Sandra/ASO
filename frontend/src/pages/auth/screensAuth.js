@@ -161,7 +161,7 @@ export function LoginPage() {
       [
         h("div", { key: "topbar", className: "mb-6 flex items-center justify-between" }, [
           h(Link, { key: "home", to: "/", className: "flex items-center gap-2" }, [
-            h(LogoMark, { key: "lm" }),
+            h(LogoMark, { key: "lm", className: "h-8 w-8 shrink-0 sm:h-9 sm:w-9" }),
             h(
               "span",
               { key: "nm", className: "font-display text-xl font-semibold text-slate-900 dark:text-white" },
@@ -312,7 +312,7 @@ export function LoginOtpPage() {
       [
         h("div", { key: "topbar", className: "mb-6 flex items-center justify-between" }, [
           h(Link, { key: "home", to: "/", className: "flex items-center gap-2" }, [
-            h(LogoMark, { key: "lm" }),
+            h(LogoMark, { key: "lm", className: "h-8 w-8 shrink-0 sm:h-9 sm:w-9" }),
             h(
               "span",
               { key: "nm", className: "font-display text-xl font-semibold text-slate-900 dark:text-white" },
@@ -541,7 +541,7 @@ export function RegisterPage() {
       [
         h("div", { key: "topbar", className: "mb-6 flex items-center justify-between" }, [
           h(Link, { key: "home", to: "/", className: "flex items-center gap-2" }, [
-            h(LogoMark, { key: "lm" }),
+            h(LogoMark, { key: "lm", className: "h-8 w-8 shrink-0 sm:h-9 sm:w-9" }),
             h("span", { key: "nm", className: "font-display text-xl font-semibold text-slate-900 dark:text-white" }, platformCfg?.siteName || SITE_NAME)
           ]),
         ]),

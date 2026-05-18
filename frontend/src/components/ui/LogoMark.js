@@ -3,7 +3,7 @@ import { h } from "utils/h";
 
 /**
  * SHOPIQGH mark — boutique bag monogram on a deep slate tile with gold accent.
- * Scales via `className` (e.g. `h-9 w-9`).
+ * Scales via `className` (e.g. `h-8 w-8`); defaults to `h-10 w-10` when omitted.
  */
 export function LogoMark({ className = "" }) {
   const gradId = `sq-mark-${useId().replace(/:/g, "")}`;
@@ -13,6 +13,7 @@ export function LogoMark({ className = "" }) {
     {
       className: [
         "relative flex shrink-0 items-center justify-center overflow-hidden rounded-2xl",
+        "h-10 w-10",
         "bg-gradient-to-br from-slate-950 via-slate-800 to-slate-900",
         "shadow-lg shadow-slate-900/25 ring-1 ring-amber-200/35",
         "dark:shadow-black/40 dark:ring-amber-300/30",
