@@ -5,7 +5,17 @@ import type { Request, Response } from "express";
 import multer from "multer";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
+import { tryResolvePublicUploadBaseUrl } from "../../utils/publicMediaUrl";
 import { User, normalizeUserRole, publicPhoneForPaymentRole } from "../auth/user.model";
+
+const PUBLIC_UPLOAD_BASE_ERR =
+  "Could not resolve public URL for uploads. Set API_PUBLIC_ORIGIN to your HTTPS API origin (e.g. https://your-service.onrender.com).";
+
+function requirePublicUploadBase(req: Request): string {
+  const base = tryResolvePublicUploadBaseUrl(req);
+  if (!base) throw new HttpError(500, PUBLIC_UPLOAD_BASE_ERR);
+  return base;
+}
 
 const uploadDir = path.resolve(process.cwd(), "uploads", "products");
 
@@ -38,9 +48,7 @@ export const uploadProductImages = asyncHandler(async (req: Request, res: Respon
   const files = req.files as Express.Multer.File[] | undefined;
   if (!files?.length) throw new HttpError(400, "No image files received");
 
-  const host = req.get("host");
-  if (!host) throw new HttpError(500, "Could not determine host for image URLs");
-  const base = `${req.protocol}://${host}`;
+  const base = requirePublicUploadBase(req);
   const urls = files.map((f) => `${base}/uploads/products/${f.filename}`);
   res.status(201).json({ urls });
 });
@@ -103,9 +111,7 @@ export const uploadVendorVerification = asyncHandler(async (req: Request, res: R
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
 
-  const host = req.get("host");
-  if (!host) throw new HttpError(500, "Could not determine host for file URL");
-  const base = `${req.protocol}://${host}`;
+  const base = requirePublicUploadBase(req);
   const url = `${base}/uploads/vendor-verification/${file.filename}`;
   res.status(201).json({ url });
 });
@@ -141,9 +147,7 @@ export const uploadReportEvidence = asyncHandler(async (req: Request, res: Respo
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
 
-  const host = req.get("host");
-  if (!host) throw new HttpError(500, "Could not determine host for file URL");
-  const base = `${req.protocol}://${host}`;
+  const base = requirePublicUploadBase(req);
   const url = `${base}/uploads/report-evidence/${file.filename}`;
   res.status(201).json({ url });
 });
@@ -177,9 +181,7 @@ export const uploadBookPdfMiddleware = multer({
 export const uploadBookPdf = asyncHandler(async (req: Request, res: Response) => {
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
-  const host = req.get("host");
-  if (!host) throw new HttpError(500, "Could not determine host for file URL");
-  const base = `${req.protocol}://${host}`;
+  const base = requirePublicUploadBase(req);
   const url = `${base}/uploads/book-pdfs/${file.filename}`;
   res.status(201).json({ url });
 });
@@ -188,9 +190,7 @@ export const uploadProfileImage = asyncHandler(async (req: Request, res: Respons
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No image file received");
 
-  const host = req.get("host");
-  if (!host) throw new HttpError(500, "Could not determine host for image URLs");
-  const base = `${req.protocol}://${host}`;
+  const base = requirePublicUploadBase(req);
   const url = `${base}/uploads/avatars/${file.filename}`;
 
   const user = await User.findByIdAndUpdate(

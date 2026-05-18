@@ -7,6 +7,7 @@ import { Business, primaryProductCategoryForBusinessType } from "./business.mode
 import { MenuSection } from "./menuSection.model";
 import { Product } from "../products/product.model";
 import { attachSellerPayments } from "../products/product.publicSerialize";
+import { rewriteStoredMediaNullable } from "../../utils/publicMediaUrl";
 import { Review } from "../reviews/review.model";
 import {
   createBusinessSchema,
@@ -65,8 +66,8 @@ function serializeBusiness(b: BusinessDoc) {
     status: b.status,
     name: b.name,
     description: b.description,
-    logoUrl: b.logoUrl,
-    bannerUrl: b.bannerUrl,
+    logoUrl: rewriteStoredMediaNullable(b.logoUrl ?? null),
+    bannerUrl: rewriteStoredMediaNullable(b.bannerUrl ?? null),
     contactPhone: b.contactPhone,
     contactEmail: b.contactEmail,
     locationLabel: b.locationLabel,

@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import { DEFAULT_SITE_NAME } from "../../config/brand";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
+import { rewriteStoredMediaNullable, rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import { env, getEmailTransportDiagnostics, isEmailTransportConfigured, isSuperUserAdminEmail } from "../../config/env";
 import { sendEmail } from "../../utils/mailer";
 import { EMAIL_TEMPLATE_PREVIEWS } from "../../utils/emailPreviewCatalog";
@@ -570,7 +571,9 @@ export const listAdminProducts = asyncHandler(async (req: Request, res: Response
       price: p.price,
       stock: p.stock,
       description: p.description,
-      imageUrls: (p as { imageUrls?: string[] }).imageUrls || [],
+      imageUrls: ((p as { imageUrls?: string[] }).imageUrls || []).map((u) =>
+        typeof u === "string" ? rewriteStoredMediaUrl(u) : u
+      ),
       createdAt: p.createdAt,
       updatedAt: p.updatedAt
     })),
@@ -626,8 +629,8 @@ function serializeAdminBusiness(b: BusinessDoc) {
     status: b.status,
     name: b.name,
     description: b.description,
-    logoUrl: b.logoUrl,
-    bannerUrl: b.bannerUrl,
+    logoUrl: rewriteStoredMediaNullable(b.logoUrl ?? null),
+    bannerUrl: rewriteStoredMediaNullable(b.bannerUrl ?? null),
     locationLabel: b.locationLabel,
     createdAt: b.createdAt,
     updatedAt: b.updatedAt
@@ -1070,7 +1073,7 @@ export const listAdminReports = asyncHandler(async (req: Request, res: Response)
     name: (u.displayName || "").trim() || u.email || "—",
     email: (u.email || "").trim(),
     role: (u.role || "buyer") as string,
-    avatarUrl: (u.profileImageUrl || "").trim(),
+    avatarUrl: rewriteStoredMediaUrl((u.profileImageUrl || "").trim()),
     businessName: (u.businessName || "").trim()
   });
   const umap = new Map<string, UserSummary>();
@@ -1084,10 +1087,14 @@ export const listAdminReports = asyncHandler(async (req: Request, res: Response)
 
   /** From any product doc, return a single absolute-or-relative URL to use as a thumbnail. */
   const productThumb = (p: { imageUrls?: string[]; images?: Array<string | { url?: string }> }) => {
-    if (Array.isArray(p.imageUrls) && p.imageUrls.length) return p.imageUrls[0];
-    const first = Array.isArray(p.images) && p.images.length ? p.images[0] : null;
-    if (!first) return "";
-    return typeof first === "object" ? first.url || "" : String(first);
+    let raw = "";
+    if (Array.isArray(p.imageUrls) && p.imageUrls.length) raw = p.imageUrls[0];
+    else {
+      const first = Array.isArray(p.images) && p.images.length ? p.images[0] : null;
+      if (!first) return "";
+      raw = typeof first === "object" ? first.url || "" : String(first);
+    }
+    return rewriteStoredMediaUrl(raw);
   };
 
   const counts = {
@@ -1127,7 +1134,7 @@ export const listAdminReports = asyncHandler(async (req: Request, res: Response)
           currency: (o as { currency?: string }).currency || "GHS",
           createdAt: (o as { createdAt: Date }).createdAt,
           productNames: items.map((it) => it.name || "").filter(Boolean).join(", "),
-          firstThumb: items[0]?.image || items[0]?.imageUrl || "",
+          firstThumb: rewriteStoredMediaUrl(items[0]?.image || items[0]?.imageUrl || ""),
           buyerId: ((o as { buyerId?: mongoose.Types.ObjectId }).buyerId || "").toString()
         };
         if (order.buyerId && umap.has(order.buyerId)) orderBuyer = umap.get(order.buyerId)!;

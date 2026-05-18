@@ -12,6 +12,7 @@ import { env, isEmailTransportConfigured } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { sendEmail } from "../../utils/mailer";
 import { asyncHandler } from "../../utils/asyncHandler";
+import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import { Order } from "../orders/order.model";
 import { Product } from "../products/product.model";
 import { Delivery } from "../deliveries/delivery.model";
@@ -79,7 +80,10 @@ function pickProfileFromUser(
     riderApplicationStatus = "none";
   }
   return {
-    profileImageUrl: typeof u.profileImageUrl === "string" && u.profileImageUrl.trim() ? u.profileImageUrl.trim() : "",
+    profileImageUrl:
+      rewriteStoredMediaUrl(
+        typeof u.profileImageUrl === "string" && u.profileImageUrl.trim() ? u.profileImageUrl.trim() : ""
+      ),
     emailVerifiedAt: u.emailVerifiedAt,
     accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
     sellerVerified: Boolean((u as { sellerVerified?: boolean }).sellerVerified),

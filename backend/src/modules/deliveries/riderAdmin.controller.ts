@@ -5,6 +5,7 @@ import { HttpError } from "../../utils/httpError";
 import { env } from "../../config/env";
 import { User, normalizeUserRole, publicPhoneForPaymentRole } from "../auth/user.model";
 import { RiderProfile } from "./riderProfile.model";
+import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import { adminCreateRiderSchema } from "./delivery.schemas";
 import { adminRidersQuerySchema } from "../admin/admin.schemas";
 
@@ -66,12 +67,12 @@ export const listAdminRiders = asyncHandler(async (req: Request, res: Response) 
         accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
         emailVerified: Boolean((u as { emailVerifiedAt?: Date | null }).emailVerifiedAt),
         createdAt: u.createdAt,
-        profileImageUrl: (u as { profileImageUrl?: string }).profileImageUrl ?? "",
+        profileImageUrl: rewriteStoredMediaUrl((u as { profileImageUrl?: string }).profileImageUrl ?? ""),
         riderProfile: rp
           ? {
               id: rp._id.toString(),
               vehicleType: rp.vehicleType ?? "",
-              photoUrl: rp.photoUrl?.trim() || ""
+              photoUrl: rewriteStoredMediaUrl(rp.photoUrl?.trim() || "")
             }
           : null
       };

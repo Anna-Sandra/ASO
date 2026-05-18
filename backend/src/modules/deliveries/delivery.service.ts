@@ -5,6 +5,7 @@ import { Order, type OrderDoc, type OrderStatus } from "../orders/order.model";
 import { RiderProfile } from "./riderProfile.model";
 import { User } from "../auth/user.model";
 import { HttpError } from "../../utils/httpError";
+import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import type { UserRole } from "../auth/user.model";
 import { emitDeliveryLocation, emitDeliveryUpdate } from "./delivery.broadcast";
 import { notifyBuyerOrderStatus } from "../notifications/notification.service";
@@ -394,10 +395,10 @@ export async function getDeliveryBundleForOrder(orderId: string) {
       prof && u
         ? {
             vehicleType: prof.vehicleType,
-            photoUrl: prof.photoUrl || "",
+            photoUrl: rewriteStoredMediaUrl(prof.photoUrl || ""),
             displayName: (u as { displayName?: string }).displayName || "",
             phone: (u as { phone?: string }).phone || "",
-            profileImageUrl: (u as { profileImageUrl?: string }).profileImageUrl || ""
+            profileImageUrl: rewriteStoredMediaUrl((u as { profileImageUrl?: string }).profileImageUrl || "")
           }
         : null;
   }

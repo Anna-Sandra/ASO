@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { User } from "../auth/user.model";
 import { Business } from "../businesses/business.model";
 import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
+import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 
 export type PublicStoreRef = {
   id: string;
@@ -53,7 +54,9 @@ export function toPublicProduct(p: Record<string, unknown>) {
     status: p.status,
     rejectionReason: p.rejectionReason,
     tags: p.tags,
-    imageUrls: p.imageUrls,
+    imageUrls: Array.isArray(p.imageUrls)
+      ? (p.imageUrls as unknown[]).map((u) => (typeof u === "string" ? rewriteStoredMediaUrl(u) : u))
+      : p.imageUrls,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt
   };
@@ -120,7 +123,13 @@ function storeRefFromBusiness(b: {
     id: b._id.toString(),
     name: String(b.name || "").trim() || "Store",
     slug: String(b.slug || "").trim().toLowerCase(),
-    logoUrl: b.logoUrl ? String(b.logoUrl) : null,
+    logoUrl: (() => {
+      const raw = b.logoUrl;
+      if (raw == null) return null;
+      const s = String(raw).trim();
+      if (!s) return null;
+      return rewriteStoredMediaUrl(s);
+    })(),
     businessType: String(b.businessType || "")
   };
 }
