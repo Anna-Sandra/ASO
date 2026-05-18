@@ -23,9 +23,11 @@ async function main() {
   });
   setupDeliverySockets(io);
 
-  server.listen(env.PORT, () => {
+  // Render (and most PaaS) inject PORT and route health checks to the process; bind all interfaces.
+  const listenHost = "0.0.0.0";
+  server.listen(env.PORT, listenHost, () => {
     // eslint-disable-next-line no-console
-    console.log(`API listening on http://localhost:${env.PORT}`);
+    console.log(`API listening on http://${listenHost}:${env.PORT} (PORT from env)`);
     if (env.OLLAMA_BASE_URL.trim() && !env.GROQ_API_KEY.trim()) {
       warmupOllamaInBackground();
     }
