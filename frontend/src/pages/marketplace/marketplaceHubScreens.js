@@ -518,50 +518,36 @@ export function infoTile(iconEl, title, body) {
   );
 }
 
-/** Food restaurants: menu sections. Other stores: one flat listings block. */
-export function buildStoreListingBlocks({ business, orderedSectionIds, grouped, unassigned, sectionById, sectionFilter }) {
-  if (!business) return [];
-  if (business.businessType !== "food_restaurant") {
-    const all = [
-      ...orderedSectionIds.flatMap((sid) => grouped[sid] || []),
-      ...unassigned
-    ];
-    return all.length ? [{ key: "listings", title: "Listings", items: all }] : [];
-  }
-  return buildMenuBlocks({ business, orderedSectionIds, grouped, unassigned, sectionById, sectionFilter });
+/**
+ * Groups products by menu section id for ordering; items without a known section go last.
+ */
+export function prepareStorefrontListingGroups(menuSections, products) {
+  const safeSections = Array.isArray(menuSections) ? menuSections : [];
+  const safeProducts = Array.isArray(products) ? products : [];
+  const sectionById = new Map(safeSections.map((s) => [String(s.id), s]));
+  const grouped = {};
+  const unassigned = [];
+  safeProducts.forEach((p) => {
+    const sid = p.menuSectionId ? String(p.menuSectionId) : "";
+    if (sid && sectionById.has(sid)) {
+      if (!grouped[sid]) grouped[sid] = [];
+      grouped[sid].push(p);
+    } else unassigned.push(p);
+  });
+  const orderedSectionIds = safeSections.filter((x) => grouped[String(x.id)]?.length).map((x) => String(x.id));
+  return { grouped, unassigned, orderedSectionIds };
 }
 
-export function buildMenuBlocks({ business, orderedSectionIds, grouped, unassigned, sectionById, sectionFilter }) {
+/**
+ * Single flat grid for every store type: section order + any unassigned items.
+ * Menu sections stay for vendor organization when editing products; shoppers see one list.
+ */
+export function buildStoreListingBlocks({ business, orderedSectionIds, grouped, unassigned }) {
   if (!business) return [];
-  if (sectionFilter == null) {
-    const blocks = [];
-    orderedSectionIds.forEach((sid) => {
-      const list = grouped[sid] || [];
-      if (list.length) blocks.push({ key: sid, title: sectionById.get(sid)?.title || "Menu", items: list });
-    });
-    if (unassigned.length) {
-      blocks.push({
-        key: "un",
-        title: business.businessType === "food_restaurant" ? "Popular & more" : "More from this store",
-        items: unassigned
-      });
-    }
-    return blocks;
-  }
-  if (sectionFilter === "un") {
-    return unassigned.length
-      ? [
-          {
-            key: "un",
-            title: business.businessType === "food_restaurant" ? "Popular & more" : "More from this store",
-            items: unassigned
-          }
-        ]
-      : [];
-  }
-  const list = grouped[sectionFilter] || [];
-  const title = sectionById.get(sectionFilter)?.title || "Menu";
-  return list.length ? [{ key: sectionFilter, title, items: list }] : [];
+  const items = [...orderedSectionIds.flatMap((sid) => grouped[sid] || []), ...unassigned];
+  if (!items.length) return [];
+  const title = business.businessType === "food_restaurant" ? "Menu" : "Listings";
+  return [{ key: "listings", title, items }];
 }
 
 export function StorefrontProductCard({ product, business, vendorMode = false }) {
@@ -649,11 +635,6 @@ export function BusinessStorefrontPage() {
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState("");
   const [payload, setPayload] = useState(null);
-  const [sectionFilter, setSectionFilter] = useState(null);
-
-  useEffect(() => {
-    setSectionFilter(null);
-  }, [slug]);
 
   useEffect(() => {
     let on = true;
@@ -687,31 +668,14 @@ export function BusinessStorefrontPage() {
   const hubPath = hubEntry ? `/${hubEntry[0]}` : "/";
   const hubBrowseLabel = hubEntry ? hubEntry[1].badge : "Stores";
 
-  const sectionById = new Map(menuSections.map((s) => [String(s.id), s]));
-
-  const grouped = {};
-  const unassigned = [];
-
-  products.forEach((p) => {
-    const sid = p.menuSectionId ? String(p.menuSectionId) : "";
-    if (sid && sectionById.has(sid)) {
-      if (!grouped[sid]) grouped[sid] = [];
-      grouped[sid].push(p);
-    } else unassigned.push(p);
-  });
-
-  const orderedSectionIds = menuSections.filter((x) => grouped[String(x.id)]?.length).map((x) => String(x.id));
+  const { grouped, unassigned, orderedSectionIds } = prepareStorefrontListingGroups(menuSections, products);
 
   const menuBlocks = buildStoreListingBlocks({
     business,
     orderedSectionIds,
     grouped,
-    unassigned,
-    sectionById,
-    sectionFilter
+    unassigned
   });
-
-  const isFoodMenu = business?.businessType === "food_restaurant";
 
   const viewerOwnsStore = Boolean(
     user?.role === "seller" && user?.id && business?.ownerId && String(user.id) === String(business.ownerId)
@@ -776,22 +740,6 @@ export function BusinessStorefrontPage() {
         },
         business?.name ? String(business.name).slice(0, 1) : "?"
       )
-    );
-
-  const chip = (key, label, active, val) =>
-    h(
-      "button",
-      {
-        key,
-        type: "button",
-        onClick: () => setSectionFilter(val),
-        className: `tap-target shrink-0 snap-start rounded-full border px-3.5 py-2 text-[11px] font-bold transition sm:px-4 sm:text-xs ${
-          active
-            ? "border-sky-500 bg-sky-600 text-white shadow-md shadow-sky-600/20"
-            : "border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:text-sky-800 dark:border-white/10 dark:bg-night-900 dark:text-slate-200 dark:hover:border-sky-500/40"
-        }`
-      },
-      label
     );
 
   return h(f, null, [
@@ -1010,38 +958,6 @@ export function BusinessStorefrontPage() {
                             infoTile(h(Sparkles, { className: "h-5 w-5" }), "Fees", feeLine)
                           ]
                         ),
-                        isFoodMenu && (orderedSectionIds.length || unassigned.length)
-                          ? h("div", { key: "chips", className: "mt-8" }, [
-                              h(
-                                "p",
-                                { className: "mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400" },
-                                "Browse menu"
-                              ),
-                              h(
-                                "div",
-                                {
-                                  className:
-                                    "flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                                },
-                                [
-                                  chip("all", "All", sectionFilter == null, null),
-                                  ...orderedSectionIds.map((sid) => {
-                                    const sec = sectionById.get(sid);
-                                    const n = (grouped[sid] || []).length;
-                                    return chip(sid, `${sec?.title || "Menu"} · ${n}`, sectionFilter === sid, sid);
-                                  }),
-                                  unassigned.length
-                                    ? chip(
-                                        "un",
-                                        `${business?.businessType === "food_restaurant" ? "Popular & more" : "More"} · ${unassigned.length}`,
-                                        sectionFilter === "un",
-                                        "un"
-                                      )
-                                    : null
-                                ].filter(Boolean)
-                              )
-                            ])
-                          : null,
                         menuBlocks.length
                           ? h("div", { key: "blocks", className: "mt-10 space-y-12" }, [
                               ...menuBlocks.map((block) =>

@@ -4,7 +4,7 @@ import { ChevronRight, Clock, Plus, Star, Trash2, Truck } from "lucide-react";
 import { apiFetch, apiUploadProductImages, fetchBusinessStorefront, linkListingsToStore } from "services/api";
 import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
-import { buildStoreListingBlocks, StorefrontProductCard } from "pages/marketplace/marketplaceHubScreens";
+import { buildStoreListingBlocks, prepareStorefrontListingGroups, StorefrontProductCard } from "pages/marketplace/marketplaceHubScreens";
 import { storeUsesMenuSections } from "config/catalog";
 import { formatGhc } from "utils/money";
 import { Button, Field, GlassPanel, InlineNotice, TextArea } from "components/ui";
@@ -51,28 +51,6 @@ function orphanListingsBannerText(count, isFoodMenu) {
 function unpublishedListingsBannerText(count) {
   const verb = count === 1 ? "is" : "are";
   return `${count} listing${pluralize(count, "", "s")} on this store ${verb} not published — shoppers only see published items. Open each listing from the grid below and tap Publish.`;
-}
-
-function groupProductsByMenuSection(products, menuSections) {
-  const sectionById = new Map(menuSections.map((section) => [String(section.id), section]));
-  const productsBySectionId = {};
-  const unassignedProducts = [];
-
-  products.forEach((product) => {
-    const sectionId = product.menuSectionId ? String(product.menuSectionId) : "";
-    if (sectionId && sectionById.has(sectionId)) {
-      if (!productsBySectionId[sectionId]) productsBySectionId[sectionId] = [];
-      productsBySectionId[sectionId].push(product);
-    } else {
-      unassignedProducts.push(product);
-    }
-  });
-
-  const orderedSectionIdsWithItems = menuSections
-    .filter((section) => productsBySectionId[String(section.id)]?.length)
-    .map((section) => String(section.id));
-
-  return { sectionById, productsBySectionId, unassignedProducts, orderedSectionIdsWithItems };
 }
 
 function buildDeliveryEtaLabel(business) {
@@ -139,22 +117,6 @@ function BrandAssetControls({ assetKind, inputId, imageUrl, uploadBusy, onSelect
   ].filter(Boolean);
 }
 
-function SectionFilterChip({ label, isActive, onSelect }) {
-  return h(
-    "button",
-    {
-      type: "button",
-      onClick: onSelect,
-      className: `tap-target shrink-0 snap-start rounded-full border px-3.5 py-2 text-[11px] font-bold transition sm:px-4 sm:text-xs ${
-        isActive
-          ? "border-sky-500 bg-sky-600 text-white shadow-md shadow-sky-600/20"
-          : "border-slate-200 bg-white text-slate-700 hover:border-sky-300 dark:border-white/10 dark:bg-night-900 dark:text-slate-200"
-      }`
-    },
-    label
-  );
-}
-
 function StoreApprovalBanner({ business, canSubmit, onSubmit }) {
   if (!business?.status || business.status === "active") return null;
 
@@ -206,7 +168,6 @@ export function VendorStorefrontManagePage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [storefrontPayload, setStorefrontPayload] = useState(null);
-  const [activeSectionFilter, setActiveSectionFilter] = useState(null);
   const [brandUploadBusy, setBrandUploadBusy] = useState("");
   const [savingPatch, setSavingPatch] = useState(false);
   const [linkingListings, setLinkingListings] = useState(false);
@@ -240,7 +201,6 @@ export function VendorStorefrontManagePage() {
   }, [storeSlug, accessToken, toast]);
 
   useEffect(() => {
-    setActiveSectionFilter(null);
     void loadStorefront();
   }, [storeSlug, loadStorefront]);
 
@@ -250,34 +210,22 @@ export function VendorStorefrontManagePage() {
   }, [storefrontPayload?.business?.id, storefrontPayload?.business?.description]);
 
   const business = storefrontPayload?.business || null;
-  const menuSections = useMemo(
-    () => (Array.isArray(storefrontPayload?.menuSections) ? storefrontPayload.menuSections : []),
-    [storefrontPayload?.menuSections]
-  );
   const products = useMemo(
     () => (Array.isArray(storefrontPayload?.products) ? storefrontPayload.products : []),
     [storefrontPayload?.products]
   );
   const reviewSummary = storefrontPayload?.reviewSummary || { avgRating: null, count: 0 };
 
-  const { sectionById, productsBySectionId, unassignedProducts, orderedSectionIdsWithItems } = useMemo(
-    () => groupProductsByMenuSection(products, menuSections),
-    [products, menuSections]
+  const { grouped, unassigned, orderedSectionIds } = useMemo(
+    () => prepareStorefrontListingGroups(storefrontPayload?.menuSections, products),
+    [storefrontPayload?.menuSections, products]
   );
 
   const isFoodMenu = storeUsesMenuSections(business?.businessType);
 
   const menuBlocks = useMemo(
-    () =>
-      buildStoreListingBlocks({
-        business,
-        orderedSectionIds: orderedSectionIdsWithItems,
-        grouped: productsBySectionId,
-        unassigned: unassignedProducts,
-        sectionById,
-        sectionFilter: activeSectionFilter
-      }),
-    [business, orderedSectionIdsWithItems, productsBySectionId, unassignedProducts, sectionById, activeSectionFilter]
+    () => buildStoreListingBlocks({ business, orderedSectionIds, grouped, unassigned }),
+    [business, orderedSectionIds, grouped, unassigned]
   );
 
   const orphanListingCount = Number(storefrontPayload?.orphanListingCount) || 0;
@@ -491,9 +439,6 @@ export function VendorStorefrontManagePage() {
         },
         business?.name ? String(business.name).slice(0, 1) : "?"
       );
-
-  const unassignedChipLabel =
-    business?.businessType === "food_restaurant" ? "More" : "Other";
 
   return h("div", { className: "space-y-5 pb-10" }, [
     h("nav", { className: "flex flex-wrap items-center gap-1 text-[11px] font-semibold text-slate-500" }, [
@@ -726,44 +671,6 @@ export function VendorStorefrontManagePage() {
                 [h(Plus, { className: "h-4 w-4" }), "Add listing"]
               )
             ]),
-            isFoodMenu && (orderedSectionIdsWithItems.length || unassignedProducts.length)
-              ? h("div", { className: "mt-5" }, [
-                  h("p", { className: "mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500" }, "Menu categories"),
-                  h(
-                    "div",
-                    {
-                      className:
-                        "flex snap-x gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                    },
-                    [
-                      h(SectionFilterChip, {
-                        key: "all",
-                        label: "All",
-                        isActive: activeSectionFilter == null,
-                        onSelect: () => setActiveSectionFilter(null)
-                      }),
-                      ...orderedSectionIdsWithItems.map((sectionId) => {
-                        const section = sectionById.get(sectionId);
-                        const itemCount = (productsBySectionId[sectionId] || []).length;
-                        return h(SectionFilterChip, {
-                          key: sectionId,
-                          label: `${section?.title || "Menu"} · ${itemCount}`,
-                          isActive: activeSectionFilter === sectionId,
-                          onSelect: () => setActiveSectionFilter(sectionId)
-                        });
-                      }),
-                      unassignedProducts.length
-                        ? h(SectionFilterChip, {
-                            key: "un",
-                            label: `${unassignedChipLabel} · ${unassignedProducts.length}`,
-                            isActive: activeSectionFilter === "un",
-                            onSelect: () => setActiveSectionFilter("un")
-                          })
-                        : null
-                    ].filter(Boolean)
-                  )
-                ])
-              : null,
             menuBlocks.length
               ? h("div", { className: "mt-8 space-y-8" }, [
                   ...menuBlocks.map((block) =>
