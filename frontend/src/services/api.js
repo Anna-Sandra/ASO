@@ -1,6 +1,10 @@
 import { getOrCreateSaveSessionId } from "utils/saveSession";
 import { storageGet, storageRemove, storageSet, StorageKeys } from "utils/storage";
 
+/**
+ * CRA replaces `process.env.REACT_APP_*` at **build** time — not at runtime in the browser.
+ * Set `REACT_APP_API_URL` in Vercel (or `.env`), then redeploy; there is no localhost fallback here.
+ */
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/$/, "");
 const ADMIN_API_KEY = (process.env.REACT_APP_ADMIN_API_KEY || "").trim();
 let refreshPromise = null;
