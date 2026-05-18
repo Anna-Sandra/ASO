@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { DEFAULT_SITE_NAME } from "../../config/brand";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { env } from "../../config/env";
@@ -8,6 +9,9 @@ import type { z } from "zod";
 import { Product } from "../products/product.model";
 import { Business } from "../businesses/business.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
+import { activeStoreBusinessIds, enrichPublicProducts, foodMenuStoreFilter } from "../products/product.publicSerialize";
+import { buildAssistantCatalogReply, buildAssistantIdleReply, formatProductLine } from "./assistantFallback";
+import { groqChatStream, groqCompletion, groqConfigured } from "./groqChat";
 
 function resolvePublicApiOrigin(): string {
   const raw = env.API_PUBLIC_ORIGIN?.trim();
@@ -43,7 +47,7 @@ type OllamaStreamLine = {
   error?: string;
 };
 
-/** Smaller snippets + shorter history = less prefill work on slow CPUs (see OLLAMA_NUM_CTX). */
+/** Snippets + history sized for OLLAMA_NUM_CTX (default 1024); shrink ASSISTANT_* limits if you lower ctx. */
 const ASSISTANT_PRODUCT_LIMIT = 5;
 const ASSISTANT_BUSINESS_LIMIT = 4;
 const ASSISTANT_DESC_CHARS = 36;
@@ -62,7 +66,7 @@ function ollamaOptionsPayload() {
   const nt = Number(env.OLLAMA_NUM_THREAD ?? 0);
   if (nt > 0) opts.num_thread = nt;
   return {
-    model: env.OLLAMA_MODEL || "llama3",
+    model: env.OLLAMA_MODEL || "llama3.2:3b",
     keep_alive: "15m",
     options: opts
   };
@@ -78,13 +82,19 @@ async function loadAssistantPrompt(
   msgs: Array<{ role: "user" | "assistant"; content: string }>;
 }> {
   const apiOrigin = resolvePublicApiOrigin();
+  const appOrigin = env.APP_ORIGIN.replace(/\/$/, "");
 
-  const [settings, sampleProducts, sampleStores] = await Promise.all([
+  const activeIds = await activeStoreBusinessIds();
+  const [settings, sampleProductsRaw, sampleStores] = await Promise.all([
     getOrCreateSettings(),
-    Product.find({ status: "active" })
+    Product.find({
+      status: "active",
+      $or: [{ category: "services" }, { stock: { $gt: 0 } }, { category: "food_drinks" }],
+      ...foodMenuStoreFilter(activeIds)
+    })
       .sort({ updatedAt: -1 })
       .limit(ASSISTANT_PRODUCT_LIMIT)
-      .select("_id name price category stock description tags imageUrls businessId")
+      .select("_id sellerId name price category stock description tags imageUrls businessId")
       .lean(),
     Business.find({ status: "active" })
       .sort({ updatedAt: -1 })
@@ -93,25 +103,29 @@ async function loadAssistantPrompt(
       .lean()
   ]);
 
+  const sampleProducts = await enrichPublicProducts(sampleProductsRaw as unknown as Record<string, unknown>[]);
+
   const siteName =
     typeof settings?.siteName === "string" && settings.siteName.trim()
       ? settings.siteName.trim()
-      : "Campus Mart";
+      : DEFAULT_SITE_NAME;
 
   const lines = sampleProducts.map((p) => {
-    const id = (p._id as mongoose.Types.ObjectId).toString();
-    const st = typeof p.stock === "number" ? p.stock : 0;
-    const avail = st > 0 || p.category === "services" ? "in stock" : "oos";
+    const name = String(p.name || "Item").trim() || "Item";
     const desc =
       typeof p.description === "string" && p.description.length > ASSISTANT_DESC_CHARS
         ? `${p.description.slice(0, ASSISTANT_DESC_CHARS)}…`
-        : p.description || "";
-    const rawImg = Array.isArray((p as { imageUrls?: string[] }).imageUrls)
-      ? (p as { imageUrls?: string[] }).imageUrls?.[0]
-      : "";
+        : String(p.description || "");
+    const rawImg = Array.isArray(p.imageUrls) ? p.imageUrls?.[0] : "";
     const thumb = toAbsoluteAssetUrl(typeof rawImg === "string" ? rawImg : "", apiOrigin);
-    const imgSeg = thumb ? ` | thumb:${thumb}` : "";
-    return `- [${id.slice(-8)}] ${String(p.name || "")} | cat:${String(p.category || "")} | GHS:${Number(p.price) || 0} | ${avail}${imgSeg} | ${desc}`;
+    const main = formatProductLine(
+      p as Record<string, unknown> & { store?: { name?: string; slug?: string } },
+      appOrigin
+    );
+    const bits: string[] = [main];
+    if (thumb) bits.push(`  Photo for replies: ![${name}](${thumb})`);
+    if (desc.trim()) bits.push(`  Short context: ${desc.trim()}`);
+    return bits.join("\n");
   });
 
   const userNote = req.user
@@ -119,24 +133,55 @@ async function loadAssistantPrompt(
     : `Anonymous — they can browse; account needed at checkout.`;
 
   const storeLines = sampleStores.map((b) => {
-    const slug = typeof b.slug === "string" ? b.slug : "";
-    return `- [${String(b.businessType || "")}] ${String(b.name || "")} | storefront /store/${slug} | ${String(b.description || "").slice(0, 48)}`;
+    const slug = typeof b.slug === "string" ? b.slug.trim() : "";
+    const name = String(b.name || "Store").trim();
+    const blurb = String(b.description || "").slice(0, 48);
+    if (!slug) return `- ${name} (${String(b.businessType || "")})${blurb ? ` — ${blurb}` : ""}`;
+    return `- [${name}](${appOrigin}/store/${encodeURIComponent(slug)}) — ${String(b.businessType || "store")}${blurb ? ` · ${blurb}` : ""}`;
   });
 
-  const system = `You help ${siteName}, a Ghana campus marketplace. ${userNote}
-Be concise and warm. Emoji OK sparingly ✨ 🛒. Short answers preferred unless they ask “explain” style questions.
+  const system = `You are the ${siteName} shopping assistant — a Ghana marketplace platform. ${userNote}
 
-Facts: only cite products/prices/stock using the listing lines below — never invent. If unsure, suggest search/filters/browse product pages.
+IDENTITY:
+- You represent the WHOLE ${siteName} marketplace, NOT any single store, brand, or vendor
+- You are NOT a general-purpose AI assistant. You are ONLY ${siteName}’s shopping assistant
+- NEVER say you are a "large language model", "AI model", or that you cannot provide meals or physical goods
+- NEVER speak as a store, seller, or single shop (e.g. never "I am a clothing store"); you are the platform assistant
+- When asked what the platform sells, list ALL categories: food & drinks, fashion, electronics, beauty, groceries, books, and services
 
-Stores: multi-vendor businesses have their own pages at /store/{slug} (see store lines). Category hubs exist at paths like /food, /fashion, /electronics, /beauty, /groceries, /books, /services — each promotes that business type.
+BEHAVIOUR:
+- Be concise and warm. Emoji OK sparingly ✨ 🛒. Short answers unless they ask "explain" style questions
+- If the message is only a short greeting (hi, hello, hey, good morning), reply warmly and introduce yourself as the ${siteName} assistant — do NOT push products or food
+- For hunger/food/eating intent (hungry, "im hungry", food, lunch, dinner, snacks, etc.), ALWAYS show 2–3 relevant food listings from the catalog context below immediately, then you may ask ONE short follow-up — NEVER ask questions before showing food listings
 
-Images: listings may show thumb:URL. To show an image use a new line: ![name](exact URL from listing). Max 2 images per reply. No fake URLs.
+FORMATTING RULES — follow exactly:
+- Format each food item like: "🍽️ [Item Name](full-https-url) at [Store Name](full-store-https-url) — call to order"
+- NEVER output raw pipe-separated data like "| food_drinks | call-to-order | ok" or internal tables
+- NEVER show internal fields (category codes, stock codes, availability flags) — use plain shopper wording
+- Store and product links must be full markdown links [Name](https://…); copy them from the listings — never paste bare paths like /store/slug
+- When mentioning products, copy markdown from the listings below; never output raw hex IDs or placeholders
+
+PRICING RULES — CRITICAL:
+- Food & drinks (food_drinks) NEVER have a cart price online — ALWAYS end the line with "call to order". NEVER show "GHS …" or any price for food, even if you imagine one. Buyers contact the seller from the listing page
+- Services ALWAYS say "request a quote" — never a fixed GHS checkout price unless the listing line shows quote terminology
+- ONLY ordinary physical products (not food_drinks, not services) may show a GHS price, and only when it appears in the listing lines below
+
+FACTS:
+- Only cite products using the listing lines below — never invent items or prices
+- If unsure, suggest search or category hubs
+- Always include the restaurant/store link when present in a listing line
+
+CRITICAL — food & local dishes (catalog only):
+- When asked about food, local dishes, Ghanaian/regional dishes, or similar, ALWAYS show real listings from the "Listings (partial)" lines below with full markdown links (🍽️ line + store link + call to order)
+- NEVER describe dishes from general knowledge without a listing link from below. If a dish exists in those listings, show that link. If nothing matches, say so briefly and suggest Food & drinks or search — do not answer from cookbook trivia
+
+Stores: each food item belongs to a restaurant; storefront URLs appear in the listing lines (use those full links). Category hubs (navigation hints): /food, /fashion, /electronics, /beauty, /groceries, /books, /services
+
+Images: NEVER output "img:", "img:URL", or raw image URLs as plain text. Format images only as ![product name](full-url), using a "Photo for replies" line when present. Maximum 1 image per reply. If unsure, skip the image entirely. Copy URLs in full — do not truncate
 
 Delivery: don’t promise ETAs; real status is on order screens.
 
-Food listings (category food_drinks) are call-to-order: buyers don’t check out with a cart price for those items — they contact the seller from the listing.
-
-Services (category services): buyers can send a booking request from the product page; sellers see it under vendor Service requests. In-app chat between buyer and seller still requires a shared order.
+Food and services: buyers place requests from the product page; vendor follow-up happens there and in service workflows. In-app chat between buyer and seller may require a shared order where applicable.
 
 Stores (partial):
 ${storeLines.join("\n")}
@@ -150,6 +195,12 @@ ${lines.join("\n")}`;
   ];
 
   return { siteName, system, msgs };
+}
+
+function primaryAssistantLlm(): "groq" | "ollama" | null {
+  if (groqConfigured()) return "groq";
+  if (env.OLLAMA_BASE_URL.trim()) return "ollama";
+  return null;
 }
 
 async function ollamaCompletion(system: string, userMessages: Array<{ role: "user" | "assistant"; content: string }>) {
@@ -288,7 +339,8 @@ function sseWrite(res: Response, obj: Record<string, unknown>) {
 }
 
 /**
- * Public campus assistant — optional auth for personalization. Uses local Ollama when configured.
+ * Public shopping assistant — optional auth for personalization.
+ * Uses **Groq** when `GROQ_API_KEY` is set; else **local Ollama** when `OLLAMA_BASE_URL` is set; else catalog fallback.
  * With `stream: true`, responds as `text/event-stream` (SSE) so the UI can show tokens as they arrive.
  */
 export const postAssistantChat = asyncHandler(async (req: Request, res: Response) => {
@@ -314,39 +366,48 @@ export const postAssistantChat = asyncHandler(async (req: Request, res: Response
     };
 
     try {
-      if (!env.OLLAMA_BASE_URL.trim()) {
-        const reply =
-          `Hi — AI chat is idle until ops sets \`OLLAMA_BASE_URL\` for a local model (Ollama). ` +
-          `Browse ${siteName} by category and search. Order help: sign in → Orders.`;
-        sseWrite(res, { delta: "", reply, done: true, source: "fallback", model: null });
+      const llm = primaryAssistantLlm();
+      if (!llm) {
+        const reply = await buildAssistantIdleReply(siteName, message, req);
+        sseWrite(res, { delta: "", reply, done: true, source: "catalog", model: null });
         return;
       }
 
       let full = "";
-      for await (const delta of ollamaChatStream(system, msgs, ac.signal)) {
-        full += delta;
-        sseWrite(res, { delta, done: false });
+      if (llm === "groq") {
+        for await (const delta of groqChatStream(system, msgs, ac.signal)) {
+          full += delta;
+          sseWrite(res, { delta, done: false });
+        }
+      } else {
+        for await (const delta of ollamaChatStream(system, msgs, ac.signal)) {
+          full += delta;
+          sseWrite(res, { delta, done: false });
+        }
       }
+
       const trimmed = full.trim();
       if (!trimmed) {
+        const reply = await buildAssistantCatalogReply(siteName, message, req);
         sseWrite(res, {
           delta: "",
-          reply: `${siteName}: Empty model response — try a smaller/faster Ollama model (e.g. llama3.2:1b).`,
+          reply,
           done: true,
-          source: "ollama",
-          model: env.OLLAMA_MODEL
+          source: "catalog",
+          model: llm === "groq" ? env.GROQ_MODEL : env.OLLAMA_MODEL
         });
       } else {
-        sseWrite(res, { delta: "", reply: trimmed, done: true, source: "ollama", model: env.OLLAMA_MODEL });
+        sseWrite(res, {
+          delta: "",
+          reply: trimmed,
+          done: true,
+          source: llm,
+          model: llm === "groq" ? env.GROQ_MODEL : env.OLLAMA_MODEL
+        });
       }
-    } catch (e) {
-      const msg =
-        e instanceof HttpError ? e.message : e instanceof Error && e.name === "AbortError" ? "Model timed out." : String(e || "unknown");
-      const reply =
-        `${siteName}: I could not reach the local AI (${msg}). ` +
-        `**Mistral / 7B-class models on CPU often take many minutes** — use a tiny model for chat: \`ollama pull llama3.2:1b\` then set \`OLLAMA_MODEL=llama3.2:1b\`. ` +
-        `GPU changes everything; without it, expect slow decoding. Replies stream so text shows as soon as the model starts.`;
-      sseWrite(res, { error: msg, reply, done: true, source: "fallback" });
+    } catch {
+      const reply = await buildAssistantCatalogReply(siteName, message, req);
+      sseWrite(res, { delta: "", reply, done: true, source: "catalog", model: null });
     } finally {
       cleanup();
       res.end();
@@ -355,33 +416,38 @@ export const postAssistantChat = asyncHandler(async (req: Request, res: Response
   }
 
   let reply: string | null = null;
-  let source: "ollama" | "fallback" = "fallback";
+  let source: "groq" | "ollama" | "catalog" = "catalog";
 
-  if (env.OLLAMA_BASE_URL.trim()) {
+  if (groqConfigured()) {
+    try {
+      reply = await groqCompletion(system, msgs);
+      source = "groq";
+    } catch {
+      reply = null;
+    }
+  }
+
+  if (!reply && env.OLLAMA_BASE_URL.trim()) {
     try {
       reply = await ollamaCompletion(system, msgs);
       source = "ollama";
-    } catch (e) {
-      const msg =
-        e instanceof HttpError ? e.message : e instanceof Error && e.name === "AbortError" ? "Model timed out." : String(e || "unknown");
-      reply =
-        `${siteName}: I could not reach the local AI (${msg}). ` +
-        `Tips: **7B+ models on CPU are very slow** — try \`ollama pull llama3.2:1b\` and \`OLLAMA_MODEL=llama3.2:1b\`. ` +
-        `Lower \`OLLAMA_NUM_PREDICT\` / \`OLLAMA_NUM_CTX\` in \`.env\`, or use a GPU. The app sends **stream: true** for incremental UI. ` +
-        `Confirm Ollama is running and \`OLLAMA_BASE_URL\` is correct.`;
+    } catch {
+      reply = await buildAssistantCatalogReply(siteName, message, req);
+      source = "catalog";
     }
   }
 
   if (!reply) {
-    reply =
-      `Hi — AI chat is idle until ops sets \`OLLAMA_BASE_URL\` on the server for a local model (free with Ollama). ` +
-      `You can still browse ${siteName} by category and search bar. For order issues, sign in → Orders or Report from a receipt item.`;
+    reply = await buildAssistantIdleReply(siteName, message, req);
+    source = "catalog";
   }
+
+  const modelId = source === "groq" ? env.GROQ_MODEL : source === "ollama" ? env.OLLAMA_MODEL : null;
 
   res.json({
     reply,
-    assistant: "campusmart",
-    model: env.OLLAMA_BASE_URL.trim() ? env.OLLAMA_MODEL : null,
+    assistant: "SHOPIQGH",
+    model: modelId,
     source
   });
 });

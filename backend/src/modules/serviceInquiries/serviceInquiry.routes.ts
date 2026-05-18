@@ -4,6 +4,7 @@ import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import {
   createServiceInquiry,
+  getOfflineInquiriesEligible,
   listMyServiceInquiries,
   listSellerServiceInquiries,
   patchServiceInquiry
@@ -21,6 +22,13 @@ router.post(
   createServiceInquiry
 );
 router.get("/mine", protect, requireActiveAccount, authorize("buyer"), listMyServiceInquiries);
+router.get(
+  "/seller/eligible",
+  protect,
+  requireActiveAccount,
+  authorize("seller", "admin"),
+  getOfflineInquiriesEligible
+);
 router.get("/seller", protect, requireActiveAccount, authorize("seller"), listSellerServiceInquiries);
 router.patch(
   "/:id",

@@ -8,6 +8,9 @@ import {
   adminBulkCleanup,
   adminDashboard,
   approveProduct,
+  approveAdminBusiness,
+  listAdminBusinesses,
+  rejectAdminBusiness,
   deleteAdminOrder,
   deleteAdminProduct,
   deleteAdminReport,
@@ -54,6 +57,8 @@ import {
   adminEmailTestSchema,
   adminProductPatchSchema,
   adminProductsQuerySchema,
+  adminBusinessesQuerySchema,
+  adminRejectBusinessSchema,
   adminRejectProductSchema,
   adminReportPatchSchema,
   adminReportsQuerySchema,
@@ -114,6 +119,25 @@ router.post(
   revokeAdmin
 );
 router.patch("/users/:id", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateBody(adminPatchUserSchema), patchAdminUser);
+router.get(
+  "/businesses",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateQuery(adminBusinessesQuerySchema),
+  listAdminBusinesses
+);
+router.post("/businesses/:id/approve", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, approveAdminBusiness);
+router.post(
+  "/businesses/:id/reject",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateBody(adminRejectBusinessSchema),
+  rejectAdminBusiness
+);
 router.get("/products", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminProductsQuerySchema), listAdminProducts);
 router.post("/products/:id/approve", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, approveProduct);
 router.post(

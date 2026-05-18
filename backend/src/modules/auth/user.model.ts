@@ -22,8 +22,11 @@ export type AccountStatus = "active" | "suspended" | "banned";
 /** Buyer vendor onboarding; sellers use `approved` once promoted. */
 export type VendorProfileStatus = "none" | "pending" | "approved" | "rejected";
 
-/** Buyer: campus courier application queue. Cleared when `role` becomes `rider`. */
+/** Buyer: delivery partner application queue. Cleared when `role` becomes `rider`. */
 export type RiderApplicationStatus = "none" | "pending" | "rejected";
+
+/** Platform seller subscription (separate from buyer order payouts). */
+export type VendorSubscriptionStatus = "none" | "trialing" | "active" | "past_due" | "expired";
 
 export interface UserDoc {
   _id: mongoose.Types.ObjectId;
@@ -56,6 +59,15 @@ export interface UserDoc {
   paystackSubaccountCode?: string;
   /** Public URL to profile picture (e.g. `/uploads/avatars/…`). */
   profileImageUrl?: string;
+  /** When admin approved the vendor application (seller role). */
+  sellerApprovedAt?: Date | null;
+  vendorSubscriptionStatus?: VendorSubscriptionStatus;
+  /** Admin comp — never require seller platform fee. */
+  vendorSubscriptionExempt?: boolean;
+  vendorSubscriptionPaidAt?: Date | null;
+  vendorSubscriptionExpiresAt?: Date | null;
+  /** Paystack reference for an in-flight seller subscription checkout. */
+  vendorSubscriptionPendingReference?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -92,7 +104,17 @@ const userSchema = new Schema<UserDoc>(
     ghanaPayoutChannel: { type: String, enum: ["ghipss", "mobile_money"], required: false },
     paystackTransferRecipientCode: { type: String, default: "", trim: true, maxlength: 64 },
     paystackSubaccountCode: { type: String, default: "", trim: true, maxlength: 64 },
-    profileImageUrl: { type: String, default: "", trim: true }
+    profileImageUrl: { type: String, default: "", trim: true },
+    sellerApprovedAt: { type: Date, default: null },
+    vendorSubscriptionStatus: {
+      type: String,
+      enum: ["none", "trialing", "active", "past_due", "expired"],
+      default: "none"
+    },
+    vendorSubscriptionExempt: { type: Boolean, default: false },
+    vendorSubscriptionPaidAt: { type: Date, default: null },
+    vendorSubscriptionExpiresAt: { type: Date, default: null },
+    vendorSubscriptionPendingReference: { type: String, default: "", trim: true, maxlength: 120 }
   },
   { timestamps: true }
 );

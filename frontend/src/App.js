@@ -7,8 +7,8 @@ import {
   NoticeProvider,
   NotificationProvider,
   ThemeProvider
-} from "./contexts";
-import { SavedProductsProvider } from "./savedProductsContext";
+} from "context";
+import { SavedProductsProvider } from "context/SavedProductsContext";
 import {
   ForgotPasswordPage,
   LoginPage,
@@ -16,7 +16,7 @@ import {
   RegisterPage,
   ResetPasswordPage,
   VerifyEmailPage
-} from "./screensAuth";
+} from "pages/auth/screensAuth";
 import {
   BuyerHelpSupportPage,
   BuyerMessagesPage,
@@ -29,20 +29,22 @@ import {
   ProfilePage,
   ShopPage,
   SavedProductsPage
-} from "./screensBuyer";
-import { CourierApplicationPage } from "./screensCourierApply";
-import { VendorApplicationPage } from "./screensVendorApply";
-import { CategoryHubPage, BusinessStorefrontPage } from "./marketplaceHubScreens";
-import { VendorStoresPage } from "./vendorBusinessStudio";
-import { VendorStoreMenuPage } from "./vendorStoreMenu";
-import { VendorOnboardingPage } from "./vendorOnboardingWizard";
-import { VendorServiceInquiriesPage } from "./vendorServiceInquiries";
-import { BuyerReportsPage, VendorReportsPage } from "./screensUserReports";
-import { TermsAndConditionsPage, VendorRulesPage } from "./screensLegal";
-import { AdminPage } from "./screensAdmin";
-import { AdminLoginPage, AdminLoginOtpPage } from "./screensAdminLogin";
-import RiderDashboard from "./RiderDashboard";
-import { h } from "./h";
+} from "pages/buyer/screensBuyer";
+import { CourierApplicationPage } from "pages/applications/screensCourierApply";
+import { VendorApplicationPage } from "pages/applications/screensVendorApply";
+import { BrowseStoresPage, CategoryHubPage, BusinessStorefrontPage } from "pages/marketplace/marketplaceHubScreens";
+import { VendorStoresPage } from "pages/vendor/vendorBusinessStudio";
+import { VendorStorefrontManagePage } from "pages/vendor/vendorStorefrontStudio";
+import { VendorStoreMenuPage } from "pages/vendor/vendorStoreMenu";
+import { VendorOnboardingPage } from "pages/vendor/vendorOnboardingWizard";
+import { VendorReviewsPage } from "pages/vendor/VendorReviewsPage";
+import { VendorServiceInquiriesPage } from "pages/vendor/vendorServiceInquiries";
+import { BuyerReportsPage, VendorReportsPage } from "pages/reports/screensUserReports";
+import { TermsAndConditionsPage, VendorRulesPage } from "pages/legal/screensLegal";
+import { AdminPage } from "pages/admin/screensAdmin";
+import { AdminLoginPage, AdminLoginOtpPage } from "pages/admin/screensAdminLogin";
+import RiderDashboard from "pages/rider/RiderDashboard";
+import { h } from "utils/h";
 import {
   VendorAddProductPage,
   VendorAnalyticsPage,
@@ -53,10 +55,9 @@ import {
   VendorOrdersPage,
   VendorProductsPage,
   VendorProfilePage,
-  VendorReviewsPage,
   VendorSettingsPage,
   VendorShell
-} from "./screensVendor";
+} from "pages/vendor/screensVendor";
 
 function FullScreenLoading() {
   return h(
@@ -86,18 +87,28 @@ function VendorGate({ children }) {
   return children;
 }
 
+/** Public buyer marketplace pages — vendors/admins/riders can preview without role redirects. */
+function isPublicMarketplacePath(pathname) {
+  const p = String(pathname || "").split("?")[0];
+  if (p.startsWith("/store/")) return true;
+  if (p.startsWith("/products/")) return true;
+  return ["/food", "/fashion", "/electronics", "/beauty", "/groceries", "/books", "/services", "/browse-stores"].includes(p);
+}
+
 function BuyerGate({ children }) {
+  const location = useLocation();
   const { accessToken, loading, user } = useAuth();
+  const publicMarket = isPublicMarketplacePath(location.pathname);
   if (loading) {
     return h(FullScreenLoading);
   }
-  if (accessToken && user?.role === "admin") {
+  if (accessToken && user?.role === "admin" && !publicMarket) {
     return h(Navigate, { to: "/admin", replace: true });
   }
-  if (accessToken && user?.role === "seller") {
+  if (accessToken && user?.role === "seller" && !publicMarket) {
     return h(Navigate, { to: "/vendor/dashboard", replace: true });
   }
-  if (accessToken && user?.role === "rider") {
+  if (accessToken && user?.role === "rider" && !publicMarket) {
     return h(Navigate, { to: "/rider", replace: true });
   }
   return children;
@@ -197,6 +208,11 @@ function AppRoutes() {
       element: h(BuyerGate, null, h(ProductDetailPage)),
       key: "r-product"
     }),
+    h(Route, {
+      path: "/browse-stores",
+      element: h(BuyerGate, null, h(BrowseStoresPage)),
+      key: "r-browse-stores"
+    }),
     h(Route, { path: "/saved", element: h(BuyerGate, null, h(SavedProductsPage)), key: "r-saved" }),
     h(Route, { path: "/admin/login", element: h(AdminLoginPage), key: "r-admin-login" }),
     h(Route, { path: "/admin/login-otp", element: h(AdminLoginOtpPage), key: "r-admin-login-otp" }),
@@ -272,6 +288,8 @@ function AppRoutes() {
       h(Route, { path: "dashboard", element: h(VendorDashboardPage), key: "r-v-dash" }),
       h(Route, { path: "onboarding", element: h(VendorOnboardingPage), key: "r-v-onboard" }),
       h(Route, { path: "service-inquiries", element: h(VendorServiceInquiriesPage), key: "r-v-svc-req" }),
+      h(Route, { path: "stores", element: h(VendorStoresPage), key: "r-v-stores" }),
+      h(Route, { path: "stores/:storeKey", element: h(VendorStorefrontManagePage), key: "r-v-store" }),
       h(Route, { path: "stores/:storeKey/menu", element: h(VendorStoreMenuPage), key: "r-v-store-menu" }),
       h(Route, { path: "products", element: h(VendorProductsPage), key: "r-v-products" }),
       h(Route, { path: "products/new", element: h(VendorAddProductPage), key: "r-v-new" }),

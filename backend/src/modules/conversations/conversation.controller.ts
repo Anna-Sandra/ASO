@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { DEFAULT_SUPPORT_LABEL } from "../../config/brand";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
@@ -151,7 +152,7 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
       const convTouchS = sconv?.updatedAt ? new Date(sconv.updatedAt).getTime() : 0;
       buyerThreads.unshift({
         peerUserId: supportIdForBuyer.toString(),
-        peerDisplayName: "CampusMart Support",
+        peerDisplayName: DEFAULT_SUPPORT_LABEL,
         itemSummary: "Account help, orders, safety",
         updatedAt: new Date(convTouchS || 0),
         messages: sMessages,
@@ -217,7 +218,7 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
     const convTouchS = sconv?.updatedAt ? new Date(sconv.updatedAt).getTime() : 0;
     sellerThreads.unshift({
       peerUserId: supportIdForSeller.toString(),
-      peerDisplayName: "CampusMart Support",
+      peerDisplayName: DEFAULT_SUPPORT_LABEL,
       itemSummary: "Account help, payouts, safety",
       updatedAt: new Date(convTouchS || 0),
       messages: sMessages,
@@ -259,7 +260,7 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
     fireNotification(supportId, {
       type: "message_received",
       title: "Support message",
-      message: "Someone sent a message to Campus Mart support.",
+      message: "Someone sent a message to SHOPIQGH support.",
       orderId: undefined
     });
     const raw = sortMessagesAsc(conv.messages as MsgRow[]);
@@ -272,7 +273,7 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
     res.json({
       conversation: {
         peerUserId: supportId.toString(),
-        peerDisplayName: "CampusMart Support",
+        peerDisplayName: DEFAULT_SUPPORT_LABEL,
         updatedAt: conv.updatedAt,
         messages
       }
@@ -357,5 +358,5 @@ export const getSupportPeer = asyncHandler(async (req: Request, res: Response) =
   const id = await getPrimarySupportAdminId();
   if (!id) throw new HttpError(503, "Support is not available yet. Configure an admin account.");
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
-  res.json({ supportUserId: id.toString(), label: "CampusMart Support" });
+  res.json({ supportUserId: id.toString(), label: DEFAULT_SUPPORT_LABEL });
 });

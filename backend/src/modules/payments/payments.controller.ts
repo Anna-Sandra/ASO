@@ -14,10 +14,10 @@ import { getOrCreateSettings, getEffectiveCommissionPercent } from "../platform/
 import { runVendorPayoutsForOrder, mergePaystackCheckoutSplitIntoInitializeBody } from "./paystackPayouts";
 import { handlePaystackRefundWebhookEvent } from "./paystackRefundSync";
 import { notifyOrderPaid } from "../notifications/notification.service";
+import { paystackGet, paystackPost } from "./paystackClient";
+import { finalizeVendorSubscriptionFromPaystack } from "../vendorSubscription/vendorSubscription.controller";
 
 const stripe = env.STRIPE_SECRET_KEY ? new Stripe(env.STRIPE_SECRET_KEY) : null;
-
-const PAYSTACK_BASE = "https://api.paystack.co";
 
 type PaystackInitializeData = {
   authorization_url: string;
@@ -64,52 +64,14 @@ async function commitPaystackInitialize(
   return { authorizationUrl: data.authorization_url, reference: data.reference, access_code: data.access_code };
 }
 
-async function paystackPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const key = env.PAYSTACK_SECRET_KEY?.trim();
-  if (!key) throw new HttpError(503, "Paystack not configured");
-
-  const res = await fetch(`${PAYSTACK_BASE}${path}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
-
-  const json = (await res.json()) as { status?: boolean; message?: string; data?: T };
-  if (!json.status || json.data === undefined) {
-    const msg = typeof json.message === "string" && json.message.trim() ? json.message.trim() : "Paystack request failed";
-    throw new HttpError(400, msg);
-  }
-  return json.data;
-}
-
 type PaystackVerifyData = {
   id?: number;
   status?: string;
   reference?: string;
   amount?: number;
   currency?: string;
-  metadata?: { orderId?: string };
+  metadata?: { orderId?: string; type?: string; userId?: string };
 };
-
-async function paystackGet<T>(path: string): Promise<T> {
-  const key = env.PAYSTACK_SECRET_KEY?.trim();
-  if (!key) throw new HttpError(503, "Paystack not configured");
-
-  const res = await fetch(`${PAYSTACK_BASE}${path}`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${key}` }
-  });
-
-  const json = (await res.json()) as { status?: boolean; message?: string; data?: T };
-  if (!json.status || json.data === undefined) {
-    const msg = typeof json.message === "string" && json.message.trim() ? json.message.trim() : "Paystack request failed";
-    throw new HttpError(400, msg);
-  }
-  return json.data;
-}
 
 type PaystackRefundCreateData = {
   id?: number;
@@ -434,6 +396,15 @@ export const paystackWebhook = asyncHandler(async (req: Request, res: Response) 
   if (event.event === "charge.success" && event.data?.reference) {
     const reference = String(event.data.reference);
     const amount = Number(event.data.amount);
+    const metaType = String((event.data.metadata as { type?: string } | undefined)?.type || "");
+    const metaUserId = String((event.data.metadata as { userId?: string } | undefined)?.userId || "");
+
+    if (metaType === "vendor_subscription") {
+      await finalizeVendorSubscriptionFromPaystack(reference, amount, metaUserId || undefined);
+      res.json({ received: true });
+      return;
+    }
+
     const metaOrderId = event.data.metadata?.orderId;
 
     const order =

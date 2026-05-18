@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { DEFAULT_SITE_NAME } from "../../config/brand";
 
 export interface PlatformSettingsDoc {
   _id: mongoose.Types.ObjectId;
@@ -33,6 +34,16 @@ export interface PlatformSettingsDoc {
   allowPublicRegistration: boolean;
   allowVendorApplications: boolean;
   allowCourierApplications: boolean;
+  /** When the app went live — start of the vendor free-trial window. */
+  platformDeployedAt: Date | null;
+  /** Months after deployment that new sellers sell without a platform subscription fee. */
+  vendorTrialMonths: number;
+  /** When true, sellers must pay after the launch trial ends (unless exempt or already subscribed). */
+  vendorSubscriptionBillingEnabled: boolean;
+  /** Annual seller platform fee in GHS (Paystack checkout after trial). */
+  vendorSubscriptionPriceGhs: number;
+  /** How long a paid seller subscription lasts (months). */
+  vendorSubscriptionPeriodMonths: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -73,14 +84,19 @@ const platformSettingsSchema = new Schema<PlatformSettingsDoc>(
     listingRulesUpdatedAt: { type: Date, default: null },
     listingRulesUpdatedByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
     listingRulesAuditTail: { type: [listingAuditEntrySchema], default: [] },
-    siteName: { type: String, default: "Campus Mart", maxlength: 120 },
+    siteName: { type: String, default: DEFAULT_SITE_NAME, maxlength: 120 },
     siteDescription: { type: String, default: "", maxlength: 1000 },
     supportEmail: { type: String, default: "", maxlength: 200 },
     maintenanceMode: { type: Boolean, default: false },
     maintenanceMessage: { type: String, default: "", maxlength: 2000 },
     allowPublicRegistration: { type: Boolean, default: true },
     allowVendorApplications: { type: Boolean, default: true },
-    allowCourierApplications: { type: Boolean, default: true }
+    allowCourierApplications: { type: Boolean, default: true },
+    platformDeployedAt: { type: Date, default: null },
+    vendorTrialMonths: { type: Number, default: 2, min: 0, max: 24 },
+    vendorSubscriptionBillingEnabled: { type: Boolean, default: true },
+    vendorSubscriptionPriceGhs: { type: Number, default: 49, min: 0 },
+    vendorSubscriptionPeriodMonths: { type: Number, default: 12, min: 1, max: 36 }
   },
   { timestamps: true }
 );

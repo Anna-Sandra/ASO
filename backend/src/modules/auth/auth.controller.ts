@@ -21,6 +21,7 @@ import { VendorAnalyticsEvent } from "../vendor/vendorAnalyticsEvent.model";
 import { VendorApplication } from "../vendorApplications/vendorApplication.model";
 import { CourierApplication } from "../courierApplications/courierApplication.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
+import { vendorBillingForUserId } from "../vendorSubscription/vendorSubscription.service";
 import { Token } from "./token.model";
 import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type UserRole, type VendorProfileStatus, type RiderApplicationStatus } from "./user.model";
 import {
@@ -134,6 +135,7 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
   const p = pickProfileFromUser(user as LeanUser);
   const recipient = String((user as { paystackTransferRecipientCode?: string }).paystackTransferRecipientCode || "").trim();
   const subacct = String((user as { paystackSubaccountCode?: string }).paystackSubaccountCode || "").trim();
+  const vendorBilling = role === "seller" ? await vendorBillingForUserId(user._id.toString()) : null;
   res.json({
     accessToken,
     user: {
@@ -154,7 +156,8 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
             paystackPayoutRegistered: Boolean(recipient),
             paystackSubaccountRegistered: Boolean(subacct),
             ghanaPayoutChannel: (user as { ghanaPayoutChannel?: "ghipss" | "mobile_money" }).ghanaPayoutChannel,
-            ghanaBankCode: (user as { ghanaBankCode?: string }).ghanaBankCode || ""
+            ghanaBankCode: (user as { ghanaBankCode?: string }).ghanaBankCode || "",
+            vendorBilling
           }
         : {}),
       ...(accessPayload.al ? { adminLevel: accessPayload.al } : {})
@@ -191,11 +194,11 @@ function sendEnvBootstrapAdminLoginSuccess(res: Response, extra?: Record<string,
 }
 
 function loginOtpEmailHtml(otp: string) {
-  return `<p>Your Campus Market sign-in code:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes. If you did not try to sign in, you can ignore this email.</p>`;
+  return `<p>Your SHOPIQGH sign-in code:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes. If you did not try to sign in, you can ignore this email.</p>`;
 }
 
 function emailVerifyOtpHtml(otp: string) {
-  return `<p>Your Campus Market email verification code:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes.</p>`;
+  return `<p>Your SHOPIQGH email verification code:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes.</p>`;
 }
 
 async function issueLoginOtpAndRespond(user: HydratedDocument<UserDoc>, res: Response) {
@@ -540,6 +543,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   const p = pickProfileFromUser(user as LeanUser);
   const recipient = String((user as { paystackTransferRecipientCode?: string }).paystackTransferRecipientCode || "").trim();
   const subacct = String((user as { paystackSubaccountCode?: string }).paystackSubaccountCode || "").trim();
+  const vendorBilling = role === "seller" ? await vendorBillingForUserId(user._id.toString()) : null;
   res.json({
     user: {
       id: user._id.toString(),
@@ -562,7 +566,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
             paystackPayoutRegistered: Boolean(recipient),
             paystackSubaccountRegistered: Boolean(subacct),
             ghanaPayoutChannel: (user as { ghanaPayoutChannel?: "ghipss" | "mobile_money" }).ghanaPayoutChannel,
-            ghanaBankCode: (user as { ghanaBankCode?: string }).ghanaBankCode || ""
+            ghanaBankCode: (user as { ghanaBankCode?: string }).ghanaBankCode || "",
+            vendorBilling
           }
         : {}),
       ...(role === "admin" && req.user?.adminLevel

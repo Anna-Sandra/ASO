@@ -10,8 +10,13 @@ import type { ProductCategory, ProductDoc } from "./product.model";
 import { Product } from "./product.model";
 import { normalizeCategoryAttributes } from "./categoryAttributes.schema";
 import { listProductsQuerySchema, recommendedProductsQuerySchema } from "./product.schemas";
-import { attachSellerPayments } from "./product.publicSerialize";
-import { assertProductBusinessLink } from "../businesses/business.controller";
+import {
+  activeStoreBusinessIds,
+  attachSellerPayments,
+  enrichPublicProducts,
+  foodMenuStoreFilter
+} from "./product.publicSerialize";
+import { assertProductBusinessLink, getSellerDefaultBusinessId } from "../businesses/business.controller";
 
 /** Public-facing fields; changes require re-approval if the listing was already live. */
 const SELLER_UPDATE_KEYS = [
@@ -61,6 +66,14 @@ function fieldChanged(key: string, from: unknown, to: unknown): boolean {
   return String(from ?? "") !== String(to ?? "");
 }
 
+/** Align with frontend filters / ribbons (case-sensitive tokens in catalog.js). */
+function normalizeSellerTags(tags: unknown): string[] {
+  const rawTags = Array.isArray(tags)
+    ? (tags as unknown[]).map((t) => String(t).trim().toLowerCase()).filter(Boolean)
+    : [];
+  return [...new Set(rawTags)].slice(0, 10);
+}
+
 function sellerModerationTouched(
   before: ProductDoc,
   body: Record<string, unknown>
@@ -78,7 +91,12 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   if (!parsed.success) throw new HttpError(400, "Invalid product filters.");
   const q = parsed.data;
   const filter: Record<string, unknown> = { status: "active" };
-  if (q.businessId) filter.businessId = new mongoose.Types.ObjectId(q.businessId);
+  if (q.businessId) {
+    filter.businessId = new mongoose.Types.ObjectId(q.businessId);
+  } else {
+    const activeIds = await activeStoreBusinessIds();
+    Object.assign(filter, foodMenuStoreFilter(activeIds));
+  }
   if (q.tag) filter.tags = q.tag;
 
   const priceCond: Record<string, number> = {};
@@ -97,7 +115,7 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   } else {
     rows = await Product.find(filter).sort({ updatedAt: -1 }).lean();
   }
-  const enriched = await attachSellerPayments(rows as unknown as Record<string, unknown>[]);
+  const enriched = await enrichPublicProducts(rows as unknown as Record<string, unknown>[]);
   res.json({ products: enriched });
 });
 
@@ -144,9 +162,11 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
   const qp = parsed.success ? parsed.data : { limit: 12, preferCheaper: true };
   const preferCheaper = qp.preferCheaper !== false;
 
+  const activeIds = await activeStoreBusinessIds();
   const candidateFilter: Record<string, unknown> = {
     status: "active",
-    $or: [{ category: "services" }, { stock: { $gt: 0 } }]
+    $or: [{ category: "services" }, { stock: { $gt: 0 } }],
+    ...foodMenuStoreFilter(activeIds)
   };
 
   const raw = await Product.find(candidateFilter).sort({ updatedAt: -1 }).limit(480).lean();
@@ -255,7 +275,7 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
   if (forYou.length) {
     rails.push({
       id: "for_you",
-      title: personalized ? "Top picks for you" : "Popular on Campus Mart",
+      title: personalized ? "Top picks for you" : "Popular on SHOPIQGH",
       picks: forYou
     });
   }
@@ -293,9 +313,9 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
     });
   }
 
-  const rowsOut: { id: string; title: string; products: Awaited<ReturnType<typeof attachSellerPayments>> }[] = [];
+  const rowsOut: { id: string; title: string; products: Awaited<ReturnType<typeof enrichPublicProducts>> }[] = [];
   for (const r of rails) {
-    const enriched = await attachSellerPayments(r.picks as Record<string, unknown>[]);
+    const enriched = await enrichPublicProducts(r.picks as Record<string, unknown>[]);
     if (enriched.length) rowsOut.push({ id: r.id, title: r.title, products: enriched });
   }
 
@@ -324,9 +344,11 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
   if (!current) throw new HttpError(404, "Product not found");
 
   const cat = String((current as { category?: string }).category ?? "");
+  const activeIds = await activeStoreBusinessIds();
+  const relatedBase = { ...buyerCandidateFilter, ...foodMenuStoreFilter(activeIds) };
 
   const similarRaw = await Product.find({
-    ...buyerCandidateFilter,
+    ...relatedBase,
     _id: { $ne: oid },
     category: cat
   })
@@ -335,7 +357,7 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
     .lean();
 
   let exploreRaw = await Product.find({
-    ...buyerCandidateFilter,
+    ...relatedBase,
     _id: { $ne: oid },
     category: { $ne: cat }
   })
@@ -345,7 +367,7 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
 
   if (exploreRaw.length < 4) {
     const fill = await Product.find({
-      ...buyerCandidateFilter,
+      ...relatedBase,
       _id: { $ne: oid }
     })
       .sort({ updatedAt: -1 })
@@ -361,8 +383,8 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
     }
   }
 
-  const similarEnriched = await attachSellerPayments(similarRaw as unknown as Record<string, unknown>[]);
-  const exploreEnriched = await attachSellerPayments(exploreRaw as unknown as Record<string, unknown>[]);
+  const similarEnriched = await enrichPublicProducts(similarRaw as unknown as Record<string, unknown>[]);
+  const exploreEnriched = await enrichPublicProducts(exploreRaw as unknown as Record<string, unknown>[]);
 
   const similarLabel = REC_CATEGORY_LABEL[cat] || (cat ? cat.replace(/_/g, " ") : "this category");
 
@@ -388,7 +410,7 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   if (p.status !== "active" && !isOwner && !isAdmin) {
     throw new HttpError(404, "Product not found");
   }
-  const [out] = await attachSellerPayments([p as unknown as Record<string, unknown>]);
+  const [out] = await enrichPublicProducts([p as unknown as Record<string, unknown>]);
   res.json({ product: out });
 });
 
@@ -402,8 +424,7 @@ export const listMyProducts = asyncHandler(async (req: Request, res: Response) =
 export const createProduct = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = new mongoose.Types.ObjectId(req.user!.id);
   const body = { ...(req.body as Record<string, unknown>) };
-  const existingTags = Array.isArray(body.tags) ? (body.tags as unknown[]).map((t) => String(t)) : [];
-  body.tags = [...new Set(["new", ...existingTags])];
+  body.tags = normalizeSellerTags(body.tags);
   /** "Publish" from the app sends `active`; policy may auto-approve, queue, flag, or reject. */
   const wantsPublish = body.status === "active";
   delete (body as { status?: unknown }).status;
@@ -430,12 +451,16 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     rejectionReason = outcome.rejectionReason ?? undefined;
   }
 
-  const bizIdRaw = body.businessId;
+  let bizIdRaw = body.businessId;
   const menuSidRaw = body.menuSectionId;
   delete body.businessId;
   delete body.menuSectionId;
 
   const categoryStr = String((body as { category?: string }).category || "");
+  if (bizIdRaw === undefined || (typeof bizIdRaw === "string" && !String(bizIdRaw).trim())) {
+    const def = await getSellerDefaultBusinessId(sellerId, categoryStr);
+    if (def) bizIdRaw = def.toString();
+  }
   const { businessIdOid, menuSectionIdOid } = await assertProductBusinessLink({
     sellerId,
     businessId:
@@ -474,6 +499,9 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   const beforeStatus = p.status;
   const beforeDoc = p.toObject() as ProductDoc;
   const body = req.body as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(body, "tags")) {
+    body.tags = normalizeSellerTags(body.tags);
+  }
   const modTouched = sellerModerationTouched(beforeDoc, body);
   const settings = await getOrCreateSettings();
 
@@ -528,9 +556,16 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
 
   const mergedCat = String(p.category) as ProductCategory;
 
-  const bizForAssert = Object.prototype.hasOwnProperty.call(body, "businessId")
+  let bizForAssert = Object.prototype.hasOwnProperty.call(body, "businessId")
     ? body.businessId
     : p.businessId ?? undefined;
+  if (
+    (bizForAssert === undefined || (typeof bizForAssert === "string" && !String(bizForAssert).trim())) &&
+    !p.businessId
+  ) {
+    const def = await getSellerDefaultBusinessId(new mongoose.Types.ObjectId(req.user!.id), mergedCat);
+    if (def) bizForAssert = def.toString();
+  }
   const menuForAssert = Object.prototype.hasOwnProperty.call(body, "menuSectionId")
     ? body.menuSectionId
     : p.menuSectionId ?? undefined;

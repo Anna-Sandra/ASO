@@ -45,7 +45,7 @@ export const submitVendorApplicationSchema = z.object({
     .trim()
     .min(1, { message: "Upload a Ghana Card or ID photo / PDF." })
     .max(500, { message: "Verification URL is invalid." }),
-  locationBase: z.enum(VENDOR_LOCATION_BASE, { message: "Choose whether you are on-campus or off-campus." }),
+  locationBase: z.enum(VENDOR_LOCATION_BASE, { message: "Choose whether you are on-site or off-site." }),
   nearbyArea: z
     .string()
     .trim()

@@ -1,7 +1,9 @@
 import type { Request, Response } from "express";
+import { DEFAULT_SITE_NAME } from "../../config/brand";
 import { env, isPaystackCheckoutSplitEnabled, isPaystackMoneyRailEnabled } from "../../config/env";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { getEffectiveCommissionPercent, getOrCreateSettings } from "./platformSettings.service";
+import { getPlatformTrialEndsAt, isPlatformLaunchTrialActive } from "../vendorSubscription/vendorSubscription.service";
 
 export const getPublicPlatformConfig = asyncHandler(async (_req: Request, res: Response) => {
   const doc = await getOrCreateSettings();
@@ -9,7 +11,7 @@ export const getPublicPlatformConfig = asyncHandler(async (_req: Request, res: R
   const commissionPercent = await getEffectiveCommissionPercent();
   res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=120");
   res.json({
-    siteName: doc.siteName || "Campus Mart",
+    siteName: doc.siteName || DEFAULT_SITE_NAME,
     siteDescription: doc.siteDescription || "",
     supportEmail: (doc.supportEmail || "").trim(),
     maintenanceMode: !!doc.maintenanceMode,
@@ -28,6 +30,17 @@ export const getPublicPlatformConfig = asyncHandler(async (_req: Request, res: R
       commissionPercent,
       paystackFeePercent: env.PAYSTACK_CHECKOUT_FEE_PERCENT,
       paystackFeeFixedGhs: env.PAYSTACK_CHECKOUT_FEE_FIXED_GHS
+    },
+    vendorBilling: {
+      billingEnabled: doc.vendorSubscriptionBillingEnabled !== false,
+      launchTrialActive: isPlatformLaunchTrialActive(doc),
+      trialEndsAt: (() => {
+        const ends = getPlatformTrialEndsAt(doc);
+        return ends ? ends.toISOString() : null;
+      })(),
+      trialMonths: doc.vendorTrialMonths ?? env.VENDOR_TRIAL_MONTHS,
+      subscriptionPriceGhs: doc.vendorSubscriptionPriceGhs ?? env.VENDOR_SUBSCRIPTION_PRICE_GHS,
+      subscriptionPeriodMonths: doc.vendorSubscriptionPeriodMonths ?? env.VENDOR_SUBSCRIPTION_PERIOD_MONTHS
     }
   });
 });

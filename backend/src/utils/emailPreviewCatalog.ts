@@ -51,7 +51,7 @@ export const EMAIL_TEMPLATE_PREVIEWS: { id: string; title: string; description: 
     title: "Vendor order alert",
     description: "Notifies a seller of a new paid order (when mailer is on).",
     sampleHtml: `<div style="font-family:system-ui,sans-serif;max-width:480px">
-  <p>You have a <strong>new order</strong> on Campus Mart.</p>
+  <p>You have a <strong>new order</strong> on SHOPIQGH.</p>
   <p>Open your vendor dashboard to view details and fulfill.</p>
 </div>`
   },

@@ -6,18 +6,25 @@ import { Product } from "../products/product.model";
 import { ServiceInquiry } from "./serviceInquiry.model";
 import { fireNotification } from "../notifications/notification.service";
 import { User } from "../auth/user.model";
+import {
+  isOfflineInquiryProductCategory,
+  sellerEligibleForOfflineInquiries
+} from "./offlineInquiry";
 
-function serializeInquiry(doc: {
-  _id: mongoose.Types.ObjectId;
-  buyerId: mongoose.Types.ObjectId;
-  sellerId: mongoose.Types.ObjectId;
-  productId: mongoose.Types.ObjectId;
-  productName: string;
-  message: string;
-  preferredTime?: string;
-  status: string;
-  createdAt: Date;
-}) {
+function serializeInquiry(
+  doc: {
+    _id: mongoose.Types.ObjectId;
+    buyerId: mongoose.Types.ObjectId;
+    sellerId: mongoose.Types.ObjectId;
+    productId: mongoose.Types.ObjectId;
+    productName: string;
+    message: string;
+    preferredTime?: string;
+    status: string;
+    createdAt: Date;
+  },
+  extra?: { listingCategory?: string }
+) {
   return {
     id: doc._id.toString(),
     buyerId: doc.buyerId.toString(),
@@ -27,7 +34,8 @@ function serializeInquiry(doc: {
     message: doc.message,
     preferredTime: doc.preferredTime || "",
     status: doc.status,
-    createdAt: doc.createdAt
+    createdAt: doc.createdAt,
+    ...(extra?.listingCategory ? { listingCategory: extra.listingCategory } : {})
   };
 }
 
@@ -41,14 +49,20 @@ export const createServiceInquiry = asyncHandler(async (req: Request, res: Respo
 
   const p = await Product.findById(productId).select("sellerId category name status").lean();
   if (!p) throw new HttpError(404, "Product not found");
-  if (String(p.category) !== "services") {
-    throw new HttpError(400, "Booking requests are only available for service listings.");
+  const category = String(p.category || "");
+  if (!isOfflineInquiryProductCategory(category)) {
+    throw new HttpError(
+      400,
+      "Contact requests are only available for food and service listings (items without fixed online checkout)."
+    );
   }
   if (String(p.status) !== "active") {
     throw new HttpError(400, "This listing is not accepting requests right now.");
   }
   const sellerId = p.sellerId as mongoose.Types.ObjectId;
-  if (sellerId.equals(buyerId)) throw new HttpError(400, "You cannot request your own service.");
+  if (sellerId.equals(buyerId)) {
+    throw new HttpError(400, "You cannot send a request for your own listing.");
+  }
 
   const recent = await ServiceInquiry.findOne({
     buyerId,
@@ -60,7 +74,7 @@ export const createServiceInquiry = asyncHandler(async (req: Request, res: Respo
   if (recent) {
     throw new HttpError(
       429,
-      "You already sent a request for this service in the last hour. The seller was notified — check back later or open Messages if you already share an order thread."
+      "You already sent a request for this listing in the last hour. The seller was notified — check back later or open Messages if you already share an order thread."
     );
   }
 
@@ -80,14 +94,21 @@ export const createServiceInquiry = asyncHandler(async (req: Request, res: Respo
     ((buyer as { displayName?: string; email?: string } | null)?.email || "").trim() ||
     "A buyer";
   const preview = message.length > 200 ? `${message.slice(0, 200)}…` : message;
+  const isFood = category === "food_drinks";
   fireNotification(sellerId, {
     type: "message_received",
-    title: "Service booking request",
-    message: `${buyerLabel} requested «${String(p.name || "service")}»: ${preview}`,
+    title: isFood ? "Food order request" : "Service booking request",
+    message: `${buyerLabel} requested «${String(p.name || "listing")}»: ${preview}`,
     orderId: null
   });
 
-  res.status(201).json({ inquiry: serializeInquiry(doc.toObject()) });
+  res.status(201).json({ inquiry: serializeInquiry(doc.toObject(), { listingCategory: category }) });
+});
+
+export const getOfflineInquiriesEligible = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = new mongoose.Types.ObjectId(req.user!.id);
+  const eligible = await sellerEligibleForOfflineInquiries(sellerId);
+  res.json({ eligible });
 });
 
 export const listMyServiceInquiries = asyncHandler(async (req: Request, res: Response) => {
@@ -98,7 +119,21 @@ export const listMyServiceInquiries = asyncHandler(async (req: Request, res: Res
 
 export const listSellerServiceInquiries = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = new mongoose.Types.ObjectId(req.user!.id);
+  const eligible = await sellerEligibleForOfflineInquiries(sellerId);
+  if (!eligible) {
+    res.json({ inquiries: [], eligible: false });
+    return;
+  }
   const rows = await ServiceInquiry.find({ sellerId }).sort({ createdAt: -1 }).limit(200).lean();
+  const productIds = [...new Set(rows.map((r) => (r.productId as mongoose.Types.ObjectId).toString()))].map(
+    (s) => new mongoose.Types.ObjectId(s)
+  );
+  const products = productIds.length
+    ? await Product.find({ _id: { $in: productIds } })
+        .select("category")
+        .lean()
+    : [];
+  const catByProduct = new Map(products.map((p) => [p._id.toString(), String(p.category || "")]));
   const buyerIds = [...new Set(rows.map((r) => (r.buyerId as mongoose.Types.ObjectId).toString()))].map(
     (s) => new mongoose.Types.ObjectId(s)
   );
@@ -117,10 +152,15 @@ export const listSellerServiceInquiries = asyncHandler(async (req: Request, res:
     })
   );
   res.json({
-    inquiries: rows.map((r) => ({
-      ...serializeInquiry(r),
-      buyerDisplayName: nameById.get((r.buyerId as mongoose.Types.ObjectId).toString()) || "Buyer"
-    }))
+    eligible: true,
+    inquiries: rows.map((r) => {
+      const pid = (r.productId as mongoose.Types.ObjectId).toString();
+      const listingCategory = catByProduct.get(pid) || "";
+      return {
+        ...serializeInquiry(r, { listingCategory }),
+        buyerDisplayName: nameById.get((r.buyerId as mongoose.Types.ObjectId).toString()) || "Buyer"
+      };
+    })
   });
 });
 

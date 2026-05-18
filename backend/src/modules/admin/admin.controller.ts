@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose, { type HydratedDocument } from "mongoose";
 import bcrypt from "bcrypt";
+import { DEFAULT_SITE_NAME } from "../../config/brand";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { env, getEmailTransportDiagnostics, isEmailTransportConfigured, isSuperUserAdminEmail } from "../../config/env";
@@ -11,6 +12,7 @@ import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type 
 import { Order, type OrderDoc } from "../orders/order.model";
 import { isOrderExcludedFromRevenueMetrics, withContacts } from "../orders/orderSerialize";
 import { Product } from "../products/product.model";
+import { Business, type BusinessDoc } from "../businesses/business.model";
 import { Conversation } from "../conversations/conversation.model";
 import { Report } from "../reports/report.model";
 import { Review } from "../reviews/review.model";
@@ -31,6 +33,8 @@ import {
   adminPlatformSettingsSchema,
   adminProductPatchSchema,
   adminProductsQuerySchema,
+  adminBusinessesQuerySchema,
+  adminRejectBusinessSchema,
   adminRejectProductSchema,
   adminReportPatchSchema,
   adminReportsQuerySchema,
@@ -79,11 +83,11 @@ function plainTextToEmailHtml(text: string): string {
 function adminRoleGrantedEmailHtml(displayName: string, adminLoginUrl: string): string {
   const safeName = displayName.replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return `<p>Hi ${safeName || "there"},</p>
-<p><strong>Your Campus Mart account has been granted administrator access.</strong></p>
+<p><strong>Your SHOPIQGH account has been granted administrator access.</strong></p>
 <p>You can sign in to the admin dashboard with your existing email and password (and your usual sign-in code if required). Use this link when you’re ready:</p>
 <p><a href="${adminLoginUrl}">${adminLoginUrl}</a></p>
 <p>If you didn’t expect this email, contact your platform owner immediately.</p>
-<p>— Campus Mart</p>`;
+<p>— SHOPIQGH</p>`;
 }
 
 type AdminInviteEmailResult =
@@ -109,7 +113,7 @@ async function sendAdminRoleGrantedEmail(u: HydratedDocument<UserDoc>): Promise<
   try {
     await sendEmail(
       to,
-      "You’ve been granted admin access — Campus Mart",
+      "You’ve been granted admin access — SHOPIQGH",
       adminRoleGrantedEmailHtml(display, adminLoginUrl)
     );
     return { status: "sent", to };
@@ -168,14 +172,16 @@ const PAID_LIKE = ["paid", "processing", "sent_for_delivery", "delivered"] as co
  * and Reports — the same affordance vendors already get for incoming orders.
  */
 export const adminBadges = asyncHandler(async (_req: Request, res: Response) => {
-  const [pendingOrders, pendingVendorApps, pendingCourierApps, pendingProducts, openReports, openDisputes] = await Promise.all([
-    Order.countDocuments({ status: { $in: ["pending_payment", "awaiting_vendor_payment"] } }),
-    VendorApplication.countDocuments({ status: "pending" }),
-    CourierApplication.countDocuments({ status: "pending" }),
-    Product.countDocuments({ status: "pending_approval" }),
-    Report.countDocuments({ status: { $in: ["open", "in_review"] } }),
-    Order.countDocuments({ disputeOpen: true })
-  ]);
+  const [pendingOrders, pendingVendorApps, pendingCourierApps, pendingProducts, pendingStores, openReports, openDisputes] =
+    await Promise.all([
+      Order.countDocuments({ status: { $in: ["pending_payment", "awaiting_vendor_payment"] } }),
+      VendorApplication.countDocuments({ status: "pending" }),
+      CourierApplication.countDocuments({ status: "pending" }),
+      Product.countDocuments({ status: "pending_approval" }),
+      Business.countDocuments({ status: "pending_approval" }),
+      Report.countDocuments({ status: { $in: ["open", "in_review"] } }),
+      Order.countDocuments({ disputeOpen: true })
+    ]);
 
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({
@@ -184,6 +190,7 @@ export const adminBadges = asyncHandler(async (_req: Request, res: Response) => 
       "vendor-apps": pendingVendorApps,
       "courier-apps": pendingCourierApps,
       listings: pendingProducts,
+      stores: pendingStores,
       reports: openReports,
       disputes: openDisputes
     },
@@ -422,17 +429,31 @@ export const patchAdminUser = asyncHandler(async (req: Request, res: Response) =
   }
   if (body.accountStatus !== undefined) (u as { accountStatus: string }).accountStatus = body.accountStatus;
   if (body.sellerVerified !== undefined) (u as { sellerVerified: boolean }).sellerVerified = body.sellerVerified;
+  if (body.vendorSubscriptionExempt !== undefined) {
+    (u as { vendorSubscriptionExempt: boolean }).vendorSubscriptionExempt = body.vendorSubscriptionExempt;
+  }
   await u.save();
   const parts: string[] = [];
   if (body.accountStatus !== undefined) parts.push(`accountStatus → ${body.accountStatus}`);
   if (body.sellerVerified !== undefined) parts.push(`sellerVerified → ${body.sellerVerified}`);
+  if (body.vendorSubscriptionExempt !== undefined) {
+    parts.push(`vendorSubscriptionExempt → ${body.vendorSubscriptionExempt}`);
+  }
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "user.patch",
     title: `User updated — ${(((u as { email?: string }).email || (u as { displayName?: string }).displayName || id) + "").slice(0, 60)}`,
     detail: parts.join(" · ") || "—"
   });
-  res.json({ ok: true, user: { id: u._id.toString(), accountStatus: (u as { accountStatus?: string }).accountStatus, sellerVerified: (u as { sellerVerified?: boolean }).sellerVerified } });
+  res.json({
+    ok: true,
+    user: {
+      id: u._id.toString(),
+      accountStatus: (u as { accountStatus?: string }).accountStatus,
+      sellerVerified: (u as { sellerVerified?: boolean }).sellerVerified,
+      vendorSubscriptionExempt: Boolean((u as { vendorSubscriptionExempt?: boolean }).vendorSubscriptionExempt)
+    }
+  });
 });
 
 export const grantAdmin = asyncHandler(async (req: Request, res: Response) => {
@@ -596,6 +617,91 @@ export const rejectProduct = asyncHandler(async (req: Request, res: Response) =>
   res.json({ ok: true, product: { id: p._id.toString(), status: p.status, rejectionReason: reason } });
 });
 
+function serializeAdminBusiness(b: BusinessDoc) {
+  return {
+    id: b._id.toString(),
+    ownerId: b.ownerId.toString(),
+    slug: b.slug,
+    businessType: b.businessType,
+    status: b.status,
+    name: b.name,
+    description: b.description,
+    logoUrl: b.logoUrl,
+    bannerUrl: b.bannerUrl,
+    locationLabel: b.locationLabel,
+    createdAt: b.createdAt,
+    updatedAt: b.updatedAt
+  };
+}
+
+export const listAdminBusinesses = asyncHandler(async (req: Request, res: Response) => {
+  const q = adminBusinessesQuerySchema.parse(req.query);
+  const skip = (q.page - 1) * q.limit;
+  const filter: Record<string, unknown> = {};
+  if (q.status && q.status !== "all") filter.status = q.status;
+  if (q.search) {
+    const rx = new RegExp(escapeRegex(q.search), "i");
+    filter.$or = [{ name: rx }, { slug: rx }, { description: rx }];
+  }
+  const [rows, total] = await Promise.all([
+    Business.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(q.limit).lean(),
+    Business.countDocuments(filter)
+  ]);
+  res.json({
+    businesses: rows.map((r) => serializeAdminBusiness(r as BusinessDoc)),
+    total,
+    page: q.page,
+    limit: q.limit
+  });
+});
+
+export const approveAdminBusiness = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid store id");
+  const doc = await Business.findById(id);
+  if (!doc) throw new HttpError(404, "Store not found");
+  if (doc.status === "suspended") throw new HttpError(400, "Suspended stores must be unsuspended before approval.");
+  doc.status = "active";
+  const settings = (doc.settings && typeof doc.settings === "object" ? { ...doc.settings } : {}) as Record<
+    string,
+    unknown
+  >;
+  delete settings.rejectionReason;
+  doc.settings = settings;
+  await doc.save();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "business.approve",
+    title: `Store approved — ${doc.name.slice(0, 80)}`,
+    detail: doc.slug
+  });
+  res.json({ ok: true, business: serializeAdminBusiness(doc.toObject() as BusinessDoc) });
+});
+
+export const rejectAdminBusiness = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid store id");
+  const { reason } = adminRejectBusinessSchema.parse(req.body);
+  const doc = await Business.findById(id);
+  if (!doc) throw new HttpError(404, "Store not found");
+  doc.status = "rejected";
+  const settings = (doc.settings && typeof doc.settings === "object" ? { ...doc.settings } : {}) as Record<
+    string,
+    unknown
+  >;
+  if (reason.trim()) settings.rejectionReason = reason.trim();
+  else delete settings.rejectionReason;
+  doc.settings = settings;
+  await doc.save();
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "business.reject",
+    title: `Store rejected — ${doc.name.slice(0, 80)}`,
+    detail: reason.slice(0, 500) || doc.slug
+  });
+  res.json({ ok: true, business: serializeAdminBusiness(doc.toObject() as BusinessDoc) });
+});
+
 export const listAdminOrders = asyncHandler(async (req: Request, res: Response) => {
   const q = adminOrdersQuerySchema.parse(req.query);
   const skip = (q.page - 1) * q.limit;
@@ -674,14 +780,21 @@ function serializePlatformSettingsDoc(doc: Awaited<ReturnType<typeof getOrCreate
       ? (doc.listingRulesUpdatedAt as Date).toISOString()
       : null,
     listingRulesAuditTail: tail,
-    siteName: doc.siteName || "Campus Mart",
+    siteName: doc.siteName || DEFAULT_SITE_NAME,
     siteDescription: doc.siteDescription || "",
     supportEmail: (doc.supportEmail || "").trim(),
     maintenanceMode: !!doc.maintenanceMode,
     maintenanceMessage: doc.maintenanceMessage || "",
     allowPublicRegistration: doc.allowPublicRegistration !== false,
     allowVendorApplications: doc.allowVendorApplications !== false,
-    allowCourierApplications: doc.allowCourierApplications !== false
+    allowCourierApplications: doc.allowCourierApplications !== false,
+    platformDeployedAt: doc.platformDeployedAt
+      ? (doc.platformDeployedAt as Date).toISOString()
+      : null,
+    vendorTrialMonths: doc.vendorTrialMonths ?? 2,
+    vendorSubscriptionBillingEnabled: doc.vendorSubscriptionBillingEnabled !== false,
+    vendorSubscriptionPriceGhs: doc.vendorSubscriptionPriceGhs ?? 49,
+    vendorSubscriptionPeriodMonths: doc.vendorSubscriptionPeriodMonths ?? 12
   };
 }
 
@@ -736,6 +849,23 @@ export const patchAdminPlatformSettings = asyncHandler(async (req: Request, res:
   if (body.allowPublicRegistration !== undefined) doc.allowPublicRegistration = body.allowPublicRegistration;
   if (body.allowVendorApplications !== undefined) doc.allowVendorApplications = body.allowVendorApplications;
   if (body.allowCourierApplications !== undefined) doc.allowCourierApplications = body.allowCourierApplications;
+  if (body.platformDeployedAt !== undefined) {
+    if (body.platformDeployedAt === "") {
+      doc.platformDeployedAt = null;
+    } else {
+      const d = new Date(String(body.platformDeployedAt));
+      if (Number.isNaN(d.getTime())) throw new HttpError(400, "Invalid platform deployment date.");
+      doc.platformDeployedAt = d;
+    }
+  }
+  if (body.vendorTrialMonths !== undefined) doc.vendorTrialMonths = body.vendorTrialMonths;
+  if (body.vendorSubscriptionBillingEnabled !== undefined) {
+    doc.vendorSubscriptionBillingEnabled = body.vendorSubscriptionBillingEnabled;
+  }
+  if (body.vendorSubscriptionPriceGhs !== undefined) doc.vendorSubscriptionPriceGhs = body.vendorSubscriptionPriceGhs;
+  if (body.vendorSubscriptionPeriodMonths !== undefined) {
+    doc.vendorSubscriptionPeriodMonths = body.vendorSubscriptionPeriodMonths;
+  }
 
   const listingRuleKeys = [
     "listingPolicyNote",
@@ -779,6 +909,12 @@ export const patchAdminPlatformSettings = asyncHandler(async (req: Request, res:
   if (body.allowPublicRegistration !== undefined) parts.push(`signup ${body.allowPublicRegistration ? "open" : "closed"}`);
   if (body.allowVendorApplications !== undefined) parts.push(`vendor apps ${body.allowVendorApplications ? "open" : "closed"}`);
   if (body.allowCourierApplications !== undefined) parts.push(`courier apps ${body.allowCourierApplications ? "open" : "closed"}`);
+  if (body.platformDeployedAt !== undefined) parts.push("deployment date updated");
+  if (body.vendorTrialMonths !== undefined) parts.push(`vendor trial ${body.vendorTrialMonths} mo`);
+  if (body.vendorSubscriptionBillingEnabled !== undefined) {
+    parts.push(`seller billing ${body.vendorSubscriptionBillingEnabled ? "on" : "off"}`);
+  }
+  if (body.vendorSubscriptionPriceGhs !== undefined) parts.push(`seller fee GHS ${body.vendorSubscriptionPriceGhs}`);
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "settings.platform",
@@ -800,7 +936,7 @@ export const postAdminSettingsEmailTest = asyncHandler(async (req: Request, res:
     throw new HttpError(400, `${missing}${hint}`.trim());
   }
   const doc = await getOrCreateSettings();
-  const siteName = ((doc.siteName || "Campus Mart").trim() || "Campus Mart").slice(0, 120);
+  const siteName = ((doc.siteName || DEFAULT_SITE_NAME).trim() || DEFAULT_SITE_NAME).slice(0, 120);
   const subjectIn = (subjectRaw || "").trim();
   const bodyIn = (bodyRaw || "").trim();
   const subject = subjectIn || `${siteName} — outbound mail verification`;
@@ -1929,6 +2065,11 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
   await app.save();
 
   const displayName = (applicant.displayName || "").trim() || app.fullName;
+  const settings = await getOrCreateSettings();
+  const { initialVendorSubscriptionOnApproval } = await import(
+    "../vendorSubscription/vendorSubscription.service"
+  );
+  const subInit = initialVendorSubscriptionOnApproval(settings);
   await User.updateOne(
     { _id: applicantOid },
     {
@@ -1938,7 +2079,9 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
         vendorStatus: "approved",
         businessName: app.shopName,
         phone: app.phone,
-        displayName
+        displayName,
+        sellerApprovedAt: subInit.sellerApprovedAt,
+        vendorSubscriptionStatus: subInit.vendorSubscriptionStatus
       }
     }
   );
@@ -2094,7 +2237,7 @@ export const patchAdminCourierApplication = asyncHandler(async (req: Request, re
     {
       $set: {
         status: "rejected",
-        adminNote: "Auto-closed — applicant approved as campus courier.",
+        adminNote: "Auto-closed — applicant approved as delivery partner.",
         reviewedAt: new Date()
       }
     }

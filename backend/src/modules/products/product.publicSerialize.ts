@@ -1,6 +1,15 @@
 import mongoose from "mongoose";
 import { User } from "../auth/user.model";
+import { Business } from "../businesses/business.model";
 import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
+
+export type PublicStoreRef = {
+  id: string;
+  name: string;
+  slug: string;
+  logoUrl: string | null;
+  businessType: string;
+};
 
 export function toPublicProduct(p: Record<string, unknown>) {
   const businessIdRaw = p.businessId;
@@ -17,9 +26,15 @@ export function toPublicProduct(p: Record<string, unknown>) {
       : menuSectionIdRaw != null
         ? String(menuSectionIdRaw)
         : undefined;
+  const oid = p._id;
+  const id =
+    oid instanceof mongoose.Types.ObjectId ? oid.toString() : oid != null && oid !== "" ? String(oid) : "";
+  const sidRaw = p.sellerId;
+  const sellerId =
+    sidRaw instanceof mongoose.Types.ObjectId ? sidRaw.toString() : sidRaw != null && sidRaw !== "" ? String(sidRaw) : "";
   return {
-    id: (p._id as mongoose.Types.ObjectId).toString(),
-    sellerId: (p.sellerId as mongoose.Types.ObjectId).toString(),
+    id,
+    sellerId,
     ...(businessId ? { businessId } : {}),
     ...(menuSectionId ? { menuSectionId } : {}),
     ...(p.listingKind ? { listingKind: p.listingKind } : {}),
@@ -47,7 +62,19 @@ export function toPublicProduct(p: Record<string, unknown>) {
 export async function attachSellerPayments(products: Record<string, unknown>[]) {
   if (!products.length) return [];
   const commissionPercent = await getEffectiveCommissionPercent();
-  const sellerIds = [...new Set(products.map((p) => (p.sellerId as mongoose.Types.ObjectId).toString()))];
+  const sellerIds = [
+    ...new Set(
+      products.map((p) => {
+        const raw = p.sellerId;
+        if (raw instanceof mongoose.Types.ObjectId) return raw.toString();
+        if (raw != null && raw !== "") return String(raw);
+        return "";
+      }).filter(Boolean)
+    )
+  ];
+  if (!sellerIds.length) {
+    return products.map((p) => toPublicProduct(p));
+  }
   const users = await User.find({
     _id: { $in: sellerIds.map((id) => new mongoose.Types.ObjectId(id)) }
   })
@@ -56,7 +83,15 @@ export async function attachSellerPayments(products: Record<string, unknown>[]) 
   const byId = new Map(users.map((u) => [u._id.toString(), u]));
   return products.map((p) => {
     const base = toPublicProduct(p);
-    const su = byId.get((p.sellerId as mongoose.Types.ObjectId).toString());
+    const raw = p.sellerId;
+    const sellerKey =
+      raw instanceof mongoose.Types.ObjectId
+        ? raw.toString()
+        : raw != null && raw !== ""
+          ? String(raw)
+          : "";
+    if (!sellerKey) return base;
+    const su = byId.get(sellerKey);
     if (!su) return base;
     return {
       ...base,
@@ -72,4 +107,85 @@ export async function attachSellerPayments(products: Record<string, unknown>[]) 
       }
     };
   });
+}
+
+function storeRefFromBusiness(b: {
+  _id: mongoose.Types.ObjectId;
+  name?: string;
+  slug?: string;
+  logoUrl?: string | null;
+  businessType?: string;
+}): PublicStoreRef {
+  return {
+    id: b._id.toString(),
+    name: String(b.name || "").trim() || "Store",
+    slug: String(b.slug || "").trim().toLowerCase(),
+    logoUrl: b.logoUrl ? String(b.logoUrl) : null,
+    businessType: String(b.businessType || "")
+  };
+}
+
+/** Attach parent storefront (restaurant / store) for menu-style discovery feeds. */
+export async function attachStoreToProducts<T extends Record<string, unknown>>(products: T[]): Promise<(T & { store?: PublicStoreRef })[]> {
+  if (!products.length) return products;
+  const bizIds = [
+    ...new Set(
+      products
+        .map((p) => {
+          const raw = p.businessId;
+          if (raw instanceof mongoose.Types.ObjectId) return raw.toString();
+          return raw != null && String(raw).trim() ? String(raw).trim() : "";
+        })
+        .filter(Boolean)
+    )
+  ];
+  if (!bizIds.length) return products;
+  const businesses = await Business.find({
+    _id: { $in: bizIds.map((id) => new mongoose.Types.ObjectId(id)) },
+    status: "active"
+  })
+    .select("name slug logoUrl businessType")
+    .lean();
+  const byId = new Map(businesses.map((b) => [b._id.toString(), storeRefFromBusiness(b)]));
+  return products.map((p) => {
+    const bid =
+      p.businessId instanceof mongoose.Types.ObjectId
+        ? p.businessId.toString()
+        : p.businessId != null
+          ? String(p.businessId)
+          : "";
+    const store = bid ? byId.get(bid) : undefined;
+    return store ? { ...p, store } : p;
+  });
+}
+
+export async function enrichPublicProducts(products: Record<string, unknown>[]) {
+  const withSeller = await attachSellerPayments(products);
+  return attachStoreToProducts(withSeller);
+}
+
+/** Live storefront ids — food linked only to these stores counts as “on a menu”. */
+export async function activeStoreBusinessIds(): Promise<mongoose.Types.ObjectId[]> {
+  return Business.find({ status: "active" }).distinct("_id");
+}
+
+/**
+ * Public catalog food rule:
+ * - show food on a live storefront menu, OR
+ * - show food from sellers with no store (unlinked listings) so buyers can still discover & contact them.
+ * Hide food tied only to draft / inactive / missing storefronts.
+ */
+export function foodMenuStoreFilter(activeIds: mongoose.Types.ObjectId[]): Record<string, unknown> {
+  const foodVisible: Record<string, unknown>[] = [
+    {
+      category: "food_drinks",
+      $or: [{ businessId: null }, { businessId: { $exists: false } }]
+    }
+  ];
+  if (activeIds.length) {
+    foodVisible.push({ category: "food_drinks", businessId: { $in: activeIds } });
+  }
+  return {
+    $or: [{ category: { $ne: "food_drinks" } }, ...foodVisible]
+  };
 }

@@ -23,8 +23,8 @@ export const createBusinessSchema = z.object({
   businessType: businessTypeEnum,
   name: z.string().min(2).max(200),
   description: z.string().max(8000).optional().default(""),
-  logoUrl: z.union([z.string().url(), z.string().max(500)]).optional().nullable(),
-  bannerUrl: z.union([z.string().url(), z.string().max(500)]).optional().nullable(),
+  logoUrl: z.union([z.string().url(), z.string().max(500), z.null()]).optional(),
+  bannerUrl: z.union([z.string().url(), z.string().max(500), z.null()]).optional(),
   contactPhone: z.string().max(32).optional().default(""),
   contactEmail: z.string().email().max(200).optional().or(z.literal("")).default(""),
   locationLabel: z.string().max(500).optional().default(""),
@@ -36,7 +36,8 @@ export const createBusinessSchema = z.object({
   pickupAvailable: z.boolean().optional().default(true),
   estimatedDeliveryMins: z.coerce.number().int().min(1).max(10080).optional().nullable(),
   deliveryFee: z.coerce.number().min(0).optional().nullable(),
-  status: z.enum(["draft", "active"]).optional().default("draft"),
+  /** Vendors may only create draft or submit for approval — not go live without admin. */
+  status: z.enum(["draft", "pending_approval"]).optional().default("draft"),
   settings: z.record(z.string(), z.unknown()).optional().default({})
 });
 
@@ -45,7 +46,8 @@ export const updateBusinessSchema = createBusinessSchema.partial();
 export const listBusinessesQuerySchema = z.object({
   type: businessTypeEnum.optional(),
   q: z.string().max(200).optional(),
-  limit: z.coerce.number().int().min(1).max(60).optional().default(24),
+  /** Browse-all page may request more; keep a ceiling to limit abuse on public route. */
+  limit: z.coerce.number().int().min(1).max(200).optional().default(24),
   cursor: z.string().optional()
 });
 

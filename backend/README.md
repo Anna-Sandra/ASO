@@ -1,4 +1,4 @@
-# Campus Market Backend
+# SHOPIQGH Backend
 
 ## What you have (secure foundation)
 - **Express + TypeScript** API

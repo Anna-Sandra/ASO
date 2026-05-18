@@ -6,11 +6,20 @@ const { createProxyMiddleware } = require("http-proxy-middleware");
  * when the API was down or unrelated to that path.
  */
 module.exports = function proxyApp(app) {
+  const target = process.env.REACT_APP_PROXY_TARGET || "http://localhost:4000";
+  /** Long proxy timeouts so SSE (assistant chat) survives slow CPU Ollama. */
+  const longStreamTimeout = Number(process.env.REACT_APP_PROXY_SSE_TIMEOUT_MS) || 900000;
   app.use(
     "/api",
     createProxyMiddleware({
-      target: process.env.REACT_APP_PROXY_TARGET || "http://localhost:4000",
-      changeOrigin: true
+      target,
+      changeOrigin: true,
+      proxyTimeout: longStreamTimeout,
+      timeout: longStreamTimeout,
+      onProxyReq(proxyReq, _req, _res) {
+        /** Avoid intermediary gzip/deflate buffering that delays token chunks. */
+        proxyReq.setHeader("accept-encoding", "identity");
+      }
     })
   );
 };

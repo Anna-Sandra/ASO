@@ -29,7 +29,7 @@ const envSchema = z.object({
     .transform((v) => v === "true"),
   COOKIE_DOMAIN: z.string().optional().default(""),
 
-  EMAIL_FROM: z.string().min(1).default("Campus Market <no-reply@campus.local>"),
+  EMAIL_FROM: z.string().min(1).default("SHOPIQGH <no-reply@SHOPIQGH.local>"),
   /**
    * Gmail (recommended for dev): 2-Step Verification → App password for “Mail”.
    * If both are set and `SMTP_HOST` is empty, the mailer uses Nodemailer `service: "gmail"`.
@@ -123,39 +123,67 @@ const envSchema = z.object({
   BOOTSTRAP_ADMIN_JWT_SUB: z.string().optional().default(""),
 
   /**
-   * Local AI (optional). When set — e.g. http://127.0.0.1:11434 — POST /api/assistant/chat uses Ollama.
+   * Local AI (optional). When set — e.g. http://127.0.0.1:11434 — used for assistant chat **only if** `GROQ_API_KEY` is unset.
    */
   OLLAMA_BASE_URL: z.string().optional().default(""),
 
-  /** Model name understood by local Ollama (e.g. llama3, mistral). */
-  OLLAMA_MODEL: z.string().optional().default("llama3"),
+  /** Model name understood by local Ollama (e.g. llama3.2:3b, llama3.2:1b, mistral). Default 3b follows instructions better than 1b for the assistant. */
+  OLLAMA_MODEL: z.string().optional().default("llama3.2:3b"),
 
   /**
    * How long the API waits for Ollama `/api/chat` (ms). First reply after `ollama pull` or a cold model can take minutes on CPU.
    */
   OLLAMA_TIMEOUT_MS: z.coerce.number().int().min(30000).max(900000).optional().default(300000),
 
-  /** Max new tokens per reply; lower = faster CPU decoding (80–140 typical for short chat). */
-  OLLAMA_NUM_PREDICT: z.coerce.number().int().min(64).max(4096).optional().default(112),
+  /** Max new tokens per reply; lower = faster CPU; raise if replies truncate mid-URL or mid-sentence. */
+  OLLAMA_NUM_PREDICT: z.coerce.number().int().min(64).max(4096).optional().default(200),
 
-  /** Context window tokens; lower = faster prefill on CPU. Raise if replies truncate mid-thought. */
-  OLLAMA_NUM_CTX: z.coerce.number().int().min(1024).max(131072).optional().default(1280),
+  /** Context window tokens; lower = less RAM + faster CPU prefill. 1024 fits assistant system prompt + history on typical dev CPUs. */
+  OLLAMA_NUM_CTX: z.coerce.number().int().min(512).max(131072).optional().default(1024),
 
-  /** Creative vs deterministic; slightly lower can decode a bit faster. */
-  OLLAMA_TEMPERATURE: z.coerce.number().min(0).max(2).optional().default(0.55),
+  /** Lower = more deterministic, better instruction-following (e.g. 0.3 for the shopping assistant). */
+  OLLAMA_TEMPERATURE: z.coerce.number().min(0).max(2).optional().default(0.3),
 
   /**
    * Passed to Ollama as `num_thread` when > 0 (CPU threads). 0 = omit (Ollama picks automatically).
-   * On typical 8‑core desktops, values like 6–8 can help Mistral‑class models without a GPU.
+   * Default 8 is a reasonable dev baseline; reduce on low-core machines (stay ≤ physical cores).
    */
-  OLLAMA_NUM_THREAD: z.coerce.number().int().min(0).max(256).optional().default(0),
+  OLLAMA_NUM_THREAD: z.coerce.number().int().min(0).max(256).optional().default(8),
+
+  /**
+   * Groq Cloud (optional). When set, the shopping assistant calls Groq’s OpenAI-compatible API
+   * (`https://api.groq.com/...`) instead of local Ollama — better quality/latency on low-RAM CPU laptops.
+   * Free tier: https://console.groq.com — no credit card required.
+   */
+  GROQ_API_KEY: z.string().optional().default(""),
+
+  /** Groq model ID (see Groq docs), e.g. llama3-8b-8192 */
+  GROQ_MODEL: z.string().optional().default("llama3-8b-8192"),
+
+  /** Max completion tokens for Groq chat (separate from Ollama `OLLAMA_NUM_PREDICT`). */
+  GROQ_MAX_TOKENS: z.coerce.number().int().min(64).max(8192).optional().default(300),
 
   /**
    * Comma- or semicolon-separated emails that count as the platform "super" admin in addition
    * to `BOOTSTRAP_ADMIN_EMAIL` (if set). Super admins can grant `admin` to other user accounts.
    * Normal (non-super) admins cannot promote users to admin.
    */
-  SUPER_USER_EMAILS: z.string().optional().default("")
+  SUPER_USER_EMAILS: z.string().optional().default(""),
+
+  /**
+   * ISO date when SHOPIQGH launched (e.g. 2026-05-15). Used for the seller free-trial window unless
+   * overridden in admin platform settings. Defaults to “now” when the first settings row is created.
+   */
+  PLATFORM_DEPLOYED_AT: z.string().optional().default(""),
+
+  /** Months after deployment that sellers can list without paying a platform subscription fee. */
+  VENDOR_TRIAL_MONTHS: z.coerce.number().int().min(0).max(24).optional().default(2),
+
+  /** Default annual seller platform fee (GHS) after the launch trial. */
+  VENDOR_SUBSCRIPTION_PRICE_GHS: z.coerce.number().min(0).optional().default(49),
+
+  /** How long one seller subscription payment lasts (months). */
+  VENDOR_SUBSCRIPTION_PERIOD_MONTHS: z.coerce.number().int().min(1).max(36).optional().default(12)
 });
 
 const _env = envSchema.parse(process.env);
@@ -227,8 +255,8 @@ export function getEmailTransportDiagnostics(): EmailTransportDiagnostics {
 
   if (smtpPathComplete || gmailPathComplete) {
     const from = (_env.EMAIL_FROM || "").trim();
-    if (!from) hints.push("Set EMAIL_FROM (e.g. Campus Mart <no-reply@yourdomain.com>).");
-    else if (/no-reply@campus\.local/i.test(from)) {
+    if (!from) hints.push("Set EMAIL_FROM (e.g. SHOPIQGH <no-reply@yourdomain.com>).");
+    else if (/no-reply@SHOPIQGH\.local/i.test(from)) {
       hints.push("EMAIL_FROM still looks like a dev default — use a real domain in production to avoid spam filters.");
     }
     return {

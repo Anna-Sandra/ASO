@@ -54,6 +54,9 @@ function assertOwner(req: Request, b: BusinessDoc) {
 function serializeBusiness(b: BusinessDoc) {
   const id = b._id instanceof mongoose.Types.ObjectId ? b._id.toString() : String(b._id);
   const ownerId = b.ownerId instanceof mongoose.Types.ObjectId ? b.ownerId.toString() : String(b.ownerId);
+  /** Lean docs may omit keys; match schema defaults so JSON never drops flags (undefined strips in JSON.stringify). */
+  const pickupAvailable = b.pickupAvailable == null ? true : Boolean(b.pickupAvailable);
+  const deliveryAvailable = b.deliveryAvailable == null ? false : Boolean(b.deliveryAvailable);
   return {
     id,
     ownerId,
@@ -71,14 +74,121 @@ function serializeBusiness(b: BusinessDoc) {
     deliveryRadiusKm: b.deliveryRadiusKm,
     operatingHours: b.operatingHours,
     tags: b.tags,
-    deliveryAvailable: b.deliveryAvailable,
-    pickupAvailable: b.pickupAvailable,
+    deliveryAvailable,
+    pickupAvailable,
     estimatedDeliveryMins: b.estimatedDeliveryMins,
     deliveryFee: b.deliveryFee,
     settings: b.settings,
     createdAt: b.createdAt,
     updatedAt: b.updatedAt
   };
+}
+
+const categoryToBusinessType: Partial<Record<string, BusinessType>> = {
+  food_drinks: "food_restaurant",
+  fashion_accessories: "fashion_store",
+  electronics_gadgets: "electronics_shop",
+  beauty_personal_care: "beauty_shop",
+  groceries_essentials: "grocery_store",
+  books_academic: "academic_book",
+  services: "service_provider"
+};
+
+/** Seller's default store for new listings — match category when they have several stores. */
+export async function getSellerDefaultBusinessId(
+  sellerId: mongoose.Types.ObjectId,
+  hintCategory?: string
+): Promise<mongoose.Types.ObjectId | null> {
+  const rows = (await Business.find({ ownerId: sellerId })
+    .sort({ updatedAt: -1 })
+    .select("_id businessType status")
+    .lean()) as BusinessDoc[];
+  if (!rows.length) return null;
+  if (rows.length === 1) {
+    const id = rows[0]._id;
+    return id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(String(id));
+  }
+  const wantType = hintCategory ? categoryToBusinessType[hintCategory] : undefined;
+  if (wantType) {
+    const match =
+      rows.find((b) => b.businessType === wantType && b.status === "active") ||
+      rows.find((b) => b.businessType === wantType);
+    if (match) {
+      const id = match._id;
+      return id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(String(id));
+    }
+  }
+  const id = rows[0]._id;
+  return id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(String(id));
+}
+
+const orphanProductFilter = (sellerId: mongoose.Types.ObjectId) => ({
+  sellerId,
+  $or: [{ businessId: null }, { businessId: { $exists: false } }]
+});
+
+function notOnThisStoreFilter(businessId: mongoose.Types.ObjectId) {
+  return {
+    $or: [
+      { businessId: null },
+      { businessId: { $exists: false } },
+      { businessId: { $ne: businessId } }
+    ]
+  };
+}
+
+/** Products that should move onto this store menu (unlinked or on another of the seller's stores). */
+export function listingsToStoreFilter(
+  sellerId: mongoose.Types.ObjectId,
+  businessId: mongoose.Types.ObjectId,
+  businessType: BusinessType,
+  storeCount: number
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    sellerId,
+    ...notOnThisStoreFilter(businessId)
+  };
+  if (storeCount === 1) return base;
+  base.category = primaryProductCategoryForBusinessType(businessType);
+  return base;
+}
+
+async function sellerStoreCount(ownerId: mongoose.Types.ObjectId): Promise<number> {
+  return Business.countDocuments({ ownerId });
+}
+
+/** Move matching listings onto this store (e.g. all food from "nat" → "nateats"). */
+export async function linkSellerListingsToBusiness(
+  sellerId: mongoose.Types.ObjectId,
+  businessId: mongoose.Types.ObjectId,
+  businessType: BusinessType
+): Promise<number> {
+  const storeCount = await sellerStoreCount(sellerId);
+  const filter = listingsToStoreFilter(sellerId, businessId, businessType, storeCount);
+  const res = await Product.updateMany(filter, { $set: { businessId } });
+  return res.modifiedCount ?? 0;
+}
+
+export async function linkOrphanProductsToBusiness(
+  sellerId: mongoose.Types.ObjectId,
+  businessId: mongoose.Types.ObjectId
+): Promise<number> {
+  const biz = (await Business.findById(businessId).select("businessType").lean()) as BusinessDoc | null;
+  if (!biz) return 0;
+  return linkSellerListingsToBusiness(sellerId, businessId, biz.businessType as BusinessType);
+}
+
+export async function countOrphanProductsForSeller(sellerId: mongoose.Types.ObjectId): Promise<number> {
+  return Product.countDocuments(orphanProductFilter(sellerId));
+}
+
+export async function countListingsMovableToStore(
+  sellerId: mongoose.Types.ObjectId,
+  businessId: mongoose.Types.ObjectId,
+  businessType: BusinessType
+): Promise<number> {
+  const storeCount = await sellerStoreCount(sellerId);
+  return Product.countDocuments(listingsToStoreFilter(sellerId, businessId, businessType, storeCount));
 }
 
 export async function assertProductBusinessLink(opts: {
@@ -127,13 +237,17 @@ export async function assertProductBusinessLink(opts: {
     );
   }
 
+  const isFoodStore = (biz as BusinessDoc).businessType === "food_restaurant";
   const menuRaw =
     opts.menuSectionId === undefined
       ? undefined
       : opts.menuSectionId === null
         ? null
         : String(opts.menuSectionId).trim();
-  if (menuRaw === null || menuRaw === "") {
+
+  if (!isFoodStore) {
+    menuSectionIdOid = null;
+  } else if (menuRaw === null || menuRaw === "" || menuRaw === undefined) {
     menuSectionIdOid = null;
   } else {
     if (!mongoose.isValidObjectId(menuRaw)) throw new HttpError(400, "Invalid menu section id.");
@@ -176,11 +290,12 @@ export const createMyBusiness = asyncHandler(async (req: Request, res: Response)
   const ownerId = new mongoose.Types.ObjectId(req.user!.id);
   const base = slugBaseFromName(body.name);
   const slug = await ensureUniqueSlug(base);
+  const initialStatus = body.status === "pending_approval" ? "pending_approval" : "draft";
   const doc = await Business.create({
     ownerId,
     slug,
     businessType: body.businessType,
-    status: body.status,
+    status: initialStatus,
     name: body.name.trim(),
     description: body.description?.trim() ?? "",
     logoUrl: body.logoUrl ?? null,
@@ -199,7 +314,12 @@ export const createMyBusiness = asyncHandler(async (req: Request, res: Response)
     settings: (body.settings ?? {}) as Record<string, unknown>
   });
   const b = doc.toObject() as BusinessDoc;
-  res.status(201).json({ business: serializeBusiness(b) });
+  const priorStores = await Business.countDocuments({ ownerId, _id: { $ne: doc._id } });
+  let linkedOrphanProducts = 0;
+  if (priorStores === 0) {
+    linkedOrphanProducts = await linkOrphanProductsToBusiness(ownerId, doc._id);
+  }
+  res.status(201).json({ business: serializeBusiness(b), linkedOrphanProducts });
 });
 
 export const getBusinessByKey = asyncHandler(async (req: Request, res: Response) => {
@@ -207,7 +327,8 @@ export const getBusinessByKey = asyncHandler(async (req: Request, res: Response)
   if (!b) throw new HttpError(404, "Store not found");
   if (b.status !== "active") {
     const isOwner = req.user?.id && b.ownerId.toString() === req.user.id;
-    if (!isOwner) throw new HttpError(404, "Store not found");
+    const isAdmin = req.user?.role === "admin";
+    if (!isOwner && !isAdmin) throw new HttpError(404, "Store not found");
   }
   res.json({ business: serializeBusiness(b) });
 });
@@ -221,6 +342,17 @@ export const updateMyBusinessByKey = asyncHandler(async (req: Request, res: Resp
   assertOwner(req, b);
   const doc = await Business.findById(b._id);
   if (!doc) throw new HttpError(404, "Store not found");
+
+  if (patch.status !== undefined) {
+    const next = patch.status;
+    if (next !== "draft" && next !== "pending_approval") {
+      throw new HttpError(
+        400,
+        "You can save as draft or submit for approval only. An admin must approve your store before it goes live."
+      );
+    }
+    doc.status = next;
+  }
 
   const assignKeys = [
     "businessType",
@@ -238,7 +370,6 @@ export const updateMyBusinessByKey = asyncHandler(async (req: Request, res: Resp
     "pickupAvailable",
     "estimatedDeliveryMins",
     "deliveryFee",
-    "status",
     "settings"
   ] as const;
   for (const k of assignKeys) {
@@ -273,39 +404,80 @@ async function reviewSummaryForOwner(ownerId: mongoose.Types.ObjectId) {
 
 const buyerCandidateFilter: Record<string, unknown> = {
   status: "active",
-  $or: [{ category: "services" }, { stock: { $gt: 0 } }]
+  $or: [{ category: "services" }, { category: "food_drinks" }, { stock: { $gt: 0 } }]
 };
 
 export const getBusinessStorefront = asyncHandler(async (req: Request, res: Response) => {
   const b = await resolveBusinessByKey(req.params.key);
   if (!b) throw new HttpError(404, "Store not found");
-  if (b.status !== "active") throw new HttpError(404, "Store not found");
+  const isOwner = Boolean(req.user?.id && b.ownerId.toString() === req.user.id);
+  const isAdmin = req.user?.role === "admin";
+  if (b.status !== "active" && !isOwner && !isAdmin) throw new HttpError(404, "Store not found");
   const bid = b._id;
-  const sections = await MenuSection.find({ businessId: bid }).sort({ sortOrder: 1, title: 1 }).lean();
-  const productsRaw = await Product.find({
-    businessId: bid,
-    ...buyerCandidateFilter
-  })
-    .sort({ updatedAt: -1 })
-    .lean();
+  const sections =
+    b.businessType === "food_restaurant"
+      ? await MenuSection.find({ businessId: bid }).sort({ sortOrder: 1, title: 1 }).lean()
+      : [];
+  const storeCount = await sellerStoreCount(b.ownerId);
+  let orphanListingCount = 0;
+  let linkedOrphanProducts = 0;
+  let unpublishedListingCount = 0;
+
+  if (storeCount === 1 || isOwner || isAdmin) {
+    linkedOrphanProducts = await linkSellerListingsToBusiness(
+      b.ownerId,
+      bid,
+      b.businessType as BusinessType
+    );
+  }
+
+  if (isOwner || isAdmin) {
+    orphanListingCount = await countListingsMovableToStore(b.ownerId, bid, b.businessType as BusinessType);
+    unpublishedListingCount = await Product.countDocuments({
+      businessId: bid,
+      status: { $ne: "active" }
+    });
+  }
+
+  const productFilter = isOwner || isAdmin ? { businessId: bid } : { businessId: bid, ...buyerCandidateFilter };
+  const productsRaw = await Product.find(productFilter).sort({ updatedAt: -1 }).lean();
   const products = await attachSellerPayments(productsRaw as unknown as Record<string, unknown>[]);
   const reviewSummary = await reviewSummaryForOwner(b.ownerId);
+  /** Re-read doc so storefront matches DB after linking work; lean may omit booleans saved as defaults. */
+  const persistedBusiness =
+    ((await Business.findById(bid).lean()) as BusinessDoc | null) ?? (b as BusinessDoc);
   res.json({
-    business: serializeBusiness(b),
+    business: serializeBusiness(persistedBusiness),
     menuSections: sections.map((s) => ({
       id: s._id.toString(),
       title: s.title,
       sortOrder: s.sortOrder
     })),
     products,
-    reviewSummary
+    reviewSummary,
+    orphanListingCount,
+    linkedOrphanProducts,
+    unpublishedListingCount
   });
+});
+
+/** Attach seller listings to this store — including items on another store (e.g. nat → nateats). */
+export const linkMyListingsToStore = asyncHandler(async (req: Request, res: Response) => {
+  const b = await resolveBusinessByKey(req.params.key);
+  if (!b) throw new HttpError(404, "Store not found");
+  assertOwner(req, b);
+  const linked = await linkSellerListingsToBusiness(b.ownerId, b._id, b.businessType as BusinessType);
+  res.json({ linked });
 });
 
 export const listMenuSections = asyncHandler(async (req: Request, res: Response) => {
   const b = await resolveBusinessByKey(req.params.key);
   if (!b) throw new HttpError(404, "Store not found");
   assertOwner(req, b);
+  if (b.businessType !== "food_restaurant") {
+    res.json({ menuSections: [] });
+    return;
+  }
   const rows = await MenuSection.find({ businessId: b._id }).sort({ sortOrder: 1, title: 1 }).lean();
   res.json({
     menuSections: rows.map((s) => ({ id: s._id.toString(), title: s.title, sortOrder: s.sortOrder }))
@@ -346,6 +518,17 @@ export const patchMenuSection = asyncHandler(async (req: Request, res: Response)
   res.json({
     menuSection: { id: doc._id.toString(), title: doc.title, sortOrder: doc.sortOrder }
   });
+});
+
+export const deleteMyBusinessByKey = asyncHandler(async (req: Request, res: Response) => {
+  const b = await resolveBusinessByKey(req.params.key);
+  if (!b) throw new HttpError(404, "Store not found");
+  assertOwner(req, b);
+  const bid = b._id;
+  await MenuSection.deleteMany({ businessId: bid });
+  await Product.updateMany({ businessId: bid }, { $set: { businessId: null, menuSectionId: null } });
+  await Business.findByIdAndDelete(bid);
+  res.status(204).send();
 });
 
 export const deleteMenuSection = asyncHandler(async (req: Request, res: Response) => {

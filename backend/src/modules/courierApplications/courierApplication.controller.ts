@@ -44,7 +44,7 @@ export const submitCourierApplication = asyncHandler(async (req: Request, res: R
     if (role !== "buyer") {
       throw new HttpError(
         400,
-        "Campus courier onboarding is open to shoppers — sign out and apply as a guest, or switch to your buyer profile."
+        "Delivery partner onboarding is open to shoppers — sign out and apply as a guest, or switch to your buyer profile."
       );
     }
     const applyStatus = resolveRiderApplyStatus(

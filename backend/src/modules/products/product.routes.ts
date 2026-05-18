@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { protect, authorize, optionalProtect } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
+import { requireVendorSubscription } from "../../middleware/requireVendorSubscription";
 import { validateBody } from "../../middleware/validate";
 import {
   createProduct,
@@ -35,7 +36,22 @@ router.get("/:id/review-status", protect, requireActiveAccount, authorize(...sho
 router.post("/:id/reviews", protect, requireActiveAccount, authorize(...shopAccountRoles), validateBody(createReviewSchema), createReview);
 router.get("/:id/related", optionalProtect, getRelatedProducts);
 router.get("/:id", optionalProtect, getProduct);
-router.patch("/:id", protect, requireActiveAccount, authorize("seller", "admin"), validateBody(updateProductSchema), updateProduct);
-router.delete("/:id", protect, requireActiveAccount, authorize("seller", "admin"), deleteProduct);
+router.patch(
+  "/:id",
+  protect,
+  requireActiveAccount,
+  authorize("seller", "admin"),
+  requireVendorSubscription,
+  validateBody(updateProductSchema),
+  updateProduct
+);
+router.delete(
+  "/:id",
+  protect,
+  requireActiveAccount,
+  authorize("seller", "admin"),
+  requireVendorSubscription,
+  deleteProduct
+);
 
 export default router;

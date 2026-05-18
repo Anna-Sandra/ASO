@@ -12,7 +12,7 @@ export const BUSINESS_TYPES = [
 ] as const;
 export type BusinessType = (typeof BUSINESS_TYPES)[number];
 
-export type BusinessStatus = "draft" | "active" | "suspended";
+export type BusinessStatus = "draft" | "pending_approval" | "active" | "rejected" | "suspended";
 
 /** Day-local hours (presentation only; timezone rules can be layered later). */
 export type BusinessDayHours = { open?: string; close?: string; closed?: boolean };
@@ -23,7 +23,7 @@ export interface BusinessDoc {
   slug: string;
   businessType: BusinessType;
   status: BusinessStatus;
-  /** Display brand name ("Campus Bites"). */
+  /** Display brand name ("SHOPIQGH"). */
   name: string;
   description: string;
   logoUrl?: string | null;
@@ -52,7 +52,12 @@ const businessSchema = new Schema<BusinessDoc>(
     ownerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     slug: { type: String, required: true, trim: true, lowercase: true, maxlength: 120, unique: true },
     businessType: { type: String, required: true, enum: BUSINESS_TYPES, index: true },
-    status: { type: String, enum: ["draft", "active", "suspended"], default: "draft", index: true },
+    status: {
+      type: String,
+      enum: ["draft", "pending_approval", "active", "rejected", "suspended"],
+      default: "draft",
+      index: true
+    },
     name: { type: String, required: true, trim: true, maxlength: 200 },
     description: { type: String, default: "", maxlength: 8000 },
     logoUrl: { type: String, default: null, maxlength: 500 },

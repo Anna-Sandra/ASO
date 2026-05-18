@@ -12,6 +12,12 @@ export const assistantChatSchema = z.object({
     .max(16)
     .optional()
     .default([]),
-  /** When true, response is SSE (`text/event-stream`) with incremental `delta` events — feels much faster than waiting for JSON. */
-  stream: z.boolean().optional().default(false)
+  /**
+   * When true (default recommended for web UI), response is SSE (`text/event-stream`) with incremental `delta`.
+   * Coerces JSON string `"true"` / `"false"` for older clients or manual tools.
+   */
+  stream: z
+    .union([z.boolean(), z.literal("true"), z.literal("false")])
+    .optional()
+    .transform((v) => (v === undefined ? false : v === true || v === "true")),
 });

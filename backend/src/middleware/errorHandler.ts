@@ -71,10 +71,14 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     console.error(err);
   }
 
+  const billing =
+    isHttp && err instanceof HttpError ? (err as HttpError & { billing?: unknown }).billing : undefined;
+
   res.status(status).json({
     error: {
       message,
       code: isHttp ? err.code : undefined,
+      ...(billing ? { billing } : {}),
       ...(process.env.NODE_ENV !== "production" ? { stack } : {})
     }
   });

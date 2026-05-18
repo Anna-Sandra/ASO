@@ -4,6 +4,7 @@ import { createApp } from "./app";
 import { connectDb } from "./config/db";
 import { env } from "./config/env";
 import { setupDeliverySockets } from "./modules/deliveries/delivery.socket";
+import { warmupOllamaInBackground } from "./config/ollamaWarmup";
 
 async function main() {
   try {
@@ -25,6 +26,9 @@ async function main() {
   server.listen(env.PORT, () => {
     // eslint-disable-next-line no-console
     console.log(`API listening on http://localhost:${env.PORT}`);
+    if (env.OLLAMA_BASE_URL.trim() && !env.GROQ_API_KEY.trim()) {
+      warmupOllamaInBackground();
+    }
   });
 
   server.on("error", (err: NodeJS.ErrnoException) => {

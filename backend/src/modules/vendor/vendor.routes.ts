@@ -4,6 +4,7 @@ import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import { orderStatusUpdateSchema } from "../orders/order.schemas";
 import { paystackPayoutAccountSchema, vendorAnalyticsEventBodySchema } from "./vendor.schemas";
+import vendorSubscriptionRoutes from "../vendorSubscription/vendorSubscription.routes";
 import {
   confirmVendorPaymentReceived,
   getPaystackGhanaBanks,
@@ -17,6 +18,8 @@ import {
 } from "./vendor.controller";
 
 const router = Router();
+
+router.use("/subscription", vendorSubscriptionRoutes);
 
 router.get("/paystack/ghana-banks", protect, requireActiveAccount, authorize("seller", "admin"), getPaystackGhanaBanks);
 router.post(

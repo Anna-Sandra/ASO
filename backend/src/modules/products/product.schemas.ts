@@ -8,6 +8,12 @@ const categoryEnum = z.enum(PRODUCT_CATEGORIES);
 
 const listingKindEnum = z.enum(LISTING_KINDS);
 
+const optionalObjectId = (message: string) =>
+  z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.union([z.string().refine((s) => mongoose.isValidObjectId(s), message), z.null()]).optional()
+  );
+
 const productAddonSchema = z.object({
   label: z.string().min(1).max(80),
   priceDelta: z.coerce.number().min(0).optional().default(0)
@@ -18,12 +24,8 @@ const productCore = {
   description: z.string().max(10000).optional().default(""),
   category: categoryEnum,
   categoryAttributes: z.unknown().optional(),
-  businessId: z
-    .union([z.string().refine((s) => mongoose.isValidObjectId(s), "Invalid business id"), z.null()])
-    .optional(),
-  menuSectionId: z
-    .union([z.string().refine((s) => mongoose.isValidObjectId(s), "Invalid menu section id"), z.null()])
-    .optional(),
+  businessId: optionalObjectId("Invalid business id"),
+  menuSectionId: optionalObjectId("Invalid menu section id"),
   listingKind: listingKindEnum.optional(),
   prepTimeMinutes: z.coerce.number().int().min(1).max(10080).optional().nullable(),
   addons: z.array(productAddonSchema).max(24).optional().default([]),

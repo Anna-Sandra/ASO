@@ -2,7 +2,8 @@ import { z } from "zod";
 
 export const adminPatchUserSchema = z.object({
   accountStatus: z.enum(["active", "suspended", "banned"]).optional(),
-  sellerVerified: z.boolean().optional()
+  sellerVerified: z.boolean().optional(),
+  vendorSubscriptionExempt: z.boolean().optional()
 });
 
 /** Super admin: promote a user to role `admin` by id or by email. */
@@ -46,7 +47,12 @@ export const adminPlatformSettingsSchema = z.object({
   maintenanceMessage: z.string().max(2000).optional(),
   allowPublicRegistration: z.boolean().optional(),
   allowVendorApplications: z.boolean().optional(),
-  allowCourierApplications: z.boolean().optional()
+  allowCourierApplications: z.boolean().optional(),
+  platformDeployedAt: z.union([z.literal(""), z.string().trim().max(40)]).optional(),
+  vendorTrialMonths: z.coerce.number().int().min(0).max(24).optional(),
+  vendorSubscriptionBillingEnabled: z.boolean().optional(),
+  vendorSubscriptionPriceGhs: z.coerce.number().min(0).max(100000).optional(),
+  vendorSubscriptionPeriodMonths: z.coerce.number().int().min(1).max(36).optional()
 });
 
 export const adminEmailTestSchema = z.object({
@@ -147,6 +153,18 @@ export const adminProductsQuerySchema = adminListQuerySchema.extend({
   status: z.enum(["all", "draft", "pending_approval", "active", "rejected"]).optional().default("all"),
   flagged: z.enum(["all", "yes", "no"]).optional().default("all"),
   search: z.string().trim().max(200).optional().default("")
+});
+
+export const adminBusinessesQuerySchema = adminListQuerySchema.extend({
+  status: z
+    .enum(["all", "draft", "pending_approval", "active", "rejected", "suspended"])
+    .optional()
+    .default("pending_approval"),
+  search: z.string().trim().max(200).optional().default("")
+});
+
+export const adminRejectBusinessSchema = z.object({
+  reason: z.string().max(500).optional().default("")
 });
 
 export const adminOrdersQuerySchema = adminListQuerySchema.extend({

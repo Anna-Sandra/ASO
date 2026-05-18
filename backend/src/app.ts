@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import mongoose from "mongoose";
 import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -68,7 +69,7 @@ export function createApp() {
   app.use(
     rateLimit({
       windowMs: 15 * 60 * 1000,
-      limit: 300,
+      limit: env.NODE_ENV === "production" ? 300 : 2000,
       standardHeaders: true,
       legacyHeaders: false
     })
@@ -85,6 +86,20 @@ export function createApp() {
 
   app.use(express.json({ limit: "1mb" }));
   app.use(mongoSanitize);
+
+  /**
+   * When `connectDb()` failed at startup, Mongoose buffers queries until they hit the default 10s timeout
+   * ("buffering timed out") and routes surface as 500s. Fail fast with 503 so the UI and logs are clear.
+   */
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api")) return next();
+    if (mongoose.connection.readyState === 1) return next();
+    res.status(503).json({
+      error: "service_unavailable",
+      message:
+        "Database is not connected. Start MongoDB and set MONGODB_URI in backend/.env (API started without a live DB connection)."
+    });
+  });
 
   /** Paystack guide paths on the root app (also under POST /api/payments/paystack/init for the same handlers). */
   app.post(
@@ -104,9 +119,12 @@ export function createApp() {
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
   app.get("/", (_req, res) => res.json({ ok: true, service: "backend-api" }));
-  app.get("/health", (_req, res) =>
+  app.get("/health", (_req, res) => {
+    const mongoOk = mongoose.connection.readyState === 1;
     res.json({
-      ok: true,
+      ok: mongoOk,
+      mongo: mongoOk ? "connected" : "disconnected",
+      mongoReadyState: mongoose.connection.readyState,
       /** If these are missing in JSON, this process is an old build — run `npm run build` in backend and restart. */
       accountDeletion: { post: "/api/auth/delete-account", delete: "/api/auth/account" },
       reports: {
@@ -122,8 +140,8 @@ export function createApp() {
         reportEvidence: "POST /api/uploads/report-evidence (field: file; buyer|seller; JPEG/PNG/WebP; max 5MB)"
       },
       assistant: { chat: "POST /api/assistant/chat" }
-    })
-  );
+    });
+  });
 
   /** Account deletion on the root app (before the auth router) so these paths always register. */
   const accountDeletion = [protect, requireActiveAccount, validateBody(deleteAccountSchema), deleteAccount] as const;
