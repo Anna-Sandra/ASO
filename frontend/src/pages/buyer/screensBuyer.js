@@ -1724,41 +1724,59 @@ export function BuyerLayout({
             "sticky top-0 z-40 border-b border-white/10 bg-white/30 shadow-sm backdrop-blur-xl dark:bg-night-900/40"
         },
         h("div", { className: "flex w-full flex-col gap-1.5 px-4 py-1.5 sm:gap-2 sm:px-6 sm:py-2 lg:px-8" }, [
-          h("div", {
-            key: "row-1",
-            className: "grid w-full min-w-0 grid-cols-3 items-center gap-2 sm:gap-3"
-          }, [
-            h(Link, { key: "brand", to: "/", className: "justify-self-start flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-2" }, [
-              h(LogoMark, { key: "lm", className: "h-8 w-8 sm:h-9 sm:w-9" }),
-              h("div", { key: "titles", className: "min-w-0 leading-tight" }, [
-                h(
-                  "span",
-                  { key: "brand", className: "font-display text-base font-bold text-slate-900 dark:text-white sm:text-lg" },
-                  "SHOPIQGH"
-                ),
-                title
-                  ? h(
+          h("div", { key: "row-1-wrap", className: "flex w-full min-w-0 flex-col gap-1.5 sm:gap-2" }, [
+            h(
+              "div",
+              {
+                key: "row-1",
+                className: "flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-2 sm:gap-x-3"
+              },
+              [
+                h(Link, { key: "brand", to: "/", className: "flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-2" }, [
+                  h(LogoMark, { key: "lm", className: "h-8 w-8 sm:h-9 sm:w-9" }),
+                  h("div", { key: "titles", className: "min-w-0 leading-tight" }, [
+                    h(
                       "span",
-                      {
-                        key: "subtitle",
-                        className:
-                          "ml-1 inline-block max-w-[8rem] truncate align-middle rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300 sm:ml-2 sm:max-w-[14rem] sm:px-2 sm:text-[10px]"
-                      },
-                      title
-                    )
-                  : null
-              ])
-            ]),
+                      { key: "brand", className: "font-display text-base font-bold text-slate-900 dark:text-white sm:text-lg" },
+                      "SHOPIQGH"
+                    ),
+                    title
+                      ? h(
+                          "span",
+                          {
+                            key: "subtitle",
+                            className:
+                              "ml-1 inline-block max-w-[8rem] truncate align-middle rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300 sm:ml-2 sm:max-w-[14rem] sm:px-2 sm:text-[10px]"
+                          },
+                          title
+                        )
+                      : null
+                  ])
+                ]),
+                h(
+                  "div",
+                  {
+                    key: "topnav-desk",
+                    className: "hidden min-w-0 flex-1 items-center justify-center md:flex"
+                  },
+                  h(
+                    "nav",
+                    { "aria-label": "Main", className: "min-w-0 w-full max-w-full" },
+                    buyerTabsScrollWrap(topNavLinks)
+                  )
+                ),
+                h("div", { key: "actions", className: "ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1 sm:gap-2" }, headerActions)
+              ]
+            ),
             h(
               "nav",
               {
-                key: "topnav",
-                className: "justify-self-center min-w-0 max-w-full",
+                key: "topnav-m",
+                className: "w-full min-w-0 md:hidden",
                 "aria-label": "Main"
               },
               buyerTabsScrollWrap(topNavLinks)
-            ),
-            h("div", { key: "actions", className: "justify-self-end flex shrink-0 flex-wrap items-center justify-end gap-1 sm:gap-2" }, headerActions)
+            )
           ]),
           vendorPendingBanner,
           riderPendingBanner,
