@@ -8,6 +8,24 @@
     @apply scroll-smooth;
     -ms-overflow-style: none;
     scrollbar-width: none;
+    /*
+      Rem-based UI (Tailwind spacing / type) scales from this root. Default = 100% (usually 16px).
+      On smaller viewports we nudge the root down so phones feel like a slightly “zoomed out”
+      laptop: same proportions and breakpoints, denser type and spacing — without layout surgery.
+    */
+    font-size: 100%;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  @media (max-width: 1023px) {
+    html {
+      font-size: 93.75%; /* ~15px equivalent at 16px browser default */
+    }
+  }
+  @media (max-width: 479px) {
+    html {
+      font-size: 87.5%; /* ~14px — noticeably smaller text, same relative layout */
+    }
   }
   html::-webkit-scrollbar,
   body::-webkit-scrollbar {
