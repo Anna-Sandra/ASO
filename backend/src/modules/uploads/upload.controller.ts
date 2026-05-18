@@ -6,6 +6,7 @@ import multer from "multer";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { tryResolvePublicUploadBaseUrl } from "../../utils/publicMediaUrl";
+import { cloudinary, isCloudinaryConfigured } from "../../config/cloudinary";
 import { User, normalizeUserRole, publicPhoneForPaymentRole } from "../auth/user.model";
 
 const PUBLIC_UPLOAD_BASE_ERR =
@@ -17,9 +18,30 @@ function requirePublicUploadBase(req: Request): string {
   return base;
 }
 
-const uploadDir = path.resolve(process.cwd(), "uploads", "products");
+async function cloudinaryUploadMulterFile(
+  file: Express.Multer.File,
+  folder: string,
+  resourceType: "image" | "auto" | "raw"
+): Promise<string> {
+  if (!file.buffer?.length) {
+    throw new HttpError(500, "Missing file data for Cloudinary upload.");
+  }
+  const dataUri = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+  const rt = resourceType === "raw" ? "raw" : resourceType === "image" ? "image" : "auto";
+  const result = await cloudinary.uploader.upload(dataUri, {
+    folder: `shopiqgh/${folder}`,
+    public_id: randomUUID(),
+    resource_type: rt
+  });
+  return result.secure_url;
+}
 
-const storage = multer.diskStorage({
+// ── multer: Cloudinary uses memory; local fallback keeps disk + stable filenames ──
+
+const memoryStorage = multer.memoryStorage();
+
+const uploadDir = path.resolve(process.cwd(), "uploads", "products");
+const productDiskStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
@@ -31,31 +53,37 @@ const storage = multer.diskStorage({
   }
 });
 
-export const uploadProductImagesMiddleware = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024, files: 8 },
-  fileFilter: (_req, file, cb) => {
-    const ok = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.mimetype);
-    if (!ok) {
-      cb(new Error("Only JPEG, PNG, WebP, or GIF images are allowed"));
-      return;
-    }
-    cb(null, true);
+const imageFilter: multer.Options["fileFilter"] = (_req, file, cb) => {
+  const ok = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.mimetype);
+  if (!ok) {
+    cb(new Error("Only JPEG, PNG, WebP, or GIF images are allowed"));
+    return;
   }
+  cb(null, true);
+};
+
+export const uploadProductImagesMiddleware = multer({
+  storage: isCloudinaryConfigured() ? memoryStorage : productDiskStorage,
+  limits: { fileSize: 5 * 1024 * 1024, files: 8 },
+  fileFilter: imageFilter
 }).array("images", 8);
 
 export const uploadProductImages = asyncHandler(async (req: Request, res: Response) => {
   const files = req.files as Express.Multer.File[] | undefined;
   if (!files?.length) throw new HttpError(400, "No image files received");
 
-  const base = requirePublicUploadBase(req);
-  const urls = files.map((f) => `${base}/uploads/products/${f.filename}`);
+  let urls: string[];
+  if (isCloudinaryConfigured()) {
+    urls = await Promise.all(files.map((f) => cloudinaryUploadMulterFile(f, "products", "image")));
+  } else {
+    const base = requirePublicUploadBase(req);
+    urls = files.map((f) => `${base}/uploads/products/${f.filename}`);
+  }
   res.status(201).json({ urls });
 });
 
 const avatarDir = path.resolve(process.cwd(), "uploads", "avatars");
-
-const avatarStorage = multer.diskStorage({
+const avatarDiskStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     fs.mkdirSync(avatarDir, { recursive: true });
     cb(null, avatarDir);
@@ -68,20 +96,12 @@ const avatarStorage = multer.diskStorage({
 });
 
 export const uploadProfileImageMiddleware = multer({
-  storage: avatarStorage,
+  storage: isCloudinaryConfigured() ? memoryStorage : avatarDiskStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ok = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.mimetype);
-    if (!ok) {
-      cb(new Error("Only JPEG, PNG, WebP, or GIF images are allowed"));
-      return;
-    }
-    cb(null, true);
-  }
+  fileFilter: imageFilter
 }).single("image");
 
 const vendorVerifyDir = path.resolve(process.cwd(), "uploads", "vendor-verification");
-
 const vendorVerifyStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     fs.mkdirSync(vendorVerifyDir, { recursive: true });
@@ -95,7 +115,7 @@ const vendorVerifyStorage = multer.diskStorage({
 });
 
 export const uploadVendorVerificationMiddleware = multer({
-  storage: vendorVerifyStorage,
+  storage: isCloudinaryConfigured() ? memoryStorage : vendorVerifyStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok = ["image/jpeg", "image/png", "application/pdf"].includes(file.mimetype);
@@ -111,13 +131,14 @@ export const uploadVendorVerification = asyncHandler(async (req: Request, res: R
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
 
-  const base = requirePublicUploadBase(req);
-  const url = `${base}/uploads/vendor-verification/${file.filename}`;
+  const url = isCloudinaryConfigured()
+    ? await cloudinaryUploadMulterFile(file, "vendor-verification", "auto")
+    : `${requirePublicUploadBase(req)}/uploads/vendor-verification/${file.filename}`;
+
   res.status(201).json({ url });
 });
 
 const reportEvidenceDir = path.resolve(process.cwd(), "uploads", "report-evidence");
-
 const reportEvidenceStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     fs.mkdirSync(reportEvidenceDir, { recursive: true });
@@ -131,7 +152,7 @@ const reportEvidenceStorage = multer.diskStorage({
 });
 
 export const uploadReportEvidenceMiddleware = multer({
-  storage: reportEvidenceStorage,
+  storage: isCloudinaryConfigured() ? memoryStorage : reportEvidenceStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
@@ -147,13 +168,14 @@ export const uploadReportEvidence = asyncHandler(async (req: Request, res: Respo
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
 
-  const base = requirePublicUploadBase(req);
-  const url = `${base}/uploads/report-evidence/${file.filename}`;
+  const url = isCloudinaryConfigured()
+    ? await cloudinaryUploadMulterFile(file, "report-evidence", "image")
+    : `${requirePublicUploadBase(req)}/uploads/report-evidence/${file.filename}`;
+
   res.status(201).json({ url });
 });
 
 const bookPdfDir = path.resolve(process.cwd(), "uploads", "book-pdfs");
-
 const bookPdfStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     fs.mkdirSync(bookPdfDir, { recursive: true });
@@ -167,7 +189,7 @@ const bookPdfStorage = multer.diskStorage({
 });
 
 export const uploadBookPdfMiddleware = multer({
-  storage: bookPdfStorage,
+  storage: isCloudinaryConfigured() ? memoryStorage : bookPdfStorage,
   limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype !== "application/pdf") {
@@ -181,8 +203,11 @@ export const uploadBookPdfMiddleware = multer({
 export const uploadBookPdf = asyncHandler(async (req: Request, res: Response) => {
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
-  const base = requirePublicUploadBase(req);
-  const url = `${base}/uploads/book-pdfs/${file.filename}`;
+
+  const url = isCloudinaryConfigured()
+    ? await cloudinaryUploadMulterFile(file, "book-pdfs", "raw")
+    : `${requirePublicUploadBase(req)}/uploads/book-pdfs/${file.filename}`;
+
   res.status(201).json({ url });
 });
 
@@ -190,8 +215,9 @@ export const uploadProfileImage = asyncHandler(async (req: Request, res: Respons
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No image file received");
 
-  const base = requirePublicUploadBase(req);
-  const url = `${base}/uploads/avatars/${file.filename}`;
+  const url = isCloudinaryConfigured()
+    ? await cloudinaryUploadMulterFile(file, "avatars", "image")
+    : `${requirePublicUploadBase(req)}/uploads/avatars/${file.filename}`;
 
   const user = await User.findByIdAndUpdate(
     req.user!.id,

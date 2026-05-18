@@ -18,6 +18,11 @@ const envSchema = z.object({
    */
   API_PUBLIC_ORIGIN: z.string().optional().default(""),
 
+  /** Optional: when all three are set, uploads go to Cloudinary (persists on Render); otherwise disk under `uploads/`. */
+  CLOUDINARY_CLOUD_NAME: z.string().optional().default(""),
+  CLOUDINARY_API_KEY: z.string().optional().default(""),
+  CLOUDINARY_API_SECRET: z.string().optional().default(""),
+
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_TTL_MINUTES: z.coerce.number().int().positive().default(15),
