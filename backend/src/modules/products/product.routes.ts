@@ -10,6 +10,7 @@ import {
   getRelatedProducts,
   listMyProducts,
   listProducts,
+  recordProductView,
   updateProduct
 } from "./product.controller";
 import { createProductSchema, updateProductSchema, toggleProductSaveSchema } from "./product.schemas";
@@ -35,6 +36,7 @@ router.get("/:id/reviews", listProductReviews);
 router.get("/:id/review-status", protect, requireActiveAccount, authorize(...shopAccountRoles), getReviewStatus);
 router.post("/:id/reviews", protect, requireActiveAccount, authorize(...shopAccountRoles), validateBody(createReviewSchema), createReview);
 router.get("/:id/related", optionalProtect, getRelatedProducts);
+router.post("/:id/view", protect, requireActiveAccount, authorize("buyer"), recordProductView);
 router.get("/:id", optionalProtect, getProduct);
 router.patch(
   "/:id",

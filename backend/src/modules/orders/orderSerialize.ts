@@ -114,9 +114,10 @@ export function serializeOrder(o: Record<string, unknown>) {
     );
   }
   const paystackRefundIdRaw = (o as { paystackRefundId?: number | null }).paystackRefundId;
+  const rawBuyerId = o.buyerId as mongoose.Types.ObjectId | null | undefined;
   return {
     id: (o._id as mongoose.Types.ObjectId).toString(),
-    buyerId: (o.buyerId as mongoose.Types.ObjectId).toString(),
+    buyerId: rawBuyerId ? rawBuyerId.toString() : null,
     items,
     currency: o.currency,
     subtotal: o.subtotal,
@@ -176,20 +177,25 @@ export async function withContacts(rows: Record<string, unknown>[]) {
   const buyerIds = new Set<string>();
   const sellerIds = new Set<string>();
   for (const o of rows) {
-    buyerIds.add((o.buyerId as mongoose.Types.ObjectId).toString());
+    const bid = o.buyerId as mongoose.Types.ObjectId | null | undefined;
+    if (bid) buyerIds.add(bid.toString());
     for (const it of o.items as Array<Record<string, unknown>>) {
       sellerIds.add((it.sellerId as mongoose.Types.ObjectId).toString());
     }
   }
   const ids = [...new Set([...buyerIds, ...sellerIds])];
-  const users = await User.find({ _id: { $in: ids } })
-    .select("_id email phone displayName bankName bankAccountNumber bankAccountName")
-    .lean();
+  const users = ids.length
+    ? await User.find({ _id: { $in: ids } })
+        .select("_id email phone displayName bankName bankAccountNumber bankAccountName")
+        .lean()
+    : [];
   const byId = new Map(users.map((u) => [u._id.toString(), u]));
 
   return rows.map((o) => {
     const base = serializeOrder(o);
-    const buyerId = (o.buyerId as mongoose.Types.ObjectId).toString();
+    const rawBuyerId = o.buyerId as mongoose.Types.ObjectId | null | undefined;
+    const buyerId = rawBuyerId ? rawBuyerId.toString() : "";
+    const guestContact = (o as { guestContact?: { displayName?: string; email?: string; phone?: string } }).guestContact;
     const sellerContactById: Record<string, SellerContactSerialized> = {};
     for (const it of o.items as Array<Record<string, unknown>>) {
       const sid = (it.sellerId as mongoose.Types.ObjectId).toString();
@@ -206,15 +212,22 @@ export async function withContacts(rows: Record<string, unknown>[]) {
         };
       }
     }
-    const bu = byId.get(buyerId);
+    const bu = buyerId ? byId.get(buyerId) : null;
     return {
       ...base,
-      buyerContact: {
-        id: buyerId,
-        email: bu?.email ?? "",
-        phone: "",
-        displayName: bu?.displayName ?? ""
-      },
+      buyerContact: buyerId
+        ? {
+            id: buyerId,
+            email: bu?.email ?? "",
+            phone: "",
+            displayName: bu?.displayName ?? ""
+          }
+        : {
+            id: "",
+            email: String(guestContact?.email ?? "").trim(),
+            phone: String(guestContact?.phone ?? "").trim(),
+            displayName: String(guestContact?.displayName ?? "").trim()
+          },
       sellerContacts: Object.values(sellerContactById)
     };
   });

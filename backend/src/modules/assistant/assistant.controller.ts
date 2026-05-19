@@ -8,6 +8,9 @@ import { assistantChatSchema } from "./assistant.schemas";
 import type { z } from "zod";
 import { Product } from "../products/product.model";
 import { Business } from "../businesses/business.model";
+import { BuyerProductView } from "../products/buyerProductView.model";
+import { ProductSave } from "../products/productSave.model";
+import { Order } from "../orders/order.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { activeStoreBusinessIds, enrichPublicProducts, foodMenuStoreFilter } from "../products/product.publicSerialize";
 import { buildAssistantCatalogReply, buildAssistantIdleReply, formatProductLine } from "./assistantFallback";
@@ -32,6 +35,91 @@ function toAbsoluteAssetUrl(pathOrUrl: string | undefined | null, apiOrigin: str
   if (/^https?:\/\//i.test(t)) return t;
   const p = t.startsWith("/") ? t : `/${t}`;
   return `${apiOrigin}${p}`;
+}
+
+/** Human labels for category codes — keep aligned with buyer marketplace chips. */
+const SHOPPER_CAT_LABEL: Record<string, string> = {
+  food_drinks: "Food & Drinks",
+  fashion_accessories: "Fashion & Accessories",
+  electronics_gadgets: "Electronics & Gadgets",
+  beauty_personal_care: "Beauty & Personal Care",
+  services: "Services",
+  books_academic: "Books & Academic Materials",
+  groceries_essentials: "Groceries & Essentials"
+};
+
+async function shopperPersonalizationNarrative(req: Request): Promise<string> {
+  if (req.user?.role !== "buyer" || !req.user?.id || !mongoose.isValidObjectId(req.user.id)) return "";
+  const uid = req.user.id;
+  const oid = new mongoose.Types.ObjectId(uid);
+  try {
+    const [viewRows, saveRows, orders] = await Promise.all([
+      BuyerProductView.find({ buyerId: oid }).sort({ viewedAt: -1 }).limit(12).select("productId").lean(),
+      ProductSave.find({ ownerKey: `u:${uid}` }).sort({ createdAt: -1 }).limit(12).select("productId").lean(),
+      Order.find({
+        buyerId: oid,
+        status: { $in: ["paid", "processing", "sent_for_delivery", "delivered"] }
+      })
+        .sort({ updatedAt: -1 })
+        .limit(8)
+        .select("items")
+        .lean()
+    ]);
+
+    const pidSet = new Set<string>();
+    for (const v of viewRows) pidSet.add(String(v.productId));
+    for (const s of saveRows) pidSet.add(String(s.productId));
+    for (const o of orders as { items?: { productId?: unknown }[] }[]) {
+      for (const it of o.items || []) {
+        const pid =
+          it.productId instanceof mongoose.Types.ObjectId
+            ? it.productId.toString()
+            : typeof it.productId === "string" && mongoose.isValidObjectId(it.productId)
+              ? it.productId
+              : "";
+        if (pid) pidSet.add(pid);
+      }
+    }
+
+    const ids = [...pidSet]
+      .filter((id) => mongoose.isValidObjectId(id))
+      .slice(0, 40)
+      .map((id) => new mongoose.Types.ObjectId(id));
+    if (!ids.length) return "";
+
+    const prods = await Product.find({ _id: { $in: ids } })
+      .select("name category")
+      .lean();
+    const byId = new Map(prods.map((p) => [p._id.toString(), p]));
+
+    const recentNames = viewRows
+      .map((v) => byId.get(String(v.productId)))
+      .filter(Boolean)
+      .slice(0, 6)
+      .map((p) => String((p as { name?: string }).name || "").trim())
+      .filter(Boolean);
+
+    const cats = new Map<string, number>();
+    for (const p of prods) {
+      const c = String((p as { category?: string }).category || "");
+      if (!c) continue;
+      cats.set(c, (cats.get(c) ?? 0) + 1);
+    }
+    const topCats = [...cats.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([c]) => SHOPPER_CAT_LABEL[c] || c.replace(/_/g, " "));
+
+    const lines: string[] = [];
+    if (recentNames.length) lines.push(`Recently viewed products: ${recentNames.join(", ")}`);
+    if (topCats.length) lines.push(`Frequent categories in their history: ${topCats.join(", ")}`);
+    if (orders.length) lines.push("They have previous paid/delivered orders — mention re-ordering when it fits.");
+
+    if (!lines.length) return "";
+    return `\nShopper personalization (use for tone and what to prioritize — still ONLY cite real products from the listings below; never invent items):\n- ${lines.join("\n- ")}\n`;
+  } catch {
+    return "";
+  }
 }
 
 type AssistantChatBody = z.infer<typeof assistantChatSchema>;
@@ -130,7 +218,9 @@ async function loadAssistantPrompt(
 
   const userNote = req.user
     ? `Shopper (${req.user.role}), signed in — mention orders/receipts when useful.`
-    : `Anonymous — they can browse; account needed at checkout.`;
+    : `Guest or signed-out shopper — they can browse, **add to cart without an account**, and **check out as a guest** (name, email, phone + Paystack). Signing in is optional (order history, some messaging). Do **not** say login is required for cart or checkout unless you mean a specific flow (e.g. service inquiry form).`;
+
+  const personalizeBlock = await shopperPersonalizationNarrative(req);
 
   const storeLines = sampleStores.map((b) => {
     const slug = typeof b.slug === "string" ? b.slug.trim() : "";
@@ -140,7 +230,7 @@ async function loadAssistantPrompt(
     return `- [${name}](${appOrigin}/store/${encodeURIComponent(slug)}) — ${String(b.businessType || "store")}${blurb ? ` · ${blurb}` : ""}`;
   });
 
-  const system = `You are the ${siteName} shopping assistant — a Ghana marketplace platform. ${userNote}
+  const system = `You are the ${siteName} shopping assistant — a Ghana marketplace platform. ${userNote}${personalizeBlock}
 
 IDENTITY:
 - You represent the WHOLE ${siteName} marketplace, NOT any single store, brand, or vendor
@@ -168,8 +258,13 @@ PRICING RULES — CRITICAL:
 
 FACTS:
 - Only cite products using the listing lines below — never invent items or prices
+- Guest checkout: shoppers can add to cart and pay without logging in; checkout asks for name, email, and phone. Never tell users they must sign in for cart or Paystack checkout for normal products
+- How to pay (priced products in the cart): when asked, use clear numbered steps with emoji cues if you like (e.g. 🛒 Add to cart → 🧺 Cart → 📋 Checkout with name/email/phone as guest → 💳 Paystack). Then mention 🍽️ call-to-order food (Place Order / seller on listing) and 📩 services (Send request / quote) when relevant
 - If unsure, suggest search or category hubs
 - Always include the restaurant/store link when present in a listing line
+
+CONTACT / VENDOR QUESTIONS:
+- If the user asks **how to contact the seller**, **phone**, **WhatsApp**, or **where is the vendor**: say contact/payout details appear **on each product page** (seller section); food items use **call to order** / **Place Order** from the listing; **Messages** may require a user account and an order when the platform supports it
 
 CRITICAL — food & local dishes (catalog only):
 - When asked about food, local dishes, Ghanaian/regional dishes, or similar, ALWAYS show real listings from the "Listings (partial)" lines below with full markdown links (🍽️ line + store link + call to order)
@@ -202,6 +297,30 @@ function primaryAssistantLlm(): "groq" | "ollama" | null {
   if (env.OLLAMA_BASE_URL.trim()) return "ollama";
   return null;
 }
+
+/**
+ * Which LLM the shopping assistant will use (no secrets). Lets you verify `GROQ_API_KEY` is loaded after deploy or `.env` change.
+ */
+export const getAssistantLlmStatus = asyncHandler(async (_req: Request, res: Response) => {
+  const primary = primaryAssistantLlm();
+  res.json({
+    primary,
+    groq: {
+      configured: groqConfigured(),
+      model: env.GROQ_MODEL
+    },
+    ollama: {
+      configured: Boolean(env.OLLAMA_BASE_URL.trim()),
+      model: env.OLLAMA_MODEL
+    },
+    hint:
+      primary === "groq"
+        ? "Shopping assistant uses Groq Cloud (groq.com, GROQ_API_KEY). Not xAI Grok."
+        : primary === "ollama"
+          ? "Shopping assistant uses local Ollama. Set GROQ_API_KEY to prefer Groq Cloud instead."
+          : "No remote/local LLM — assistant uses catalog fallback. Set GROQ_API_KEY or OLLAMA_BASE_URL."
+  });
+});
 
 async function ollamaCompletion(system: string, userMessages: Array<{ role: "user" | "assistant"; content: string }>) {
   const base = env.OLLAMA_BASE_URL.trim();
@@ -345,6 +464,7 @@ function sseWrite(res: Response, obj: Record<string, unknown>) {
  */
 export const postAssistantChat = asyncHandler(async (req: Request, res: Response) => {
   const { message, history, stream } = req.body as AssistantChatBody;
+  const chatHistory = history ?? [];
 
   const { siteName, system, msgs } = await loadAssistantPrompt(req, message, history);
 
@@ -368,7 +488,7 @@ export const postAssistantChat = asyncHandler(async (req: Request, res: Response
     try {
       const llm = primaryAssistantLlm();
       if (!llm) {
-        const reply = await buildAssistantIdleReply(siteName, message, req);
+        const reply = await buildAssistantIdleReply(siteName, message, req, chatHistory);
         sseWrite(res, { delta: "", reply, done: true, source: "catalog", model: null });
         return;
       }
@@ -388,7 +508,7 @@ export const postAssistantChat = asyncHandler(async (req: Request, res: Response
 
       const trimmed = full.trim();
       if (!trimmed) {
-        const reply = await buildAssistantCatalogReply(siteName, message, req);
+        const reply = await buildAssistantCatalogReply(siteName, message, req, chatHistory);
         sseWrite(res, {
           delta: "",
           reply,
@@ -405,8 +525,9 @@ export const postAssistantChat = asyncHandler(async (req: Request, res: Response
           model: llm === "groq" ? env.GROQ_MODEL : env.OLLAMA_MODEL
         });
       }
-    } catch {
-      const reply = await buildAssistantCatalogReply(siteName, message, req);
+    } catch (err) {
+      console.error("[assistant] stream error:", err instanceof Error ? err.message : err);
+      const reply = await buildAssistantCatalogReply(siteName, message, req, chatHistory);
       sseWrite(res, { delta: "", reply, done: true, source: "catalog", model: null });
     } finally {
       cleanup();
@@ -422,7 +543,8 @@ export const postAssistantChat = asyncHandler(async (req: Request, res: Response
     try {
       reply = await groqCompletion(system, msgs);
       source = "groq";
-    } catch {
+    } catch (err) {
+      console.error("[assistant] Groq completion failed:", err instanceof Error ? err.message : err);
       reply = null;
     }
   }
@@ -431,14 +553,15 @@ export const postAssistantChat = asyncHandler(async (req: Request, res: Response
     try {
       reply = await ollamaCompletion(system, msgs);
       source = "ollama";
-    } catch {
-      reply = await buildAssistantCatalogReply(siteName, message, req);
+    } catch (err) {
+      console.error("[assistant] Ollama completion failed:", err instanceof Error ? err.message : err);
+      reply = await buildAssistantCatalogReply(siteName, message, req, chatHistory);
       source = "catalog";
     }
   }
 
   if (!reply) {
-    reply = await buildAssistantIdleReply(siteName, message, req);
+    reply = await buildAssistantIdleReply(siteName, message, req, chatHistory);
     source = "catalog";
   }
 

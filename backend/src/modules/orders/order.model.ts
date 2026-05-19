@@ -42,7 +42,15 @@ export interface OrderPaymentDetails {
 
 export interface OrderDoc {
   _id: mongoose.Types.ObjectId;
-  buyerId: mongoose.Types.ObjectId;
+  /** Set when the shopper has an account. Guest checkouts omit this. */
+  buyerId?: mongoose.Types.ObjectId | null;
+  guestContact?: {
+    displayName: string;
+    email: string;
+    phone: string;
+  };
+  /** Opaque capability for guest to pay / view order without login; not returned in list APIs. */
+  guestAccessSecret?: string | null;
   items: OrderLineItem[];
   currency: string;
   subtotal: number;
@@ -114,7 +122,18 @@ const lineItemSchema = new Schema<OrderLineItem>(
 
 const orderSchema = new Schema<OrderDoc>(
   {
-    buyerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    buyerId: { type: Schema.Types.ObjectId, ref: "User", required: false, default: null, index: true, sparse: true },
+    guestContact: {
+      type: {
+        displayName: { type: String, trim: true, maxlength: 120 },
+        email: { type: String, trim: true, lowercase: true, maxlength: 200 },
+        phone: { type: String, trim: true, maxlength: 24 }
+      },
+      required: false,
+      _id: false,
+      default: undefined
+    },
+    guestAccessSecret: { type: String, select: false, default: null },
     items: { type: [lineItemSchema], required: true },
     currency: { type: String, default: "ghs" },
     subtotal: { type: Number, required: true, min: 0 },

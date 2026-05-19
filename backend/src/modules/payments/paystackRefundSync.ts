@@ -23,7 +23,7 @@ export async function applyProcessedPaystackRefundToOrder(o: HydratedDocument<Or
     }
     o.refundStockRestored = true;
   }
-  void notifyBuyerRefundProcessed(o._id.toString(), o.buyerId);
+  if (o.buyerId) void notifyBuyerRefundProcessed(o._id.toString(), o.buyerId);
 }
 
 type RefundWebhookPayload = {

@@ -8,6 +8,8 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
 import { Order } from "../orders/order.model";
+import type { OrderDoc } from "../orders/order.model";
+import { canActAsOrderBuyer, readGuestSecretFromRequest } from "../orders/orderAccess";
 import { Product } from "../products/product.model";
 import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
 import { getOrCreateSettings, getEffectiveCommissionPercent } from "../platform/platformSettings.service";
@@ -230,12 +232,12 @@ export const getCheckoutPaymentOptions = asyncHandler(async (_req: Request, res:
 export const verifyPaystackForOrder = asyncHandler(async (req: Request, res: Response) => {
   if (!env.PAYSTACK_SECRET_KEY?.trim()) throw new HttpError(503, "Paystack not configured");
 
-  const { orderId } = req.body as { orderId: string };
+  const { orderId, guestSecret } = req.body as { orderId: string; guestSecret?: string };
   if (!mongoose.isValidObjectId(orderId)) throw new HttpError(400, "Invalid order id");
 
-  const order = await Order.findById(orderId);
+  const order = await Order.findById(orderId).select("+guestAccessSecret");
   if (!order) throw new HttpError(404, "Order not found");
-  if (order.buyerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
+  if (!canActAsOrderBuyer(req, order.toObject() as OrderDoc, guestSecret)) throw new HttpError(403, "Forbidden");
   if (order.status !== "pending_payment") {
     if (order.status === "paid") {
       return res.json({ ok: true, status: "paid", message: "Order already paid" });
@@ -277,17 +279,22 @@ export const verifyPaystackForOrder = asyncHandler(async (req: Request, res: Res
 export const initializePaystackTransaction = asyncHandler(async (req: Request, res: Response) => {
   if (!env.PAYSTACK_SECRET_KEY?.trim()) throw new HttpError(503, "Paystack not configured");
 
-  const { orderId } = req.body as { orderId: string };
+  const { orderId, guestSecret } = req.body as { orderId: string; guestSecret?: string };
   if (!mongoose.isValidObjectId(orderId)) throw new HttpError(400, "Invalid order id");
 
-  const order = await Order.findById(orderId);
+  const order = await Order.findById(orderId).select("+guestAccessSecret");
   if (!order) throw new HttpError(404, "Order not found");
-  if (order.buyerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
+  if (!canActAsOrderBuyer(req, order.toObject() as OrderDoc, guestSecret)) throw new HttpError(403, "Forbidden");
   if (order.status !== "pending_payment") throw new HttpError(400, "Order is not payable");
 
-  const buyer = await User.findById(order.buyerId).select("email").lean();
-  const email = (buyer?.email && String(buyer.email).trim()) || "";
-  if (!email) throw new HttpError(400, "Your account needs an email address to pay with Paystack");
+  let email = "";
+  if (order.buyerId) {
+    const buyer = await User.findById(order.buyerId).select("email").lean();
+    email = (buyer?.email && String(buyer.email).trim()) || "";
+  } else {
+    email = String(order.guestContact?.email || "").trim();
+  }
+  if (!email) throw new HttpError(400, "An email address is required to pay with Paystack");
 
   const out = await commitPaystackInitialize(order, email);
   res.json({ authorizationUrl: out.authorizationUrl, reference: out.reference });
@@ -297,19 +304,36 @@ export const initializePaystackTransaction = asyncHandler(async (req: Request, r
 export const initPaystackGuide = asyncHandler(async (req: Request, res: Response) => {
   if (!env.PAYSTACK_SECRET_KEY?.trim()) throw new HttpError(503, "Paystack not configured");
 
-  const { email, amount, orderId } = req.body as { email: string; amount: number; orderId: string };
+  const { email, amount, orderId, guestSecret } = req.body as {
+    email: string;
+    amount: number;
+    orderId: string;
+    guestSecret?: string;
+  };
   if (!mongoose.isValidObjectId(orderId)) throw new HttpError(400, "Invalid order id");
 
-  const order = await Order.findById(orderId);
+  const order = await Order.findById(orderId).select("+guestAccessSecret");
   if (!order) throw new HttpError(404, "Order not found");
-  if (order.buyerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
+  if (!canActAsOrderBuyer(req, order.toObject() as OrderDoc, guestSecret)) throw new HttpError(403, "Forbidden");
   if (order.status !== "pending_payment") throw new HttpError(400, "Order is not payable");
 
-  const buyer = await User.findById(order.buyerId).select("email").lean();
-  const accountEmail = String(buyer?.email || "").trim().toLowerCase();
   const bodyEmail = String(email).trim().toLowerCase();
-  if (!accountEmail || bodyEmail !== accountEmail) {
-    throw new HttpError(400, "Email must match your account email");
+  let payEmail = "";
+  if (order.buyerId) {
+    const buyer = await User.findById(order.buyerId).select("email").lean();
+    const accountEmail = String(buyer?.email || "").trim().toLowerCase();
+    if (!accountEmail || bodyEmail !== accountEmail) {
+      throw new HttpError(400, "Email must match your account email");
+    }
+    payEmail = String(buyer?.email || "").trim();
+  } else {
+    const guestEmail = String(order.guestContact?.email || "")
+      .trim()
+      .toLowerCase();
+    if (!guestEmail || bodyEmail !== guestEmail) {
+      throw new HttpError(400, "Email must match the email you entered for this guest checkout");
+    }
+    payEmail = String(order.guestContact?.email || "").trim();
   }
 
   const expected = roundMoney(Number(order.total));
@@ -318,7 +342,7 @@ export const initPaystackGuide = asyncHandler(async (req: Request, res: Response
     throw new HttpError(400, "Amount must match the order total");
   }
 
-  const out = await commitPaystackInitialize(order, String(buyer?.email || email).trim());
+  const out = await commitPaystackInitialize(order, payEmail);
   res.json({
     authorization_url: out.authorizationUrl,
     reference: out.reference,
@@ -334,10 +358,11 @@ export const verifyPaystackByReference = asyncHandler(async (req: Request, res: 
   if (!ref) throw new HttpError(400, "Missing reference");
 
   const order = await Order.findOne({
-    buyerId: req.user!.id,
     $or: [{ paystackReference: ref }, { paymentReference: ref }]
-  });
+  }).select("+guestAccessSecret");
   if (!order) throw new HttpError(404, "No order for this reference");
+
+  if (!canActAsOrderBuyer(req, order.toObject() as OrderDoc)) throw new HttpError(403, "Forbidden");
 
   if (order.status === "paid") {
     return res.json({
@@ -446,6 +471,7 @@ export const createCheckoutSession = asyncHandler(async (req: Request, res: Resp
 
   const order = await Order.findById(orderId);
   if (!order) throw new HttpError(404, "Order not found");
+  if (!order.buyerId) throw new HttpError(400, "Guest orders must be paid with Paystack — Stripe checkout is not available.");
   if (order.buyerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
   if (order.status !== "pending_payment") throw new HttpError(400, "Order is not payable");
 

@@ -116,9 +116,11 @@ export function AdminLoginPage() {
         [
           h(Field, { key: "em", label: "Email Address" }, h("div", { className: "relative" }, [
             h(User, {
+              key: "uic",
               className: "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
             }),
             h(TextInput, {
+              key: "em-inp",
               type: "email",
               autoComplete: "username",
               value: identifier,
@@ -130,9 +132,11 @@ export function AdminLoginPage() {
           ])),
           h(Field, { key: "pw", label: "Password" }, h("div", { className: "relative" }, [
             h(Lock, {
+              key: "lic",
               className: "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
             }),
             h(TextInput, {
+              key: "pw-inp",
               type: show ? "text" : "password",
               autoComplete: "current-password",
               value: password,
@@ -158,17 +162,20 @@ export function AdminLoginPage() {
         ]
       ),
       h("div", { key: "div", className: "relative my-4" }, [
-        h("div", { className: "absolute inset-0 flex items-center" }, h("div", { className: "w-full border-t border-slate-200 dark:border-white/10" })),
+        h("div", { key: "ln", className: "absolute inset-0 flex items-center" }, h("div", { className: "w-full border-t border-slate-200 dark:border-white/10" })),
         h(
           "div",
-          { className: "relative flex justify-center text-[10px] font-semibold uppercase tracking-wide text-slate-500" },
+          { key: "lbl", className: "relative flex justify-center text-[10px] font-semibold uppercase tracking-wide text-slate-500" },
           h(
             "span",
             {
               className:
                 "inline-flex items-center gap-1 bg-white px-2 text-sky-600 dark:bg-night-900 dark:text-sky-400 sm:px-2.5"
             },
-            [h(CheckCircle2, { className: "h-3 w-3" }), "Secure"]
+            [
+              h(CheckCircle2, { key: "chk", className: "h-3 w-3" }),
+              h("span", { key: "sec-txt" }, "Secure")
+            ]
           )
         )
       ]),

@@ -33,7 +33,7 @@ import { uploadBookPdf, uploadBookPdfMiddleware } from "./modules/uploads/upload
 import vendorRoutes from "./modules/vendor/vendor.routes";
 import vendorApplicationRoutes from "./modules/vendorApplications/vendorApplication.routes";
 import courierApplicationRoutes from "./modules/courierApplications/courierApplication.routes";
-import { postAssistantChat } from "./modules/assistant/assistant.controller";
+import { getAssistantLlmStatus, postAssistantChat } from "./modules/assistant/assistant.controller";
 import { assistantChatSchema } from "./modules/assistant/assistant.schemas";
 import platformRoutes from "./modules/platform/platform.routes";
 import notificationRoutes from "./modules/notifications/notification.routes";
@@ -53,6 +53,22 @@ export function createApp() {
   // Respect one reverse proxy hop (common on hosting platforms/load balancers).
   app.set("trust proxy", 1);
 
+  const assistantChatRateLimit = rateLimit({
+    windowMs: env.ASSISTANT_CHAT_RATE_LIMIT_WINDOW_MS,
+    limit:
+      env.ASSISTANT_CHAT_RATE_LIMIT_MAX > 0
+        ? env.ASSISTANT_CHAT_RATE_LIMIT_MAX
+        : env.NODE_ENV === "production"
+          ? 45
+          : 400,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: "too_many_requests",
+      message: "Too many assistant requests. Please wait a few minutes and try again."
+    }
+  });
+
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: "cross-origin" }
@@ -62,7 +78,7 @@ export function createApp() {
     cors({
       origin: env.APP_ORIGIN,
       credentials: true,
-      allowedHeaders: ["Content-Type", "Authorization", "X-Save-Session", "X-Admin-Secret"]
+      allowedHeaders: ["Content-Type", "Authorization", "X-Save-Session", "X-Admin-Secret", "X-Guest-Order-Secret"]
     })
   );
 
@@ -104,14 +120,14 @@ export function createApp() {
   /** Paystack guide paths on the root app (also under POST /api/payments/paystack/init for the same handlers). */
   app.post(
     "/api/paystack/init",
-    protect,
+    optionalProtect,
     requireActiveAccount,
     validateBody(paystackInitGuideSchema),
     initPaystackGuide
   );
   app.get(
     "/api/paystack/verify/:ref",
-    protect,
+    optionalProtect,
     requireActiveAccount,
     verifyPaystackByReference
   );
@@ -154,8 +170,10 @@ export function createApp() {
    * Chat assistant — mounted here (not only on a sub-router) so `npm start` builds always expose the path even if
    * a stale compiled router module omitted it.
    */
+  app.get("/api/assistant/llm", getAssistantLlmStatus);
   app.post(
     "/api/assistant/chat",
+    assistantChatRateLimit,
     optionalProtect,
     validateBody(assistantChatSchema),
     postAssistantChat

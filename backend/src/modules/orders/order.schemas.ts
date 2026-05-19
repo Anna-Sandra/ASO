@@ -10,7 +10,11 @@ export const checkoutSchema = z.object({
       })
     )
     .min(1)
-    .max(50)
+    .max(50),
+  /** Required when creating an order without authentication (guest checkout). */
+  guestEmail: z.string().trim().email().optional(),
+  guestName: z.string().trim().min(2).max(120).optional(),
+  guestPhone: z.string().trim().min(8).max(24).optional()
 });
 
 export const orderStatusUpdateSchema = z.object({
@@ -22,7 +26,9 @@ export const orderMessageSchema = z.object({
 });
 
 export const cancelOrderSchema = z.object({
-  reason: z.string().trim().max(500).optional()
+  reason: z.string().trim().max(500).optional(),
+  /** For guest orders — same value returned once at checkout (or use `X-Guest-Order-Secret` header). */
+  guestSecret: z.string().min(8).max(256).optional()
 });
 
 const phoneLike = z
@@ -46,7 +52,8 @@ export const orderManualPaymentSchema = z.discriminatedUnion("method", [
     method: z.literal("momo"),
     momoPhone: phoneLike,
     momoAmount: z.coerce.number().positive("Amount must be positive"),
-    reference: z.string().trim().max(120).optional()
+    reference: z.string().trim().max(120).optional(),
+    guestSecret: z.string().min(8).max(256).optional()
   }),
   z.object({
     method: z.literal("bank"),
@@ -54,6 +61,7 @@ export const orderManualPaymentSchema = z.discriminatedUnion("method", [
     cardNumber: cardDigits,
     cardExpiry: z.string().regex(/^(0[1-9]|1[0-2])\/\d{2}$/, "Use MM/YY"),
     cvv: z.string().regex(/^\d{3,4}$/, "Invalid CVV"),
-    reference: z.string().trim().max(120).optional()
+    reference: z.string().trim().max(120).optional(),
+    guestSecret: z.string().min(8).max(256).optional()
   })
 ]);

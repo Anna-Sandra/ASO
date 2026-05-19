@@ -169,6 +169,22 @@ const envSchema = z.object({
   GROQ_MAX_TOKENS: z.coerce.number().int().min(64).max(8192).optional().default(300),
 
   /**
+   * HTTP timeout for Groq non-streaming completions (ms). When 0, uses `OLLAMA_TIMEOUT_MS`.
+   * Streaming chat still uses the request AbortSignal timeout from `assistant.controller`.
+   */
+  GROQ_TIMEOUT_MS: z.coerce.number().int().min(3000).max(600000).optional().default(0),
+
+  /**
+   * Per-IP rate limit for `POST /api/assistant/chat` (sliding window length in ms). Default 15 minutes.
+   */
+  ASSISTANT_CHAT_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(60000).max(3600000).optional().default(900000),
+
+  /**
+   * Max assistant chat POSTs per IP per window. When 0, uses 45 in production and 400 in development.
+   */
+  ASSISTANT_CHAT_RATE_LIMIT_MAX: z.coerce.number().int().min(0).max(5000).optional().default(0),
+
+  /**
    * Comma- or semicolon-separated emails that count as the platform "super" admin in addition
    * to `BOOTSTRAP_ADMIN_EMAIL` (if set). Super admins can grant `admin` to other user accounts.
    * Normal (non-super) admins cannot promote users to admin.

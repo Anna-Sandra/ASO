@@ -14,12 +14,17 @@ export function groqConfigured(): boolean {
   return Boolean(env.GROQ_API_KEY?.trim());
 }
 
+function groqHttpTimeoutMs(): number {
+  const n = env.GROQ_TIMEOUT_MS;
+  return typeof n === "number" && n > 0 ? n : env.OLLAMA_TIMEOUT_MS;
+}
+
 export async function groqCompletion(system: string, userMessages: ChatMsg[]): Promise<string | null> {
   const key = env.GROQ_API_KEY.trim();
   if (!key) return null;
 
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), env.OLLAMA_TIMEOUT_MS);
+  const t = setTimeout(() => ctrl.abort(), groqHttpTimeoutMs());
   try {
     const res = await fetch(GROQ_CHAT_URL, {
       method: "POST",

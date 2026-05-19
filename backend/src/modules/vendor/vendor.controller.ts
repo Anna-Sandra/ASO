@@ -123,7 +123,7 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
     const label = String(status || "")
       .replace(/_/g, " ")
       .replace(/\b\w/g, (c: string) => c.toUpperCase());
-    void notifyBuyerOrderStatus(orderId, order.buyerId, label);
+    if (order.buyerId) void notifyBuyerOrderStatus(orderId, order.buyerId, label);
   }
 
   const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);

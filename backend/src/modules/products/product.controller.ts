@@ -16,6 +16,8 @@ import {
   enrichPublicProducts,
   foodMenuStoreFilter
 } from "./product.publicSerialize";
+import { BuyerProductView } from "./buyerProductView.model";
+import { ProductSave } from "./productSave.model";
 import { assertProductBusinessLink, getSellerDefaultBusinessId } from "../businesses/business.controller";
 
 /** Public-facing fields; changes require re-approval if the listing was already live. */
@@ -96,6 +98,9 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   } else {
     const activeIds = await activeStoreBusinessIds();
     Object.assign(filter, foodMenuStoreFilter(activeIds));
+  }
+  if (q.category) {
+    filter.category = q.category;
   }
   if (q.tag) filter.tags = q.tag;
 
@@ -398,6 +403,27 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
       products: similarEnriched
     }
   });
+});
+
+/** Buyer-only: record a product listing view for recommendations (no body). */
+export const recordProductView = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid product id");
+  if (req.user?.role !== "buyer" || !req.user?.id || !mongoose.isValidObjectId(req.user.id)) {
+    res.status(204).end();
+    return;
+  }
+  const p = await Product.findById(id).select("status").lean();
+  if (!p || p.status !== "active") throw new HttpError(404, "Product not found");
+
+  const buyerId = new mongoose.Types.ObjectId(req.user.id);
+  const productId = new mongoose.Types.ObjectId(id);
+  await BuyerProductView.findOneAndUpdate(
+    { buyerId, productId },
+    { $set: { viewedAt: new Date() } },
+    { upsert: true }
+  );
+  res.status(204).end();
 });
 
 export const getProduct = asyncHandler(async (req: Request, res: Response) => {

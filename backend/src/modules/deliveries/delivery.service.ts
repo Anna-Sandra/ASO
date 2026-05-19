@@ -61,7 +61,7 @@ export async function assertDeliveryParticipant(
   order: HydratedDocument<OrderDoc>,
   delivery: HydratedDocument<DeliveryDoc> | null
 ): Promise<void> {
-  const buyer = order.buyerId.toString() === userId;
+  const buyer = Boolean(order.buyerId && order.buyerId.toString() === userId);
   if (role === "admin" || buyer) return;
   if (role === "seller" && (await sellerTouchesOrder(userId, order))) return;
   if (role === "rider" && delivery?.assignedRiderId && delivery.assignedRiderId.toString() === userId) return;
@@ -163,7 +163,7 @@ async function finalizeOrderDelivered(order: HydratedDocument<OrderDoc>) {
   if (!allowedPrev.includes(order.status)) return;
   order.status = "delivered";
   await order.save();
-  void notifyBuyerOrderStatus(order._id.toString(), order.buyerId, "Delivered");
+  if (order.buyerId) void notifyBuyerOrderStatus(order._id.toString(), order.buyerId, "Delivered");
 }
 
 export async function assignRiderToDelivery(params: {

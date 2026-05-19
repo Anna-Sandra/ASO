@@ -228,7 +228,7 @@ function AppRoutes() {
     h(Route, { path: "/vendor-rules", element: h(VendorRulesPage), key: "r-vendor-rules" }),
     h(Route, {
       path: "/checkout",
-      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(CheckoutPage))),
+      element: h(BuyerGate, null, h(CheckoutPage)),
       key: "r-checkout"
     }),
     h(Route, {
@@ -273,12 +273,12 @@ function AppRoutes() {
     }),
     h(Route, {
       path: "/payment/success",
-      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(PaymentSuccessPage))),
+      element: h(BuyerGate, null, h(PaymentSuccessPage)),
       key: "r-pay-ok"
     }),
     h(Route, {
       path: "/payment/cancel",
-      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(PaymentCancelPage))),
+      element: h(BuyerGate, null, h(PaymentCancelPage)),
       key: "r-pay-cancel"
     }),
     h(

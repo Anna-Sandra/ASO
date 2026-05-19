@@ -1,5 +1,4 @@
 import type { Request } from "express";
-import mongoose from "mongoose";
 import { env } from "../../config/env";
 import { Product, type ProductCategory } from "../products/product.model";
 import { Business } from "../businesses/business.model";
@@ -16,12 +15,12 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function userWantsFoodSuggestions(message: string): boolean {
+function userWantsFoodSuggestions(message: string): boolean {
   return FOOD_KEYWORDS.test(String(message || ""));
 }
 
 /** Map casual shopper language to our catalog category (narrow fallback results). */
-export function detectCategoryFromMessage(message: string): ProductCategory | null {
+function detectCategoryFromMessage(message: string): ProductCategory | null {
   const m = String(message || "").toLowerCase();
   if (/shoe|heel|boot|sandal|footwear|sneaker|trainer|slipper/.test(m)) return "fashion_accessories";
   if (/food|eat|eating|hungry|menu|dish|dishes|restaurant|cafeteria|waakye|jollof|fufu|snack\b/.test(m)) return "food_drinks";
@@ -131,28 +130,103 @@ function isGreetingOnly(message: string): boolean {
   return false;
 }
 
-const ORDER_HELP = /how.*(order|buy|purchase|checkout|pay)/i;
+/** Substring present only in the long pay/checkout reply — used to shorten on repeat asks. */
+const ORDER_HELP_FULL_MARKER = "🛍️ Most products (you see a price + Add to cart):";
+
+/** "How do I order", typos like "how to oder", checkout help, etc. */
+const ORDER_HELP_INTENT =
+  /\b(how\s+(do|to|can)\s+(i|you|we)\s+)?(order|buy|purchase|checkout|pay|cart)|\bhow\s+to\s+order|\bwhere\s+(do\s+i|can\s+i)\s+(order|buy|checkout)|\boder\b|i\s+want\s+to\s+(order|buy)/i;
+
+type ChatTurn = { role: "user" | "assistant"; content: string };
+
+function lastAssistantFromHistory(history: ChatTurn[] | undefined): string | null {
+  if (!history?.length) return null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === "assistant") return history[i].content;
+  }
+  return null;
+}
+
+/** Single source of truth for order / payment / guest checkout (fallback when no LLM or LLM empty). */
+function markdownOrderHelpFull(siteName: string): string {
+  return (
+    `💳 How to pay on ${siteName}\n\n` +
+      `${ORDER_HELP_FULL_MARKER}\n` +
+      `1. 🛒 Tap Add to cart on the product you want (no account needed).\n` +
+      `2. 🧺 Open Cart (cart button / drawer).\n` +
+      `3. 📋 Tap Checkout and enter your name, email, and phone — guest checkout is fine.\n` +
+      `4. 💳 Pay with Paystack on the checkout screen.\n\n` +
+      `🍽️ Food (call-to-order): open the dish → Place Order or call to order — seller details are on that page.\n\n` +
+      `📩 Services (quotes): open the listing → Send request / the inquiry form (sign-in may be required).\n\n` +
+      `🔓 Signing in is optional — useful for order history and messaging.\n\n` +
+      `Want ideas? Browse or search from the home page. 🛒`
+  );
+}
+
+/** Shorter reply when the shopper asks the same payment/order question again (avoids copy-paste duplication). */
+function markdownOrderHelpRepeat(siteName: string): string {
+  return (
+    `⏩ Quick reminder on ${siteName}: 🛒 Add to cart → 🧺 Cart → 📋 Checkout → 💳 Paystack. ` +
+      `🍽️ Call-to-order food: Place Order on the listing. 📩 Services: Send request. Anything specific? 🛒`
+  );
+}
+
+/** One-line tip appended to generic listing fallbacks — keep aligned with `markdownOrderHelpFull`. */
+function markdownOrderingTipLine(): string {
+  return (
+    "💡 Ordering tip: Priced items — 🛒 Add to cart → 🧺 Cart → 📋 Checkout → 💳 Paystack (guest OK). " +
+      "🍽️ Food — Place Order / call to order on the listing. 📩 Services — Send request."
+  );
+}
+
+/** Where to find seller phone / contact — avoid matching generic words like "message" or "seller" alone. */
+const CONTACT_VENDOR_HELP =
+  /\b(contact|phone|whatsapp|vendor|reach\s+out|get\s+in\s+touch|talk\s+to)|\bwhere\s+(do\s+i|can\s+i|to)\s+(contact|call|find|reach)|\bhow\s+(do\s+i|to)\s+(contact|reach|call)|contact\s+(the\s+)?(seller|vendor|store)|the\s+seller|seller\s+(details|contact|phone|number)|\bcall\s+the\s+(seller|vendor|restaurant)/i;
 
 /** User-friendly reply when Ollama is down, slow, or not configured — real listings, no dev jargon. */
 export async function buildAssistantCatalogReply(
   siteName: string,
   message: string,
-  _req: Request
+  _req: Request,
+  history?: ChatTurn[]
 ): Promise<string> {
   const trimmed = String(message || "").trim();
 
   if (isGreetingOnly(trimmed)) {
     return (
-      `Hey! 👋 I'm your **${siteName}** shopping assistant. Ask me about food, fashion, electronics, or any products — I'll find real listings for you!`
+      `Hey! 👋 I'm your 🏪 ${siteName} shopping assistant. Ask me about food, fashion, electronics, or any products — I'll find real listings for you!`
     );
   }
 
-  if (ORDER_HELP.test(trimmed)) {
+  if (ORDER_HELP_INTENT.test(trimmed)) {
+    const prevAssistant = lastAssistantFromHistory(history);
+    if (prevAssistant && prevAssistant.includes(ORDER_HELP_FULL_MARKER)) {
+      return markdownOrderHelpRepeat(siteName);
+    }
+    return markdownOrderHelpFull(siteName);
+  }
+
+  if (CONTACT_VENDOR_HELP.test(trimmed)) {
+    const products = await findProductsForFallback(message, 3);
+    const appOrigin = trimAppOrigin(env.APP_ORIGIN);
+    const exampleLines =
+      products.length > 0
+        ? [
+            "",
+            "📎 Example listings — open one and scroll for seller contact / payment details:",
+            "",
+            ...products.map((p) =>
+              formatProductLine(p as Record<string, unknown> & { store?: { name?: string; slug?: string } }, appOrigin)
+            )
+          ]
+        : [];
+
     return (
-      `Here's how to order on **${siteName}**:\n\n` +
-        `**For food & services:** Open the listing and tap **Contact seller** to place your order directly.\n\n` +
-        `**For other products:** Sign in → **Add to cart** → **Checkout** → pay with **Paystack**.\n\n` +
-        `Need help finding something specific? Just ask! 🛒`
+      `📞 Where to contact a vendor on ${siteName}\n\n` +
+        `1. 📦 Open the product — every listing has its own page. Seller / payout / contact info is on that page (near the description), including call-to-order food.\n` +
+        `2. 🏪 Same store, more items — tap the store name link on a card to open that vendor’s storefront and menu.\n` +
+        `3. 📬 After you buy (with an account), use Orders and Messages when chat is available — guests use the email and phone from checkout and details on the listing.\n` +
+        exampleLines.join("\n")
     );
   }
 
@@ -167,8 +241,8 @@ export async function buildAssistantCatalogReply(
 
   if (!products.length && !stores.length) {
     return (
-      `I'm having trouble loading suggestions right now, but you can still browse **${siteName}** from the home page. ` +
-      `Try **Food & drinks** in the menu, or use search. Sign in to track **Orders** and message sellers after you buy.`
+      `I'm having trouble loading suggestions right now, but you can still browse ${siteName} from the home page. ` +
+      `Try Food & drinks in the menu, or search. You can check out as a guest or sign in to track orders and message sellers when available.`
     );
   }
 
@@ -177,7 +251,7 @@ export async function buildAssistantCatalogReply(
 
   if (food) {
     parts.push(
-      `Here are some **food** options on ${siteName} — each dish belongs to a restaurant; tap the name for details or the restaurant for the full menu:`
+      `Here are some 🍽️ food options on ${siteName} — each dish belongs to a restaurant; tap the name for details or the restaurant for the full menu:`
     );
   } else if (products.length) {
     parts.push(`Here are some listings on ${siteName} you can open right now:`);
@@ -195,7 +269,7 @@ export async function buildAssistantCatalogReply(
   if (food && stores.length) {
     parts.push(
       "",
-      "**Restaurants & stores:**",
+      "🏪 Restaurants & stores:",
       ...stores.map((b) => {
         const slug = String(b.slug || "").trim();
         const name = String(b.name || "Store").trim();
@@ -206,14 +280,16 @@ export async function buildAssistantCatalogReply(
     );
   }
 
-  parts.push(
-    "",
-    "Need help ordering? For **food**, open a listing and **contact the seller** to place your order. For other items, use **Add to cart** when signed in."
-  );
+  parts.push("", markdownOrderingTipLine());
 
   return parts.join("\n");
 }
 
-export async function buildAssistantIdleReply(siteName: string, message: string, req: Request): Promise<string> {
-  return buildAssistantCatalogReply(siteName, message, req);
+export async function buildAssistantIdleReply(
+  siteName: string,
+  message: string,
+  req: Request,
+  history?: ChatTurn[]
+): Promise<string> {
+  return buildAssistantCatalogReply(siteName, message, req, history);
 }

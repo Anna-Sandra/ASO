@@ -5,18 +5,55 @@ import { HttpError } from "../../utils/httpError";
 import { env, isPaystackMoneyRailEnabled } from "../../config/env";
 import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
 import { buyerTotalForMerchantNetGhs, roundMoney, serviceFeeOnVendorGross } from "../../utils/commission";
+import type { OrderDoc } from "./order.model";
 import { Order } from "./order.model";
 import { Product } from "../products/product.model";
 import { withContacts } from "./orderSerialize";
+import {
+  newGuestOrderSecret,
+  canActAsOrderBuyer,
+  readGuestSecretFromRequest,
+  GUEST_ORDER_MESSAGE_SENDER_ID
+} from "./orderAccess";
 import { notifyOrderCancelledForCounterparties, notifyOrderMessageRecipients, notifySellersNewOrder, notifySellersPaymentSubmitted } from "../notifications/notification.service";
 
 type InboxMsg = { senderRole: string; text: string; createdAt: Date; senderId: mongoose.Types.ObjectId | string };
 
 export const checkout = asyncHandler(async (req: Request, res: Response) => {
-  const { items } = req.body as {
+  const body = req.body as {
     items: { productId: string; quantity: number; customization?: string }[];
+    guestEmail?: string;
+    guestName?: string;
+    guestPhone?: string;
   };
-  const buyerId = new mongoose.Types.ObjectId(req.user!.id);
+  const { items } = body;
+
+  let buyerId: mongoose.Types.ObjectId | null = null;
+  let guestContact: { displayName: string; email: string; phone: string } | undefined;
+  let guestAccessSecret: string | undefined;
+
+  const role = req.user?.role;
+  const canUseAccount =
+    req.user?.id &&
+    role &&
+    ["buyer", "seller", "admin"].includes(role) &&
+    String(req.user.id).trim();
+
+  if (canUseAccount) {
+    buyerId = new mongoose.Types.ObjectId(req.user!.id);
+  } else {
+    const em = String(body.guestEmail || "").trim();
+    const nm = String(body.guestName || "").trim();
+    const ph = String(body.guestPhone || "").trim();
+    if (!em || !nm || !ph) {
+      throw new HttpError(
+        400,
+        "Sign in to checkout with your account, or provide guestName, guestEmail, and guestPhone for guest checkout."
+      );
+    }
+    guestContact = { displayName: nm, email: em.toLowerCase(), phone: ph };
+    guestAccessSecret = newGuestOrderSecret();
+  }
 
   const lineItems: Array<{
     productId: mongoose.Types.ObjectId;
@@ -26,6 +63,7 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     unitPrice: number;
     platformFee: number;
     sellerProceeds: number;
+    buyerNote?: string;
   }> = [];
 
   const commissionPct = await getEffectiveCommissionPercent();
@@ -77,7 +115,9 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
   const processingFeeTotal = roundMoney(total - baseBeforeProcessing);
 
   const order = await Order.create({
-    buyerId,
+    buyerId: buyerId ?? null,
+    ...(guestContact ? { guestContact } : {}),
+    ...(guestAccessSecret ? { guestAccessSecret } : {}),
     items: lineItems,
     currency: "ghs",
     subtotal,
@@ -90,7 +130,9 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
   void notifySellersNewOrder(order._id.toString());
 
   const [orderOut] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
-  res.status(201).json({ order: orderOut });
+  const payload: Record<string, unknown> = { order: orderOut };
+  if (guestAccessSecret) payload.guestAccessSecret = guestAccessSecret;
+  res.status(201).json(payload);
 });
 
 export const listMyOrders = asyncHandler(async (req: Request, res: Response) => {
@@ -186,19 +228,39 @@ export const listSellerBuyerInbox = asyncHandler(async (req: Request, res: Respo
 export const getOrder = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
-  const o = await Order.findById(id).lean();
+  const o = await Order.findById(id).select("+guestAccessSecret").lean();
   if (!o) throw new HttpError(404, "Order not found");
 
-  const uid = req.user!.id;
-  if (o.buyerId.toString() === uid || req.user!.role === "admin") {
-    const [order] = await withContacts([o as unknown as Record<string, unknown>]);
+  const uid = req.user?.id;
+  const secret = readGuestSecretFromRequest(req);
+
+  const stripAndRespond = async (doc: Record<string, unknown>) => {
+    const plain = { ...doc };
+    delete plain.guestAccessSecret;
+    const [order] = await withContacts([plain]);
     return res.json({ order });
+  };
+
+  if (req.user?.role === "admin") {
+    return stripAndRespond(o as unknown as Record<string, unknown>);
   }
-  const isSeller = (o.items as Array<{ sellerId: mongoose.Types.ObjectId }>).some((it) => it.sellerId.toString() === uid);
-  if (req.user!.role === "seller" && isSeller) {
-    const [order] = await withContacts([o as unknown as Record<string, unknown>]);
-    return res.json({ order });
+
+  if (o.buyerId) {
+    if (uid && o.buyerId.toString() === uid) {
+      return stripAndRespond(o as unknown as Record<string, unknown>);
+    }
+  } else if (canActAsOrderBuyer(req, o as unknown as OrderDoc, secret)) {
+    return stripAndRespond(o as unknown as Record<string, unknown>);
   }
+
+  const isSeller =
+    uid &&
+    req.user?.role === "seller" &&
+    (o.items as Array<{ sellerId: mongoose.Types.ObjectId }>).some((it) => it.sellerId.toString() === uid);
+  if (isSeller) {
+    return stripAndRespond(o as unknown as Record<string, unknown>);
+  }
+
   throw new HttpError(403, "Forbidden");
 });
 
@@ -208,6 +270,7 @@ export const addOrderMessage = asyncHandler(async (req: Request, res: Response) 
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
   const order = await Order.findById(id);
   if (!order) throw new HttpError(404, "Order not found");
+  if (!order.buyerId) throw new HttpError(400, "In-app order chat requires a buyer account.");
 
   const uid = req.user!.id;
   const isBuyer = order.buyerId.toString() === uid;
@@ -234,14 +297,20 @@ export const addOrderMessage = asyncHandler(async (req: Request, res: Response) 
 export const deleteMyOrder = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
-  const order = await Order.findById(id);
+  const order = await Order.findById(id).select("+guestAccessSecret");
   if (!order) throw new HttpError(404, "Order not found");
-  const uid = req.user!.id;
-  const isBuyer = order.buyerId.toString() === uid;
-  const isAdmin = req.user!.role === "admin";
-  const sid = new mongoose.Types.ObjectId(uid);
-  const sellerTouchesLine = order.items.some((it) => it.sellerId.equals(sid));
-  const isOrderSeller = req.user!.role === "seller" && sellerTouchesLine;
+
+  const uid = req.user?.id;
+  const role = req.user?.role;
+  const secret = readGuestSecretFromRequest(req);
+
+  const isAccountBuyer = Boolean(order.buyerId && uid && order.buyerId.toString() === uid);
+  const isGuestBuyer = !order.buyerId && canActAsOrderBuyer(req, order.toObject() as OrderDoc, secret);
+  const isBuyer = isAccountBuyer || isGuestBuyer;
+  const isAdmin = role === "admin";
+  const sid = uid ? new mongoose.Types.ObjectId(uid) : null;
+  const sellerTouchesLine = sid ? order.items.some((it) => it.sellerId.equals(sid)) : false;
+  const isOrderSeller = role === "seller" && sellerTouchesLine;
   if (!isBuyer && !isAdmin && !isOrderSeller) {
     throw new HttpError(403, "Forbidden");
   }
@@ -277,9 +346,16 @@ export const deleteMyOrder = asyncHandler(async (req: Request, res: Response) =>
 export const cancelMyOrder = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
-  const order = await Order.findById(id);
+  const order = await Order.findById(id).select("+guestAccessSecret");
   if (!order) throw new HttpError(404, "Order not found");
-  if (order.buyerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
+
+  const uid = req.user?.id;
+  const canCancel =
+    (order.buyerId && uid && order.buyerId.toString() === uid) ||
+    (!order.buyerId && canActAsOrderBuyer(req, order.toObject() as OrderDoc, readGuestSecretFromRequest(req)));
+  if (!canCancel) {
+    throw new HttpError(403, "Forbidden");
+  }
 
   if (!["pending_payment", "awaiting_vendor_payment"].includes(order.status)) {
     throw new HttpError(
@@ -296,16 +372,22 @@ export const cancelMyOrder = asyncHandler(async (req: Request, res: Response) =>
 
   order.status = "cancelled";
   order.confirmedSellerIds = [];
-  if (reason) {
+  const buyerSender =
+    order.buyerId && uid
+      ? new mongoose.Types.ObjectId(uid)
+      : !order.buyerId
+        ? GUEST_ORDER_MESSAGE_SENDER_ID
+        : null;
+  if (buyerSender && reason) {
     order.messages.push({
-      senderId: new mongoose.Types.ObjectId(req.user!.id),
+      senderId: buyerSender,
       senderRole: "buyer",
       text: `Order cancelled by buyer. Reason: ${reason}`,
       createdAt: new Date()
     });
-  } else {
+  } else if (buyerSender) {
     order.messages.push({
-      senderId: new mongoose.Types.ObjectId(req.user!.id),
+      senderId: buyerSender,
       senderRole: "buyer",
       text: "Order cancelled by buyer.",
       createdAt: new Date()
@@ -334,9 +416,14 @@ export const markManualPayment = asyncHandler(async (req: Request, res: Response
         reference?: string;
       };
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
-  const order = await Order.findById(id);
+  const order = await Order.findById(id).select("+guestAccessSecret");
   if (!order) throw new HttpError(404, "Order not found");
-  if (order.buyerId.toString() !== req.user!.id) throw new HttpError(403, "Forbidden");
+  const canPay =
+    (order.buyerId && req.user?.id && order.buyerId.toString() === req.user.id) ||
+    (!order.buyerId && canActAsOrderBuyer(req, order.toObject() as OrderDoc, readGuestSecretFromRequest(req)));
+  if (!canPay) {
+    throw new HttpError(403, "Forbidden");
+  }
   if (order.status !== "pending_payment") throw new HttpError(400, "Order is not payable");
 
   if (isPaystackMoneyRailEnabled()) {

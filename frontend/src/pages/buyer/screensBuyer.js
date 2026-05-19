@@ -470,7 +470,7 @@ export function ProductDetailPage() {
   const loc = useLocation();
   const [searchParams] = useSearchParams();
   const orderIdFromUrl = searchParams.get("orderId") || "";
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { toast } = useNotice();
   const { add } = useCart();
   const { isSaved, toggleSaved } = useSavedProducts();
@@ -522,6 +522,14 @@ export function ProductDetailPage() {
       cancelled = true;
     };
   }, [productId]);
+
+  useEffect(() => {
+    if (!product?.id || user?.role !== "buyer" || !accessToken) return;
+    apiFetch(`/api/products/${product.id}/view`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` }
+    }).catch(() => {});
+  }, [product?.id, accessToken, user?.role]);
 
   useEffect(() => {
     if (!accessToken || !productId) {
@@ -576,10 +584,6 @@ export function ProductDetailPage() {
 
   const tryAdd = () => {
     if (!product || isOfflineQuoteCategory(product) || (product.stock ?? 0) <= 0) return;
-    if (!accessToken) {
-      nav("/login", { state: { from: loc.pathname } });
-      return;
-    }
     add(product, 1);
     setCartOpen(true);
   };
@@ -1006,9 +1010,7 @@ export function ProductDetailPage() {
                     ? "Use the form above to place your order"
                     : (product.stock ?? 0) <= 0
                       ? "Out of stock"
-                      : accessToken
-                        ? "Add to cart"
-                        : "Sign in to add to cart"
+                      : "Add to cart"
               )
             ].filter(Boolean)
           ),
@@ -1038,6 +1040,56 @@ export function ProductDetailPage() {
     ),
     h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })
   ]);
+}
+
+/** Shop home: algorithm rails from GET /api/products/recommended (personalized when signed in). */
+function ShopHomeRecommendationRails({ rows, loading, err }) {
+  if (err)
+    return h(
+      "p",
+      { key: "rec-err", className: "mb-6 text-sm text-amber-800 dark:text-amber-200/90" },
+      String(err)
+    );
+  if (loading && (!rows || !rows.length))
+    return h(
+      "p",
+      { key: "rec-load", className: "mb-6 text-sm text-slate-500 dark:text-slate-400" },
+      "Loading recommendations for you…"
+    );
+  if (!rows || !rows.length) return null;
+  return h(
+    "section",
+    {
+      key: "home-rec",
+      className: "mb-8 space-y-7",
+      "aria-label": "Recommended for you"
+    },
+    rows.map((row) =>
+      h("div", { key: row.id || row.title }, [
+        h("div", { key: "hdr", className: "mb-2 flex items-center gap-2" }, [
+          h(Sparkles, { key: "ic", className: "h-4 w-4 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
+          h(
+            "h3",
+            {
+              key: "t",
+              className:
+                "font-display text-base font-semibold tracking-tight text-slate-900 dark:text-white sm:text-lg"
+            },
+            row.title
+          )
+        ]),
+        h(
+          "div",
+          {
+            key: "rail",
+            className:
+              "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:gap-3.5 sm:px-0"
+          },
+          (row.products || []).map((p) => h(MenuItemFeedCard, { key: p.id, product: p, compact: true }))
+        )
+      ])
+    )
+  );
 }
 
 /** Horizontal discovery rail on product detail (matches shop recommendation poster tiles). */
@@ -1163,7 +1215,7 @@ function buyerTabsScrollWrap(pillNodes) {
   );
 }
 
-/** Storefront sidebar: discover links, profile / apply, price filters (categories stay in main-area chips only). */
+/** Storefront sidebar: Browse (All / New / Popular), discover links, apply links, price filters — category chips stay in the main column. */
 function BuyerStorefrontAside({
   fil,
   setFil,
@@ -1239,6 +1291,35 @@ function BuyerStorefrontAside({
     "div",
     { className: "flex h-full min-h-0 flex-col gap-0 overflow-y-auto p-2.5 lg:p-3" },
     [
+      h("p", { key: "br-h", className: "mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400" }, "Browse"),
+      h(
+        "div",
+        {
+          key: "browse-filters",
+          className: "mb-3 flex flex-col gap-1.5",
+          role: "group",
+          "aria-label": "Browse: All, New, or Popular"
+        },
+        withAllCategoryFirst(FILTERS).map((fitem) =>
+          h(
+            "button",
+            {
+              key: fitem.id,
+              type: "button",
+              onClick: () => {
+                setFil(fitem.id);
+                onItemClick?.();
+              },
+              className: `w-full rounded-lg px-2 py-2 text-left text-[13px] font-semibold leading-snug transition ${
+                fil === fitem.id
+                  ? "border border-sky-200 bg-sky-50 text-sky-950 shadow-sm dark:border-sky-500/35 dark:bg-sky-950/40 dark:text-sky-100"
+                  : "border border-transparent text-slate-700 hover:bg-sky-50/70 dark:text-slate-200 dark:hover:bg-white/5"
+              }`
+            },
+            fitem.label
+          )
+        )
+      ),
       h("p", { key: "u-h", className: "mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400" }, "Discover"),
       linkRow("browse-stores", Building2, "Browse stores", "/browse-stores"),
       row("saved", Bookmark, "Saved items", {
@@ -1279,8 +1360,9 @@ function BuyerStorefrontAside({
           ),
           h("div", { key: "row", className: "mt-1.5 grid grid-cols-2 gap-1.5" }, [
             h("label", { key: "lmin", className: "block" }, [
-              h("span", { className: "block text-[9px] font-medium text-slate-500 dark:text-slate-400" }, "Min"),
+              h("span", { key: "min-lbl", className: "block text-[9px] font-medium text-slate-500 dark:text-slate-400" }, "Min"),
               h(TextInput, {
+                key: "min-inp",
                 type: "number",
                 min: 0,
                 step: 1,
@@ -1295,8 +1377,9 @@ function BuyerStorefrontAside({
               })
             ]),
             h("label", { key: "lmax", className: "block" }, [
-              h("span", { className: "block text-[9px] font-medium text-slate-500 dark:text-slate-400" }, "Max"),
+              h("span", { key: "max-lbl", className: "block text-[9px] font-medium text-slate-500 dark:text-slate-400" }, "Max"),
               h(TextInput, {
+                key: "max-inp",
                 type: "number",
                 min: 0,
                 step: 1,
@@ -1690,10 +1773,11 @@ export function BuyerLayout({
                 },
                 [
                   h("div", { key: "dr-head", className: "flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-3 py-2.5 dark:border-white/10" }, [
-                    h("span", { className: "text-sm font-bold text-slate-900 dark:text-white" }, "Menu"),
+                    h("span", { key: "dr-title", className: "text-sm font-bold text-slate-900 dark:text-white" }, "Menu"),
                     h(
                       "button",
                       {
+                        key: "dr-close",
                         type: "button",
                         className: "tap-target rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10",
                         "aria-label": "Close menu",
@@ -2000,9 +2084,7 @@ function StorefrontTrustBar() {
 
 export function CartDrawer({ open, onClose }) {
   const { items, subtotal, setQty, remove, clear, setCustomization } = useCart();
-  const { accessToken } = useAuth();
   const nav = useNavigate();
-  const loc = useLocation();
   const pricingOpts = useCheckoutPricingOptions();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -2019,13 +2101,8 @@ export function CartDrawer({ open, onClose }) {
         )
       : null;
 
-  const checkout = async () => {
+  const checkout = () => {
     setErr("");
-    if (!accessToken) {
-      onClose?.();
-      nav("/login", { state: { from: "/checkout" } });
-      return;
-    }
     if (items.length === 0 || subtotal <= 0 || hasBlockedLine) return;
     onClose?.();
     nav("/checkout");
@@ -2140,11 +2217,6 @@ export function CartDrawer({ open, onClose }) {
                           type: "button",
                           className: "tap-target rounded-xl border border-white/15 p-2 hover:bg-white/10",
                           onClick: () => {
-                            if (!accessToken) {
-                              onClose?.();
-                              nav("/login", { state: { from: loc.pathname + (loc.search || "") } });
-                              return;
-                            }
                             setQty(lk, p.qty + 1);
                           }
                         },
@@ -2234,12 +2306,19 @@ function validateMomoByProvider(provider, localRaw) {
   return "";
 }
 
+function guestOrderSecretStorageKey(orderId) {
+  return `guestOrderSecret:${orderId || ""}`;
+}
+
 export function CheckoutPage() {
   const { user, accessToken } = useAuth();
   const { items, subtotal } = useCart();
   const nav = useNavigate();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [guestName, setGuestName] = useState("");
+  const [guestEmail, setGuestEmail] = useState("");
+  const [guestPhone, setGuestPhone] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
   const hasBlockedLine = items.some((p) => isOfflineQuoteCategory(p));
 
@@ -2255,19 +2334,10 @@ export function CheckoutPage() {
   const totalStr = formatGhc(breakdown ? breakdown.total : subtotal);
 
   /**
-   * Paystack guide flow: backend creates the session; frontend only POSTs { email, amount, orderId } then redirects.
+   * Paystack guide flow: backend creates the session; frontend POSTs checkout then `{ email, amount, orderId[, guestSecret] }`.
    */
   const handlePayNow = async () => {
     setErr("");
-    if (!accessToken) {
-      nav("/login");
-      return;
-    }
-    const email = (user && user.email && String(user.email).trim()) || "";
-    if (!email) {
-      setErr("Add an email to your account before paying, or sign in with email.");
-      return;
-    }
     if (!items.length) {
       setErr("Your cart is empty.");
       return;
@@ -2280,6 +2350,21 @@ export function CheckoutPage() {
       );
       return;
     }
+    if (!accessToken) {
+      const nm = String(guestName || "").trim();
+      const em = String(guestEmail || "").trim();
+      const ph = String(guestPhone || "").trim();
+      if (nm.length < 2 || !em.includes("@") || ph.replace(/\D/g, "").length < 8) {
+        setErr("Enter your full name, a valid email, and a phone number so we can confirm your order.");
+        return;
+      }
+    } else {
+      const email = (user && user.email && String(user.email).trim()) || "";
+      if (!email) {
+        setErr("Add an email to your account before paying, or sign in with email.");
+        return;
+      }
+    }
     setLoading(true);
     try {
       const checkoutBody = {
@@ -2287,21 +2372,46 @@ export function CheckoutPage() {
           productId: p.id,
           quantity: p.qty,
           customization: supportsCartCustomizationNotes(p) ? String(p.customization || "").trim().slice(0, 280) : ""
-        }))
+        })),
+        ...(!accessToken
+          ? {
+              guestName: String(guestName || "").trim(),
+              guestEmail: String(guestEmail || "").trim(),
+              guestPhone: String(guestPhone || "").trim()
+            }
+          : {})
       };
-      const { order } = await apiFetch("/api/orders/checkout", {
+      const hdr = {};
+      if (accessToken) hdr.Authorization = `Bearer ${accessToken}`;
+      const checkoutRes = await apiFetch("/api/orders/checkout", {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: hdr,
         json: checkoutBody
       });
+      const order = checkoutRes.order;
+      const guestAccessSecret = checkoutRes.guestAccessSecret;
+      if (guestAccessSecret && order && order.id) {
+        try {
+          sessionStorage.setItem(guestOrderSecretStorageKey(order.id), String(guestAccessSecret));
+        } catch {
+          /* ignore quota */
+        }
+      }
+      const payEmail = accessToken
+        ? (user && user.email && String(user.email).trim()) || ""
+        : String(guestEmail || "").trim();
+      const payJson = {
+        email: payEmail,
+        amount: Number(order.total),
+        orderId: order.id,
+        ...(guestAccessSecret ? { guestSecret: String(guestAccessSecret) } : {})
+      };
+      const payHdr = {};
+      if (accessToken) payHdr.Authorization = `Bearer ${accessToken}`;
       const data = await apiFetch("/api/paystack/init", {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        json: {
-          email,
-          amount: Number(order.total),
-          orderId: order.id
-        }
+        headers: payHdr,
+        json: payJson
       });
       const url = data.authorization_url || data.authorizationUrl;
       if (!url) {
@@ -2438,6 +2548,38 @@ export function CheckoutPage() {
         : null
     ]),
 
+    !accessToken
+      ? h("div", { key: "guest", className: "mt-4 space-y-3" }, [
+          h(
+            "p",
+            { key: "gcap", className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+            "Contact (guest checkout)"
+          ),
+          h(Field, { key: "nm", label: "Full name" }, h(TextInput, {
+              value: guestName,
+              onChange: (e) => setGuestName(e.target.value),
+              autoComplete: "name"
+            })),
+          h(Field, { key: "em", label: "Email" }, h(TextInput, {
+              value: guestEmail,
+              onChange: (e) => setGuestEmail(e.target.value),
+              type: "email",
+              autoComplete: "email"
+            })),
+          h(Field, { key: "ph", label: "Phone" }, h(TextInput, {
+              value: guestPhone,
+              onChange: (e) => setGuestPhone(e.target.value),
+              type: "tel",
+              autoComplete: "tel"
+            })),
+          h(
+            "p",
+            { key: "hint", className: "text-xs text-slate-500 dark:text-slate-400" },
+            "We use this to confirm your order. Sign in anytime to track purchases under My orders."
+          )
+        ])
+      : null,
+
     err ? h(InlineNotice, { key: "err", variant: "error", className: "mt-4", onDismiss: () => setErr("") }, err) : null,
 
     h(Button, {
@@ -2452,7 +2594,6 @@ export function CheckoutPage() {
 export function SavedProductsPage() {
   const { accessToken } = useAuth();
   const nav = useNavigate();
-  const loc = useLocation();
   const [cartOpen, setCartOpen] = useState(false);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2463,10 +2604,6 @@ export function SavedProductsPage() {
 
   const tryAddToCart = (p) => {
     if (isOfflineQuoteCategory(p) || (p.stock ?? 0) <= 0) return;
-    if (!accessToken) {
-      nav("/login", { state: { from: loc.pathname + (loc.search || "") } });
-      return;
-    }
     add(p, 1);
     setCartOpen(true);
   };
@@ -2537,7 +2674,8 @@ export function SavedProductsPage() {
                 "div",
                 {
                   key: "grid",
-                  className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+                  className:
+                    "grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5"
                 },
                 products.map((p) => {
                   const detailTo = `/products/${p.id}`;
@@ -2555,7 +2693,7 @@ export function SavedProductsPage() {
                     {
                       key: p.id,
                       className:
-                        "group flex flex-col overflow-hidden rounded-xl border border-slate-200/95 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-night-900/55"
+                        "group flex flex-col overflow-hidden rounded-xl border border-slate-200/95 bg-white p-2 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-night-900/55 sm:p-4"
                     },
                     [
                       h("div", { key: "img", className: "relative" }, [
@@ -2572,7 +2710,7 @@ export function SavedProductsPage() {
                             src: p.imageUrls?.[0],
                             n: refFromId(p.id),
                             alt: p.name,
-                            className: "h-44 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-48"
+                            className: "h-28 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-40 md:h-48"
                           })
                         )
                       ]),
@@ -2588,7 +2726,7 @@ export function SavedProductsPage() {
                                 to: detailTo,
                                 className: "min-w-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
                               },
-                              h("h3", { className: "line-clamp-2 text-sm font-semibold leading-snug text-slate-900 underline-offset-2 hover:underline dark:text-white sm:text-[15px]" }, p.name)
+                              h("h3", { className: "line-clamp-2 text-xs font-semibold leading-snug text-slate-900 underline-offset-2 hover:underline dark:text-white sm:text-sm sm:text-[15px]" }, p.name)
                             )
                           ),
                           h(
@@ -2638,7 +2776,7 @@ export function SavedProductsPage() {
                                     formatGhc(cmpAt)
                                   )
                                 : null,
-                              h("span", { key: "list", className: "text-lg font-extrabold text-sky-700 dark:text-sky-200" }, formatGhc(listP)),
+                              h("span", { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" }, formatGhc(listP)),
                               h(
                                 "span",
                                 {
@@ -2654,7 +2792,7 @@ export function SavedProductsPage() {
                             key: "add",
                             variant: "ghost",
                             className:
-                              "mt-4 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !font-semibold !text-sky-700 hover:!bg-sky-50 dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
+                              "mt-2 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !text-xs !font-semibold !text-sky-700 hover:!bg-sky-50 sm:mt-4 sm:!text-sm dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
                             type: "button",
                             disabled: !quoteCard && (p.stock ?? 0) <= 0,
                             onClick: () => {
@@ -2672,13 +2810,11 @@ export function SavedProductsPage() {
                               { key: "tx" },
                               quoteCard
                                 ? foodCard
-                                  ? "View · call to order"
+                                  ? "Place Order"
                                   : "View listing"
                                 : (p.stock ?? 0) <= 0
                                   ? "Out of stock"
-                                  : accessToken
-                                    ? "Add to cart"
-                                    : "Sign in to add"
+                                  : "Add to cart"
                             )
                           ].filter(Boolean)
                         )
@@ -2709,19 +2845,13 @@ export function ShopPage() {
   const [recRows, setRecRows] = useState([]);
   const [recLoading, setRecLoading] = useState(false);
   const [recErr, setRecErr] = useState("");
-  const [recPreferValue, setRecPreferValue] = useState(true);
   const { add } = useCart();
   const { accessToken } = useAuth();
   const { isSaved, toggleSaved } = useSavedProducts();
   const nav = useNavigate();
-  const loc = useLocation();
 
   const tryAddToCart = (p) => {
     if (isOfflineQuoteCategory(p) || (p.stock ?? 0) <= 0) return;
-    if (!accessToken) {
-      nav("/login", { state: { from: loc.pathname + (loc.search || "") } });
-      return;
-    }
     add(p, 1);
     setCartOpen(true);
   };
@@ -2730,6 +2860,28 @@ export function ShopPage() {
     const t = setTimeout(() => setSearchQ(queryInput.trim()), 350);
     return () => clearTimeout(t);
   }, [queryInput]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRecLoading(true);
+    setRecErr("");
+    const headers = {};
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    apiFetch("/api/products/recommended", { headers })
+      .then((d) => {
+        if (cancelled) return;
+        setRecRows(Array.isArray(d.rows) ? d.rows : []);
+      })
+      .catch((ex) => {
+        if (!cancelled) setRecErr(ex.message || "Could not load recommendations");
+      })
+      .finally(() => {
+        if (!cancelled) setRecLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2757,47 +2909,6 @@ export function ShopPage() {
       cancelled = true;
     };
   }, [cat, searchQ, minPriceQ, maxPriceQ]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setRecLoading(true);
-    setRecErr("");
-    const qs = new URLSearchParams();
-    qs.set("preferCheaper", recPreferValue ? "1" : "0");
-    const hdr = {};
-    if (accessToken) hdr.Authorization = `Bearer ${accessToken}`;
-    apiFetch(`/api/products/recommended?${qs.toString()}`, { headers: hdr })
-      .then((d) => {
-        if (cancelled) return;
-        const rawRows = Array.isArray(d.rows) ? d.rows : [];
-        const normalized = rawRows
-          .filter((r) => r && Array.isArray(r.products) && r.products.length)
-          .map((r) => ({
-            id: String(r.id || r.title || ""),
-            title: String(r.title || "Recommended"),
-            products: r.products
-          }));
-        if (normalized.length) {
-          setRecRows(normalized);
-        } else if (Array.isArray(d.products) && d.products.length) {
-          setRecRows([{ id: "recommended", title: "Recommended for you", products: d.products }]);
-        } else {
-          setRecRows([]);
-        }
-      })
-      .catch((ex) => {
-        if (!cancelled) {
-          setRecErr(ex.message || "Could not load recommendations");
-          setRecRows([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setRecLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accessToken, recPreferValue]);
 
   const applyPriceRange = () => {
     const minRaw = parseFloat(String(minPriceIn).trim());
@@ -2893,110 +3004,7 @@ export function ShopPage() {
         ])
       ]),
       h("section", { key: "quick-cats", className: "mb-5", "aria-label": "Categories" }, h(StorefrontCategoryChips, { active: cat, onSelect: setCat })),
-      h("div", { key: "filters-row", className: "mb-6 flex flex-wrap items-center gap-2 rounded-[1rem] border border-white/70 bg-white/80 px-3 py-2.5 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-night-900/55" }, [
-        h("span", { key: "flabel", className: "text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500" }, "Browse"),
-        withAllCategoryFirst(FILTERS).map((fitem) =>
-          h(
-            "button",
-            {
-              key: fitem.id,
-              type: "button",
-              onClick: () => setFil(fitem.id),
-              className: `tap-target rounded-full px-4 py-2 text-xs font-semibold transition sm:text-sm ${
-                fil === fitem.id
-                  ? "bg-sky-600 text-white shadow-md shadow-sky-600/30"
-                  : "bg-slate-100/85 text-slate-700 hover:bg-sky-50 dark:bg-night-950/70 dark:text-slate-200 dark:hover:bg-white/10"
-              }`
-            },
-            fitem.label
-          )
-        )
-      ]),
-      h("section", { key: "rec-section", className: "mb-8", "aria-label": "Recommended products" }, [
-        h("div", { key: "rec-hdr", className: "mb-5 flex flex-wrap items-end justify-between gap-3" }, [
-          h("div", { key: "rec-titles", className: "min-w-0 space-y-1" }, [
-            h("div", { className: "flex items-center gap-2" }, [
-              h(Sparkles, { className: "h-5 w-5 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
-              h("h2", { className: "font-display text-lg font-bold text-slate-900 dark:text-white sm:text-xl" }, "Featured dishes & picks")
-            ]),
-            accessToken
-              ? null
-              : h(
-                  "p",
-                  { className: "pl-7 text-xs text-slate-500 dark:text-slate-400" },
-                  "Sign in for picks based on your orders."
-                )
-          ]),
-          h("div", {
-            key: "rec-pref",
-            className:
-              "flex shrink-0 rounded-[0.85rem] border border-slate-200/90 bg-white/90 p-0.5 shadow-sm dark:border-white/10 dark:bg-night-950/70",
-            role: "group",
-            "aria-label": "Recommendation style"
-          }, [
-            h(
-              "button",
-              {
-                key: "v",
-                type: "button",
-                onClick: () => setRecPreferValue(true),
-                className: `tap-target rounded-[0.65rem] px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${
-                  recPreferValue
-                    ? "bg-sky-600 text-white shadow-sm shadow-sky-600/25"
-                    : "text-slate-600 hover:bg-slate-100/90 dark:text-slate-300 dark:hover:bg-white/10"
-                }`
-              },
-              "Value"
-            ),
-            h(
-              "button",
-              {
-                key: "r",
-                type: "button",
-                onClick: () => setRecPreferValue(false),
-                className: `tap-target rounded-[0.65rem] px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${
-                  !recPreferValue
-                    ? "bg-sky-600 text-white shadow-sm shadow-sky-600/25"
-                    : "text-slate-600 hover:bg-slate-100/90 dark:text-slate-300 dark:hover:bg-white/10"
-                }`
-              },
-              "Reviews"
-            )
-          ])
-        ]),
-        recErr
-          ? h(InlineNotice, { variant: "error", className: "mb-3", onDismiss: () => setRecErr("") }, recErr)
-          : null,
-        recLoading && !recRows.length
-          ? h("p", { key: "rec-load", className: "text-sm text-slate-500 dark:text-slate-400" }, "Loading suggestions…")
-          : null,
-        !recLoading && recRows.length === 0 && !recErr
-          ? h("p", { key: "rec-none", className: "text-sm text-slate-500 dark:text-slate-400" }, "Nothing to recommend yet.")
-          : null,
-        recRows.length > 0
-          ? recRows.map((row) =>
-              h("div", { key: `${row.id || "row"}-${row.title}`, className: "mb-7 last:mb-0" }, [
-                h(
-                  "h3",
-                  {
-                    key: "tit",
-                    className: "mb-3 font-display text-base font-semibold tracking-tight text-slate-900 dark:text-white sm:text-lg"
-                  },
-                  row.title
-                ),
-                h(
-                  "div",
-                  {
-                    key: "rail",
-                    className:
-                      "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-1 sm:gap-3.5 sm:px-1"
-                  },
-                  row.products.map((p) => h(MenuItemFeedCard, { key: p.id, product: p }))
-                )
-              ])
-            )
-          : null
-      ]),
+      h(ShopHomeRecommendationRails, { key: "shop-rec", rows: recRows, loading: recLoading, err: recErr }),
       listErr
         ? h(InlineNotice, { key: "list-err", variant: "error", className: "mb-4", onDismiss: () => setListErr("") }, listErr)
         : null,
@@ -3023,7 +3031,7 @@ export function ShopPage() {
             h("p", { key: "list-load", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" }, "Loading products…"),
           h(
             "div",
-            { key: "product-grid", className: "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" },
+            { key: "product-grid", className: "grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5" },
             filtered.map((p) => {
               const detailTo = `/products/${p.id}`;
               const quoteCard = isOfflineQuoteCategory(p);
@@ -3038,7 +3046,7 @@ export function ShopPage() {
                 {
                   key: p.id,
                   className:
-                    "group flex flex-col overflow-hidden rounded-xl border border-slate-200/95 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-night-900/55"
+                    "group flex flex-col overflow-hidden rounded-xl border border-slate-200/95 bg-white p-2 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-night-900/55 sm:p-4"
                 },
                 [
                   h("div", { key: "img", className: "relative" }, [
@@ -3055,7 +3063,7 @@ export function ShopPage() {
                         src: p.imageUrls?.[0],
                         n: refFromId(p.id),
                         alt: p.name,
-                        className: "h-44 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-48"
+                        className: "h-28 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-40 md:h-48"
                       })
                     )
                   ]),
@@ -3074,7 +3082,7 @@ export function ShopPage() {
                           h(
                             "h3",
                             {
-                              className: "line-clamp-2 text-sm font-semibold leading-snug text-slate-900 underline-offset-2 hover:underline dark:text-white sm:text-[15px]"
+                              className: "line-clamp-2 text-xs font-semibold leading-snug text-slate-900 underline-offset-2 hover:underline dark:text-white sm:text-sm sm:text-[15px]"
                             },
                             p.name
                           )
@@ -3148,7 +3156,7 @@ export function ShopPage() {
                                 formatGhc(cmpAt)
                               )
                             : null,
-                          h("span", { key: "list", className: "text-lg font-extrabold text-sky-700 dark:text-sky-200" }, formatGhc(listP)),
+                          h("span", { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" }, formatGhc(listP)),
                           h(
                             "span",
                             {
@@ -3165,7 +3173,7 @@ export function ShopPage() {
                       key: "add",
                       variant: "ghost",
                       className:
-                        "mt-4 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !font-semibold !text-sky-700 hover:!bg-sky-50 dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
+                        "mt-2 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !text-xs !font-semibold !text-sky-700 hover:!bg-sky-50 sm:mt-4 sm:!text-sm dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
                       type: "button",
                       disabled: !quoteCard && (p.stock ?? 0) <= 0,
                       onClick: () => {
@@ -3183,13 +3191,11 @@ export function ShopPage() {
                         { key: "tx" },
                         quoteCard
                           ? foodCard
-                            ? "View · call to order"
+                            ? "Place Order"
                             : "View listing"
                           : (p.stock ?? 0) <= 0
                             ? "Out of stock"
-                            : accessToken
-                              ? "Add to cart"
-                              : "Sign in to add"
+                            : "Add to cart"
                       )
                     ].filter(Boolean)
                   )
@@ -4476,10 +4482,23 @@ export function PaymentSuccessPage() {
       setPhase("no_ref");
       return;
     }
-    if (!accessToken) {
+
+    const guestSecret =
+      typeof sessionStorage !== "undefined"
+        ? sessionStorage.getItem(guestOrderSecretStorageKey(orderId)) || ""
+        : "";
+
+    if (!accessToken && !guestSecret) {
       setPhase("no_auth");
       return;
     }
+
+    const buildHeaders = () => {
+      const h = {};
+      if (accessToken) h.Authorization = `Bearer ${accessToken}`;
+      else if (guestSecret) h["X-Guest-Order-Secret"] = guestSecret;
+      return h;
+    };
 
     let cancelled = false;
     let attempts = 0;
@@ -4492,7 +4511,7 @@ export function PaymentSuccessPage() {
       attempts += 1;
       try {
         const d = await apiFetch(`/api/orders/${orderId}`, {
-          headers: { Authorization: `Bearer ${accessToken}` }
+          headers: buildHeaders()
         });
         const st = d.order?.status;
         if (!st) {
@@ -4541,13 +4560,13 @@ export function PaymentSuccessPage() {
       try {
         if (paystackRef) {
           await apiFetch(`/api/paystack/verify/${encodeURIComponent(paystackRef)}`, {
-            headers: { Authorization: `Bearer ${accessToken}` }
+            headers: buildHeaders()
           });
         } else {
           await apiFetch("/api/payments/paystack/verify", {
             method: "POST",
-            headers: { Authorization: `Bearer ${accessToken}` },
-            json: { orderId }
+            headers: buildHeaders(),
+            json: accessToken ? { orderId } : { orderId, guestSecret }
           });
         }
         if (!cancelled && !cartClearedRef.current) {
@@ -4574,7 +4593,7 @@ export function PaymentSuccessPage() {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
     };
-  }, [orderId, accessToken, paystackRef]);
+  }, [orderId, accessToken, paystackRef, clearCart]);
 
   const sellers = order?.sellerContacts || [];
   const confirmed = new Set(order?.confirmedSellerIds || []);
@@ -4590,13 +4609,21 @@ export function PaymentSuccessPage() {
         h("h1", { key: "h1", className: "font-display text-xl font-bold text-slate-900 dark:text-white" }, "Thanks for shopping"),
         h("p", { key: "p", className: "mt-3 text-sm text-slate-600 dark:text-slate-400" }, "Open My orders to see status for recent purchases."),
         h("div", { key: "nav", className: "mt-6 flex flex-wrap justify-center gap-3" }, [
-          h(Link, { to: "/orders", className: "inline-block" }, h(Button, { className: "!rounded-full" }, "My orders")),
+          accessToken && h(Link, { to: "/orders", className: "inline-block" }, h(Button, { className: "!rounded-full" }, "My orders")),
           h(Link, { to: "/", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "Shop"))
         ])
       ],
       phase === "no_auth" && [
-        h("h1", { key: "h1", className: "font-display text-xl font-bold text-slate-900 dark:text-white" }, "Sign in to view order status"),
-        h(Link, { key: "lg", to: "/login", className: "mt-6 inline-block" }, h(Button, { className: "!rounded-full" }, "Log in"))
+        h("h1", { key: "h1", className: "font-display text-xl font-bold text-slate-900 dark:text-white" }, "Can’t verify this order here"),
+        h(
+          "p",
+          { key: "p", className: "mt-3 text-sm text-slate-600 dark:text-slate-400" },
+          "Guest checkout stores a private key in this browser. Open this page from the same device you used to pay, or sign in with the email you used at checkout."
+        ),
+        h("div", { key: "nav", className: "mt-6 flex flex-wrap justify-center gap-3" }, [
+          h(Link, { to: "/login", className: "inline-block" }, h(Button, { className: "!rounded-full" }, "Log in")),
+          h(Link, { to: "/", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "Shop"))
+        ])
       ],
       phase === "pending_gateway" && [
         h("h1", { key: "h1", className: "font-display text-xl font-bold text-amber-400" }, "Payment processing"),
@@ -4652,12 +4679,12 @@ export function PaymentSuccessPage() {
         h(InlineNotice, { key: "err", variant: "error", className: "mt-4 text-left", onDismiss: () => setPollErr("") }, pollErr),
       ["confirmed", "timeout", "error", "no_ref"].includes(phase) &&
         h("div", { key: "nav", className: "mt-6 flex flex-wrap items-center justify-center gap-3" }, [
-          h(Link, { to: "/orders", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "View my orders")),
+          accessToken && h(Link, { to: "/orders", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "View my orders")),
           h(Link, { to: "/", className: "inline-block" }, h(Button, { className: "!rounded-full" }, "Back to shop"))
         ]),
       ["waiting_vendor", "pending_gateway", "loading"].includes(phase) &&
         h("div", { key: "nav-pend", className: "mt-6 flex flex-wrap items-center justify-center gap-3" }, [
-          h(Link, { to: "/orders", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "My orders")),
+          accessToken && h(Link, { to: "/orders", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "My orders")),
           h(Link, { to: "/", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "Shop"))
         ])
     ])

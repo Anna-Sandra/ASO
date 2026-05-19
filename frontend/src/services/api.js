@@ -25,7 +25,8 @@ function mergeAdminHeaders(path, headers) {
 
 if (process.env.NODE_ENV === "development" && typeof window !== "undefined" && !API_BASE) {
   console.warn(
-    "[SHOPIQGH] REACT_APP_API_URL is empty. Set it in frontend/.env to your API (e.g. http://localhost:4000) and restart npm start."
+    "[SHOPIQGH] REACT_APP_API_URL is empty — `/api/*` will use the dev-server proxy (see setupProxy.js → :4000). " +
+      "Set REACT_APP_API_URL only if you want the browser to call the API host directly."
   );
 }
 

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { validateBody } from "../../middleware/validate";
-import { protect } from "../../middleware/auth";
+import { optionalProtect, protect } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import {
   createCheckoutSession,
@@ -31,7 +31,7 @@ router.post(
 
 router.post(
   "/paystack/initialize",
-  protect,
+  optionalProtect,
   requireActiveAccount,
   validateBody(paystackInitializeSchema),
   initializePaystackTransaction
@@ -39,20 +39,20 @@ router.post(
 /** Guide-style init (same handler as POST /api/paystack/init) — lives under /api/payments so it always registers with the payments router. */
 router.post(
   "/paystack/init",
-  protect,
+  optionalProtect,
   requireActiveAccount,
   validateBody(paystackInitGuideSchema),
   initPaystackGuide
 );
 router.get(
   "/paystack/verify/:ref",
-  protect,
+  optionalProtect,
   requireActiveAccount,
   verifyPaystackByReference
 );
 router.post(
   "/paystack/verify",
-  protect,
+  optionalProtect,
   requireActiveAccount,
   validateBody(paystackVerifyOrderSchema),
   verifyPaystackForOrder

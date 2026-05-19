@@ -6,6 +6,55 @@ import { getOrCreateSaveSessionId } from "utils/saveSession";
 import { useAuth } from "context";
 import { h } from "utils/h";
 import { Button, TextInput } from "components/ui";
+import { SITE_NAME } from "config/brand";
+
+/** Mirrors backend `ORDER_HELP_INTENT` so we can answer payment/order questions when the API is offline. */
+const ORDER_PAY_INTENT =
+  /\b(how\s+(do|to|can)\s+(i|you|we)\s+)?(order|buy|purchase|checkout|pay|cart)|\bhow\s+to\s+order|\bwhere\s+(do\s+i|can\s+i)\s+(order|buy|checkout)|\boder\b|i\s+want\s+to\s+(order|buy)/i;
+
+const ORDER_HELP_FULL_MARKER = "🛍️ Most products (you see a price + Add to cart):";
+
+function wantsOrderPayHelp(msg) {
+  return ORDER_PAY_INTENT.test(String(msg || "").trim());
+}
+
+function lastAssistantContent(msgs) {
+  if (!Array.isArray(msgs)) return "";
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === "assistant") return msgs[i].content || "";
+  }
+  return "";
+}
+
+/** Same steps as the server catalog fallback — shown when fetch fails (API down / wrong URL). */
+function offlineOrderPayMarkdown(siteName, short) {
+  if (short) {
+    return (
+      `⏩ Quick reminder on ${siteName}: 🛒 Add to cart → 🧺 Cart → 📋 Checkout → 💳 Paystack. ` +
+        `🍽️ Call-to-order food: Place Order on the listing. 📩 Services: Send request.`
+    );
+  }
+  return (
+    `💳 How to pay on ${siteName}\n\n` +
+      `${ORDER_HELP_FULL_MARKER}\n` +
+      `1. 🛒 Tap Add to cart on the product you want (no account needed).\n` +
+      `2. 🧺 Open Cart (cart button / drawer).\n` +
+      `3. 📋 Tap Checkout and enter name, email, and phone — guest checkout is fine.\n` +
+      `4. 💳 Pay with Paystack on the checkout screen.\n\n` +
+      `🍽️ Food (call-to-order): open the dish → Place Order or call to order — details on the page.\n\n` +
+      `📩 Services (quotes): Send request on the listing (sign-in may be required).\n\n` +
+      `🔓 Signing in is optional — useful for order history. 🛒`
+  );
+}
+
+function apiUnreachableNote() {
+  const isDev = process.env.NODE_ENV === "development";
+  const dev =
+    "Dev tip: run the backend on port 4000 (`npm run dev` in the `backend` folder). If `frontend/.env` sets `REACT_APP_API_URL` to `http://localhost:4000`, either start the API or remove that line and restart `npm start` so `/api` uses the dev-server proxy.";
+  const prod =
+    "Set `REACT_APP_API_URL` in the frontend build to your live API URL, rebuild, and ensure the API is running.";
+  return `\n\n---\n_Live product picks need the assistant API._ ${isDev ? dev : prod}`;
+}
 
 /** @returns {Array<{type: 'text'|'img'|'link', value?: string, alt?: string, url?: string, to?: string, label?: string}>} */
 function splitAssistantMarkdown(text) {
@@ -176,7 +225,9 @@ export function ShoppingAssistantFAB() {
         let msg = `Request failed (${res.status})`;
         try {
           const j = await res.json();
-          if (j?.error?.message) msg = j.error.message;
+          if (typeof j?.message === "string") msg = j.message;
+          else if (typeof j?.error === "string") msg = j.error;
+          else if (j?.error?.message) msg = j.error.message;
         } catch {
           /* ignore */
         }
@@ -257,12 +308,29 @@ export function ShoppingAssistantFAB() {
         );
       }
     } catch (ex) {
+      const raw =
+        typeof ex?.message === "string" ? ex.message : "Could not reach the assistant endpoint.";
+      const networkFail = /failed to fetch|networkerror|load failed|connection refused/i.test(raw);
+      let content;
+      if (networkFail && wantsOrderPayHelp(text)) {
+        const prevA = lastAssistantContent(prior);
+        const short = prevA.includes(ORDER_HELP_FULL_MARKER);
+        content = offlineOrderPayMarkdown(SITE_NAME, short) + apiUnreachableNote();
+      } else if (networkFail) {
+        content =
+          "Can't reach the shopping assistant API right now.\n\n" +
+          (process.env.NODE_ENV === "development"
+            ? "Start the backend on port 4000, or leave REACT_APP_API_URL unset in frontend/.env and restart npm start so /api is proxied to the API."
+            : "Check that REACT_APP_API_URL points at your running API and redeploy the frontend.");
+      } else {
+        content = raw;
+      }
       setMessages((prev) => [
         ...prev,
         {
           id: msgIdRef.current++,
           role: "assistant",
-          content: typeof ex?.message === "string" ? ex.message : "Could not reach the assistant endpoint."
+          content
         }
       ]);
     } finally {
