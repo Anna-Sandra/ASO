@@ -218,7 +218,7 @@ async function loadAssistantPrompt(
 
   const userNote = req.user
     ? `Shopper (${req.user.role}), signed in — mention orders/receipts when useful.`
-    : `Guest or signed-out shopper — they can browse, **add to cart without an account**, and **check out as a guest** (name, email, phone + Paystack). Signing in is optional (order history, some messaging). Do **not** say login is required for cart or checkout unless you mean a specific flow (e.g. service inquiry form).`;
+    : `Guest or signed-out shopper — they can browse, tap Buy on priced products without an account, use Cart, and check out as a guest (email, phone + Paystack). Signing in is optional (order history, some messaging). Do not say login is required for cart or checkout unless you mean a specific flow (e.g. service inquiry form).`;
 
   const personalizeBlock = await shopperPersonalizationNarrative(req);
 
@@ -258,8 +258,8 @@ PRICING RULES — CRITICAL:
 
 FACTS:
 - Only cite products using the listing lines below — never invent items or prices
-- Guest checkout: shoppers can add to cart and pay without logging in; checkout asks for name, email, and phone. Never tell users they must sign in for cart or Paystack checkout for normal products
-- How to pay (priced products in the cart): when asked, use clear numbered steps with emoji cues if you like (e.g. 🛒 Add to cart → 🧺 Cart → 📋 Checkout with name/email/phone as guest → 💳 Paystack). Then mention 🍽️ call-to-order food (Place Order / seller on listing) and 📩 services (Send request / quote) when relevant
+- Guest checkout: shoppers can tap Buy and pay without logging in; checkout asks for email and phone. Never tell users they must sign in for cart or Paystack checkout for normal products
+- How to pay (priced products): when asked, use clear numbered steps with emoji cues if you like (e.g. 🛒 Buy → 🧺 Cart → 📋 Checkout with email/phone as guest → 💳 Paystack). The Buy button adds the item to the cart. Then mention 🍽️ call-to-order food (Place Order / seller on listing) and 📩 services (Send request / quote) when relevant
 - If unsure, suggest search or category hubs
 - Always include the restaurant/store link when present in a listing line
 

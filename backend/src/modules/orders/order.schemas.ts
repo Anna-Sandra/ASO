@@ -13,6 +13,7 @@ export const checkoutSchema = z.object({
     .max(50),
   /** Required when creating an order without authentication (guest checkout). */
   guestEmail: z.string().trim().email().optional(),
+  /** Optional legacy — when omitted, server derives display name from email local-part. */
   guestName: z.string().trim().min(2).max(120).optional(),
   guestPhone: z.string().trim().min(8).max(24).optional()
 });

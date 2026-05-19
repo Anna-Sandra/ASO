@@ -40,7 +40,7 @@ import { VendorOnboardingPage } from "pages/vendor/vendorOnboardingWizard";
 import { VendorReviewsPage } from "pages/vendor/VendorReviewsPage";
 import { VendorServiceInquiriesPage } from "pages/vendor/vendorServiceInquiries";
 import { BuyerReportsPage, VendorReportsPage } from "pages/reports/screensUserReports";
-import { TermsAndConditionsPage, VendorRulesPage } from "pages/legal/screensLegal";
+import { AboutUsPage, TermsAndConditionsPage, VendorRulesPage } from "pages/legal/screensLegal";
 import { AdminPage } from "pages/admin/screensAdmin";
 import { AdminLoginPage, AdminLoginOtpPage } from "pages/admin/screensAdminLogin";
 import RiderDashboard from "pages/rider/RiderDashboard";
@@ -223,6 +223,7 @@ function AppRoutes() {
     h(Route, { path: "/verify-email", element: h(VerifyEmailPage), key: "r-verify" }),
     h(Route, { path: "/forgot-password", element: h(ForgotPasswordPage), key: "r-forgot" }),
     h(Route, { path: "/reset-password", element: h(ResetPasswordPage), key: "r-reset" }),
+    h(Route, { path: "/about", element: h(AboutUsPage), key: "r-about" }),
     h(Route, { path: "/terms", element: h(TermsAndConditionsPage), key: "r-terms" }),
     h(Route, { path: "/support", element: h(BuyerGate, null, h(BuyerHelpSupportPage)), key: "r-support" }),
     h(Route, { path: "/vendor-rules", element: h(VendorRulesPage), key: "r-vendor-rules" }),

@@ -43,15 +43,22 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     buyerId = new mongoose.Types.ObjectId(req.user!.id);
   } else {
     const em = String(body.guestEmail || "").trim();
-    const nm = String(body.guestName || "").trim();
     const ph = String(body.guestPhone || "").trim();
-    if (!em || !nm || !ph) {
+    if (!em || !ph) {
       throw new HttpError(
         400,
-        "Sign in to checkout with your account, or provide guestName, guestEmail, and guestPhone for guest checkout."
+        "Sign in to checkout with your account, or provide guestEmail and guestPhone for guest checkout."
       );
     }
-    guestContact = { displayName: nm, email: em.toLowerCase(), phone: ph };
+    const explicitName = String(body.guestName || "").trim();
+    const fromEmailLocal = (em.split("@")[0] || "").replace(/[._-]+/g, " ").trim();
+    const displayName =
+      explicitName.length >= 2
+        ? explicitName.slice(0, 120)
+        : fromEmailLocal.length >= 2
+          ? fromEmailLocal.slice(0, 120)
+          : "Guest";
+    guestContact = { displayName, email: em.toLowerCase(), phone: ph };
     guestAccessSecret = newGuestOrderSecret();
   }
 

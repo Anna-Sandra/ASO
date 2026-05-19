@@ -17,7 +17,7 @@ import {
   Package,
   Plus,
   ReceiptText,
-  Award,
+  BadgeCheck,
   Building2,
   Bookmark,
   Search,
@@ -32,6 +32,7 @@ import {
   Store,
   Trash2,
   Shield,
+  Lock,
   Truck,
   TrendingUp,
   User,
@@ -102,7 +103,7 @@ function buyerFoodCallPricingPanel() {
     h(
       "p",
       { className: "mt-1 text-xs leading-relaxed text-violet-950/90 dark:text-violet-100/90" },
-      "Call to order — portions and sides can change the price. Use seller contact details below to confirm before you pay."
+      "Tap Place order to send your request to the seller."
     )
   ]);
 }
@@ -1010,7 +1011,7 @@ export function ProductDetailPage() {
                     ? "Use the form above to place your order"
                     : (product.stock ?? 0) <= 0
                       ? "Out of stock"
-                      : "Add to cart"
+                      : "Buy"
               )
             ].filter(Boolean)
           ),
@@ -2042,43 +2043,94 @@ function StorefrontCategoryChips({ active, onSelect }) {
   );
 }
 
-function StorefrontTrustBar() {
-  const cell = (cellKey, Icon, title, subtitle) =>
+function MarketplaceFooter() {
+  const linkCls =
+    "block text-[11px] leading-snug text-slate-400 transition hover:text-slate-100 sm:text-xs";
+  const headCls = "mb-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 sm:text-[11px]";
+
+  const linkCol = (key, title, items) =>
+    h("nav", { key, className: "min-w-0", "aria-label": title }, [
+      h("p", { key: "h", className: headCls }, title),
+      h(
+        "ul",
+        { key: "ul", className: "space-y-1.5" },
+        items.map((it) =>
+          h("li", { key: `${it.to}-${it.label}` }, h(Link, { to: it.to, className: linkCls }, it.label))
+        )
+      )
+    ]);
+
+  const trustChip = (k, Icon, label) =>
     h(
       "div",
       {
-        key: cellKey,
-        className: "flex items-start gap-3 rounded-xl border border-slate-200/70 bg-white/90 p-3 shadow-sm dark:border-white/10 dark:bg-night-900/50 sm:p-4"
+        key: k,
+        className:
+          "inline-flex max-w-full items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 sm:gap-2 sm:px-2.5 sm:py-1.5"
       },
       [
-        h(
-          "div",
-          {
-            key: "ic-wrap",
-            className: "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-100 dark:bg-sky-950/45"
-          },
-          h(Icon, { className: "h-5 w-5 text-sky-700 dark:text-sky-200", "aria-hidden": true })
-        ),
-        h("div", { key: "tx", className: "min-w-0" }, [
-          h("p", { key: "tit", className: "text-sm font-bold text-slate-900 dark:text-white" }, title),
-          h(
-            "p",
-            { key: "sub", className: "mt-0.5 text-[11px] leading-snug text-slate-500 dark:text-slate-400 sm:text-xs" },
-            subtitle
-          )
-        ])
+        h(Icon, {
+          className: "h-3.5 w-3.5 shrink-0 text-sky-400/90 sm:h-4 sm:w-4",
+          "aria-hidden": true
+        }),
+        h("span", { className: "text-[10px] font-medium leading-tight text-slate-300 sm:text-[11px]" }, label)
       ]
     );
 
   return h(
-    "div",
-    { className: "mt-14 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" },
-    [
-      cell("s1", Shield, "Safe & secure", "Encrypted checkout with order protections."),
-      cell("s2", Truck, "Fast delivery", "Couriers tuned for local deliveries."),
-      cell("s3", Award, "Trusted vendors", "Curated storefronts around you."),
-      cell("s4", Headphones, "24/7 support", "Reach us when something goes wrong.")
-    ]
+    "footer",
+    {
+      className: "mt-16 border-t border-white/10 bg-slate-950 text-slate-400",
+      role: "contentinfo"
+    },
+    h("div", { className: "mx-auto w-full max-w-[1720px] px-4 py-8 sm:px-6 lg:px-8" }, [
+      h(
+        "div",
+        {
+          key: "grid",
+          className: "grid gap-8 sm:grid-cols-2 lg:grid-cols-3 lg:gap-12"
+        },
+        [
+          linkCol("co", "Company", [
+            { to: "/about", label: "About Us" },
+            { to: "/support", label: "Contact Us" },
+            { to: "/apply-vendor", label: "Become a Seller / Vendor" },
+            { to: "/terms", label: "Terms & Conditions" },
+            { to: "/terms", label: "Privacy Policy" }
+          ]),
+          linkCol("cs", "Customer Support", [
+            { to: "/support", label: "Help Center" },
+            { to: "/support#faq", label: "FAQs" },
+            { to: "/terms", label: "Returns & Refunds" },
+            { to: "/support#report", label: "Report a Problem" }
+          ]),
+          h("div", { key: "trust", className: "sm:col-span-2 lg:col-span-1" }, [
+            h("p", { key: "h", className: `${headCls} mb-3` }, "Trust badges"),
+            h(
+              "div",
+              {
+                key: "row",
+                className: "flex flex-wrap gap-2"
+              },
+              [
+                trustChip("t1", Lock, "Secure Payments"),
+                trustChip("t2", BadgeCheck, "Verified Vendors"),
+                trustChip("t3", Truck, "Fast Delivery"),
+                trustChip("t4", Shield, "Buyer Protection")
+              ]
+            )
+          ])
+        ]
+      ),
+      h(
+        "div",
+        {
+          key: "copy",
+          className: "mt-8 border-t border-white/10 pt-5 text-center text-[10px] text-slate-500 sm:text-[11px]"
+        },
+        `© ${new Date().getFullYear()} ${SITE_NAME}. All rights reserved.`
+      )
+    ])
   );
 }
 
@@ -2316,7 +2368,6 @@ export function CheckoutPage() {
   const nav = useNavigate();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [guestName, setGuestName] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
@@ -2351,11 +2402,10 @@ export function CheckoutPage() {
       return;
     }
     if (!accessToken) {
-      const nm = String(guestName || "").trim();
       const em = String(guestEmail || "").trim();
       const ph = String(guestPhone || "").trim();
-      if (nm.length < 2 || !em.includes("@") || ph.replace(/\D/g, "").length < 8) {
-        setErr("Enter your full name, a valid email, and a phone number so we can confirm your order.");
+      if (!em.includes("@") || ph.replace(/\D/g, "").length < 8) {
+        setErr("Enter a valid email and phone number so we can confirm your order.");
         return;
       }
     } else {
@@ -2375,7 +2425,6 @@ export function CheckoutPage() {
         })),
         ...(!accessToken
           ? {
-              guestName: String(guestName || "").trim(),
               guestEmail: String(guestEmail || "").trim(),
               guestPhone: String(guestPhone || "").trim()
             }
@@ -2443,7 +2492,7 @@ export function CheckoutPage() {
         "div",
         {
           key: "wrap",
-          className: "relative mx-auto flex min-h-screen max-w-lg flex-col justify-center px-4 py-8 sm:px-6"
+          className: "relative mx-auto flex min-h-screen max-w-lg flex-col justify-center px-4 py-4 sm:px-6 sm:py-6"
         },
         [
           h(
@@ -2451,7 +2500,7 @@ export function CheckoutPage() {
             {
               key: "modal",
               className:
-                "rounded-3xl border border-white/25 bg-white/95 p-5 shadow-glass backdrop-blur-xl dark:border-white/10 dark:bg-night-900/90 dark:shadow-black/40 sm:p-7"
+                "rounded-2xl border border-white/25 bg-white/95 p-4 shadow-glass backdrop-blur-xl dark:border-white/10 dark:bg-night-900/90 dark:shadow-black/40 sm:p-5"
             },
             inner
           )
@@ -2483,8 +2532,8 @@ export function CheckoutPage() {
           h(X, { className: "h-5 w-5" })
         )
       ]),
-      h("p", { key: "empty", className: "mt-6 text-center text-slate-600 dark:text-slate-300" }, "Your cart is empty."),
-      h(Button, { key: "shop", className: "mt-6 w-full", onClick: () => nav("/") }, "Back to shop")
+      h("p", { key: "empty", className: "mt-4 text-center text-sm text-slate-600 dark:text-slate-300" }, "Your cart is empty."),
+      h(Button, { key: "shop", className: "mt-4 w-full", onClick: () => nav("/") }, "Back to shop")
     ]);
   }
 
@@ -2492,17 +2541,17 @@ export function CheckoutPage() {
     h("div", { key: "hdr", className: "flex items-start justify-between gap-3" }, [
       h("div", { key: "titles" }, [
         h("h1", { key: "h1", className: "font-display text-xl font-bold text-slate-900 dark:text-white sm:text-2xl" }, "Checkout"),
-        h("p", { key: "tot", className: "mt-1 text-sm font-medium text-slate-600 dark:text-slate-400" }, [
-          "Total: ",
-          h("span", { key: "amt", className: "text-slate-900 dark:text-white" }, totalStr)
-        ]),
-        h(
-          "p",
-          { key: "note", className: "mt-2 max-w-sm text-xs text-slate-500 dark:text-slate-400" },
-          pricingOpts?.paystackOnly
-            ? "You’ll pay on Paystack (card or Ghana mobile money). Checkout uses Paystack for all money movement."
-            : "You’ll complete payment on the next screen."
-        )
+        pricingOpts?.paystackOnly
+          ? h(
+              "p",
+              { key: "note", className: "mt-1 text-[11px] leading-snug text-slate-500 dark:text-slate-400" },
+              "Pay with Paystack (card or Ghana MoMo)."
+            )
+          : h(
+              "p",
+              { key: "note", className: "mt-1 text-[11px] text-slate-500 dark:text-slate-400" },
+              "Complete payment on the next screen."
+            )
       ]),
       h(
         "button",
@@ -2520,11 +2569,11 @@ export function CheckoutPage() {
 
     h(
       "div",
-      { key: "lines", className: "mt-5 space-y-2 rounded-2xl border border-white/15 bg-white/50 p-4 dark:bg-night-900/50" },
+      { key: "lines", className: "mt-3 space-y-1.5 rounded-xl border border-white/15 bg-white/50 p-3 dark:bg-night-900/50" },
       [
-        h("p", { key: "lab", className: "text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Your items"),
+        h("p", { key: "lab", className: "text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Your items"),
         ...items.map((p) =>
-          h("div", { key: p._lineKey || p.id, className: "flex flex-col gap-1 rounded-lg border border-white/10 bg-white/30 px-2 py-2 text-sm dark:bg-night-900/40" }, [
+          h("div", { key: p._lineKey || p.id, className: "flex flex-col gap-0.5 rounded-lg border border-white/10 bg-white/30 px-2 py-1.5 text-sm dark:bg-night-900/40" }, [
             h("span", { className: "min-w-0 text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)]),
             String(p.customization || "").trim() && supportsCartCustomizationNotes(p)
               ? h("span", { className: "text-xs text-violet-800 dark:text-violet-200" }, `Preferences: ${String(p.customization).trim()}`)
@@ -2534,7 +2583,7 @@ export function CheckoutPage() {
       ]
     ),
 
-    h("div", { key: "total-row", className: "mt-4 border-t border-slate-200/80 pt-3 dark:border-white/10" }, [
+    h("div", { key: "total-row", className: "mt-3 border-t border-slate-200/80 pt-2.5 dark:border-white/10" }, [
       h("div", { className: "flex justify-between text-base font-bold text-slate-900 dark:text-white" }, [
         h("span", null, "Total"),
         h("span", null, totalStr)
@@ -2542,24 +2591,19 @@ export function CheckoutPage() {
       breakdown && breakdown.processingFee > 0.005
         ? h(
             "p",
-            { className: "mt-1.5 text-xs leading-snug text-slate-500 dark:text-slate-400" },
-            "Total includes payment fees; the exact amount may vary slightly by payment method."
+            { className: "mt-1 text-[11px] leading-snug text-slate-500 dark:text-slate-400" },
+            "Includes payment fees; exact charge may vary slightly by method."
           )
         : null
     ]),
 
     !accessToken
-      ? h("div", { key: "guest", className: "mt-4 space-y-3" }, [
+      ? h("div", { key: "guest", className: "mt-3 space-y-2" }, [
           h(
             "p",
-            { key: "gcap", className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
-            "Contact (guest checkout)"
+            { key: "gcap", className: "text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+            "Contact (guest)"
           ),
-          h(Field, { key: "nm", label: "Full name" }, h(TextInput, {
-              value: guestName,
-              onChange: (e) => setGuestName(e.target.value),
-              autoComplete: "name"
-            })),
           h(Field, { key: "em", label: "Email" }, h(TextInput, {
               value: guestEmail,
               onChange: (e) => setGuestEmail(e.target.value),
@@ -2574,17 +2618,17 @@ export function CheckoutPage() {
             })),
           h(
             "p",
-            { key: "hint", className: "text-xs text-slate-500 dark:text-slate-400" },
-            "We use this to confirm your order. Sign in anytime to track purchases under My orders."
+            { key: "hint", className: "text-[11px] text-slate-500 dark:text-slate-400" },
+            "For order updates. Sign in later to track under My orders."
           )
         ])
       : null,
 
-    err ? h(InlineNotice, { key: "err", variant: "error", className: "mt-4", onDismiss: () => setErr("") }, err) : null,
+    err ? h(InlineNotice, { key: "err", variant: "error", className: "mt-3", onDismiss: () => setErr("") }, err) : null,
 
     h(Button, {
       key: "pay",
-      className: "mt-5 w-full !rounded-2xl !py-3.5 text-base font-semibold",
+      className: "mt-4 w-full !rounded-2xl !py-3 text-base font-semibold",
       loading,
       onClick: handlePayNow
     }, "Pay now")
@@ -2763,7 +2807,7 @@ export function SavedProductsPage() {
                                 className:
                                   `mt-3 text-sm font-semibold leading-snug ${foodCard ? "text-violet-900 dark:text-violet-50" : "text-amber-800 dark:text-amber-100"}`
                               },
-                              foodCard ? "Call to order — seller confirms price & portions" : "See listing for pricing & scope"
+                              foodCard ? "Call to order" : "See listing for pricing & scope"
                             )
                           : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
                               strikeCmp
@@ -2814,7 +2858,7 @@ export function SavedProductsPage() {
                                   : "View listing"
                                 : (p.stock ?? 0) <= 0
                                   ? "Out of stock"
-                                  : "Add to cart"
+                                  : "Buy"
                             )
                           ].filter(Boolean)
                         )
@@ -3143,7 +3187,7 @@ export function ShopPage() {
                             className:
                               `mt-3 text-sm font-semibold leading-snug ${foodCard ? "text-violet-900 dark:text-violet-50" : "text-amber-800 dark:text-amber-100"}`
                           },
-                          foodCard ? "Call to order — seller confirms price & portions" : "See listing for pricing & scope"
+                          foodCard ? "Call to order" : "See listing for pricing & scope"
                         )
                       : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
                           strikeCmp
@@ -3195,7 +3239,7 @@ export function ShopPage() {
                             : "View listing"
                           : (p.stock ?? 0) <= 0
                             ? "Out of stock"
-                            : "Add to cart"
+                            : "Buy"
                       )
                     ].filter(Boolean)
                   )
@@ -3203,7 +3247,7 @@ export function ShopPage() {
               );
             })
           ),
-          h(StorefrontTrustBar, { key: "trust-bar" })
+          h(MarketplaceFooter, { key: "site-footer" })
         ]
       )
     ])
@@ -3591,7 +3635,26 @@ export function BuyerHelpSupportPage() {
         ),
         cfgErr &&
           h(InlineNotice, { key: "ce", variant: "error", className: "mt-6", onDismiss: () => setCfgErr("") }, cfgErr),
-        h(GlassPanel, { key: "msg", className: "mt-6 !border-sky-500/25" }, [
+        h(GlassPanel, { key: "faq", id: "faq", className: "mt-6 scroll-mt-28 !border-white/10" }, [
+          h("h2", { className: "font-semibold text-slate-900 dark:text-white" }, "FAQs"),
+          h(
+            "ul",
+            { className: "mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300" },
+            [
+              h(
+                "li",
+                null,
+                "How do I get help with an order? Sign in and use Messages, or use the contact options on this page."
+              ),
+              h(
+                "li",
+                null,
+                "How do refunds and returns work? See Terms — refunds follow the marketplace’s dispute and refund rules."
+              )
+            ]
+          )
+        ]),
+        h(GlassPanel, { key: "msg", className: "mt-4 !border-sky-500/25" }, [
           h("div", { className: "flex items-start gap-3" }, [
             h(Headphones, { className: "mt-0.5 h-5 w-5 shrink-0 text-sky-600 dark:text-sky-400" }),
             h("div", { className: "min-w-0 flex-1" }, [
@@ -3648,7 +3711,7 @@ export function BuyerHelpSupportPage() {
               ])
             ])
           : null,
-        h(GlassPanel, { key: "rep", className: "mt-4 !border-white/10" }, [
+        h(GlassPanel, { key: "rep", id: "report", className: "mt-4 scroll-mt-28 !border-white/10" }, [
           h("div", { className: "flex items-start gap-3" }, [
             h(AlertTriangle, { className: "mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" }),
             h("div", { className: "min-w-0 flex-1" }, [

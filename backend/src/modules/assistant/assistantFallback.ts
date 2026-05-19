@@ -131,7 +131,7 @@ function isGreetingOnly(message: string): boolean {
 }
 
 /** Substring present only in the long pay/checkout reply — used to shorten on repeat asks. */
-const ORDER_HELP_FULL_MARKER = "🛍️ Most products (you see a price + Add to cart):";
+const ORDER_HELP_FULL_MARKER = "🛍️ Most products (you see a price + Buy):";
 
 /** "How do I order", typos like "how to oder", checkout help, etc. */
 const ORDER_HELP_INTENT =
@@ -152,9 +152,9 @@ function markdownOrderHelpFull(siteName: string): string {
   return (
     `💳 How to pay on ${siteName}\n\n` +
       `${ORDER_HELP_FULL_MARKER}\n` +
-      `1. 🛒 Tap Add to cart on the product you want (no account needed).\n` +
+      `1. 🛒 Tap Buy on the product you want (no account needed; it goes to your cart).\n` +
       `2. 🧺 Open Cart (cart button / drawer).\n` +
-      `3. 📋 Tap Checkout and enter your name, email, and phone — guest checkout is fine.\n` +
+      `3. 📋 Tap Checkout and enter your email and phone — guest checkout is fine.\n` +
       `4. 💳 Pay with Paystack on the checkout screen.\n\n` +
       `🍽️ Food (call-to-order): open the dish → Place Order or call to order — seller details are on that page.\n\n` +
       `📩 Services (quotes): open the listing → Send request / the inquiry form (sign-in may be required).\n\n` +
@@ -166,7 +166,7 @@ function markdownOrderHelpFull(siteName: string): string {
 /** Shorter reply when the shopper asks the same payment/order question again (avoids copy-paste duplication). */
 function markdownOrderHelpRepeat(siteName: string): string {
   return (
-    `⏩ Quick reminder on ${siteName}: 🛒 Add to cart → 🧺 Cart → 📋 Checkout → 💳 Paystack. ` +
+    `⏩ Quick reminder on ${siteName}: 🛒 Buy → 🧺 Cart → 📋 Checkout → 💳 Paystack. ` +
       `🍽️ Call-to-order food: Place Order on the listing. 📩 Services: Send request. Anything specific? 🛒`
   );
 }
@@ -174,7 +174,7 @@ function markdownOrderHelpRepeat(siteName: string): string {
 /** One-line tip appended to generic listing fallbacks — keep aligned with `markdownOrderHelpFull`. */
 function markdownOrderingTipLine(): string {
   return (
-    "💡 Ordering tip: Priced items — 🛒 Add to cart → 🧺 Cart → 📋 Checkout → 💳 Paystack (guest OK). " +
+    "💡 Ordering tip: Priced items — 🛒 Buy → 🧺 Cart → 📋 Checkout → 💳 Paystack (guest OK). " +
       "🍽️ Food — Place Order / call to order on the listing. 📩 Services — Send request."
   );
 }

@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { useTheme } from "context";
 import { h } from "utils/h";
 import { GlassPanel, LogoMark, ThemeToggleButton } from "components/ui";
+import { SITE_NAME, SITE_TAGLINE } from "config/brand";
 
 function LegalHeader() {
   const { dark, toggle } = useTheme();
@@ -38,6 +39,79 @@ function proseWrap(children) {
     },
     children
   );
+}
+
+/** Who we are — public marketing / trust page for browsers and users. */
+export function AboutUsPage() {
+  return h("div", { className: "page-app-shell" }, [
+    h(LegalHeader, { key: "hdr" }),
+    h("div", { key: "main", className: "mx-auto max-w-3xl px-4 py-8 sm:px-6" }, [
+      h(
+        Link,
+        {
+          to: "/",
+          className: "mb-6 inline-flex items-center gap-2 text-sm font-medium text-sky-600 hover:underline dark:text-sky-300"
+        },
+        [h(ArrowLeft, { key: "i", className: "h-4 w-4" }), h("span", { key: "t" }, "Back to shop")]
+      ),
+      h(GlassPanel, null, [
+        h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, `About ${SITE_NAME}`),
+        h("p", { className: "mt-2 text-sm font-medium text-sky-700 dark:text-sky-300" }, SITE_TAGLINE),
+        h("div", { className: "mt-6 space-y-6 text-sm leading-relaxed" }, [
+          proseWrap([
+            h("section", { key: "ab1" }, [
+              h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, `What ${SITE_NAME} is`),
+              h(
+                "p",
+                { className: "mt-2" },
+                `${SITE_NAME} is Ghana’s marketplace — a place to discover clothing, electronics, groceries, beauty, books, professional services, and more from independent sellers and businesses. We provide the storefronts, discovery tools, checkout, and support rails; sellers are responsible for their listings and fulfilment unless the platform provides a specific service (for example integrated payments or courier programs where available).`
+              )
+            ]),
+            h("section", { key: "ab2" }, [
+              h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Shopping with us"),
+              h("ul", { className: "mt-2 list-disc space-y-1 pl-5" }, [
+                h("li", null, "Browse by category, search, or visit a store’s page to see what’s in stock."),
+                h("li", null, "Create an account when you want order history, messages, and saved items — or check out as a guest for eligible products when the flow allows."),
+                h("li", null, "Payments are processed securely through our partners (for example card or mobile money via Paystack where enabled)."),
+                h(
+                  "li",
+                  null,
+                  [
+                    "Questions? Visit ",
+                    h(Link, { to: "/support", className: "font-medium text-sky-600 hover:underline dark:text-sky-300" }, "Help & support"),
+                    "."
+                  ]
+                )
+              ])
+            ]),
+            h("section", { key: "ab3" }, [
+              h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Selling on the marketplace"),
+              h(
+                "p",
+                { className: "mt-2" },
+                "Vendors use SHOPIQGH to run storefronts, manage listings, and reach buyers across Ghana. Applications are reviewed to help keep listings trustworthy. If you’d like to sell here, start from the vendor application in the app."
+              ),
+              h("p", { className: "mt-3" }, [
+                h(
+                  Link,
+                  { to: "/apply-vendor", className: "font-medium text-sky-600 hover:underline dark:text-sky-300" },
+                  "Become a seller →"
+                )
+              ])
+            ]),
+            h("section", { key: "ab4" }, [
+              h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Policies"),
+              h("p", { className: "mt-2" }, [
+                "Our ",
+                h(Link, { to: "/terms", className: "font-medium text-sky-600 hover:underline dark:text-sky-300" }, "Terms & Conditions"),
+                " describe how the service works, payments, and responsibilities for buyers and sellers. We may update features and policies over time; check the app for the latest."
+              ])
+            ])
+          ])
+        ])
+      ])
+    ])
+  ]);
 }
 
 /** Platform-wide terms (buyers, browsers, and account holders). */

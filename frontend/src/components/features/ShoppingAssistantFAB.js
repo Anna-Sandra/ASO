@@ -12,7 +12,7 @@ import { SITE_NAME } from "config/brand";
 const ORDER_PAY_INTENT =
   /\b(how\s+(do|to|can)\s+(i|you|we)\s+)?(order|buy|purchase|checkout|pay|cart)|\bhow\s+to\s+order|\bwhere\s+(do\s+i|can\s+i)\s+(order|buy|checkout)|\boder\b|i\s+want\s+to\s+(order|buy)/i;
 
-const ORDER_HELP_FULL_MARKER = "🛍️ Most products (you see a price + Add to cart):";
+const ORDER_HELP_FULL_MARKER = "🛍️ Most products (you see a price + Buy):";
 
 function wantsOrderPayHelp(msg) {
   return ORDER_PAY_INTENT.test(String(msg || "").trim());
@@ -30,16 +30,16 @@ function lastAssistantContent(msgs) {
 function offlineOrderPayMarkdown(siteName, short) {
   if (short) {
     return (
-      `⏩ Quick reminder on ${siteName}: 🛒 Add to cart → 🧺 Cart → 📋 Checkout → 💳 Paystack. ` +
+      `⏩ Quick reminder on ${siteName}: 🛒 Buy → 🧺 Cart → 📋 Checkout → 💳 Paystack. ` +
         `🍽️ Call-to-order food: Place Order on the listing. 📩 Services: Send request.`
     );
   }
   return (
     `💳 How to pay on ${siteName}\n\n` +
       `${ORDER_HELP_FULL_MARKER}\n` +
-      `1. 🛒 Tap Add to cart on the product you want (no account needed).\n` +
+      `1. 🛒 Tap Buy on the product you want (no account needed; it goes to your cart).\n` +
       `2. 🧺 Open Cart (cart button / drawer).\n` +
-      `3. 📋 Tap Checkout and enter name, email, and phone — guest checkout is fine.\n` +
+      `3. 📋 Tap Checkout and enter email and phone — guest checkout is fine.\n` +
       `4. 💳 Pay with Paystack on the checkout screen.\n\n` +
       `🍽️ Food (call-to-order): open the dish → Place Order or call to order — details on the page.\n\n` +
       `📩 Services (quotes): Send request on the listing (sign-in may be required).\n\n` +
