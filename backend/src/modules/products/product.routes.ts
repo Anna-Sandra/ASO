@@ -10,10 +10,16 @@ import {
   getRelatedProducts,
   listMyProducts,
   listProducts,
+  smartSearchProducts,
   recordProductView,
   updateProduct
 } from "./product.controller";
-import { createProductSchema, updateProductSchema, toggleProductSaveSchema } from "./product.schemas";
+import {
+  createProductSchema,
+  updateProductSchema,
+  toggleProductSaveSchema,
+  smartSearchBodySchema
+} from "./product.schemas";
 import { createReview, getReviewStatus, listProductReviews } from "../reviews/review.controller";
 import { createReviewSchema } from "../reviews/review.schemas";
 import { listSavedProductIds, listSavedProducts, toggleProductSave } from "./productSave.controller";
@@ -29,6 +35,7 @@ router.get("/saves", optionalProtect, listSavedProducts);
 router.post("/saves/toggle", optionalProtect, validateBody(toggleProductSaveSchema), toggleProductSave);
 
 router.get("/", listProducts);
+router.post("/smart-search", validateBody(smartSearchBodySchema), smartSearchProducts);
 /** `GET /recommended` is mounted on the root app in {@link createApp} before this router mounts. */
 router.get("/mine", protect, requireActiveAccount, authorize("seller", "admin"), listMyProducts);
 router.post("/", protect, requireActiveAccount, authorize("seller", "admin"), validateBody(createProductSchema), createProduct);

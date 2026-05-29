@@ -12,6 +12,8 @@ export function RestaurantContextPanel({ product }) {
   const Icon = store.sellerOnly ? User : store.isRestaurant ? Utensils : Store;
   const phone =
     store.sellerOnly && product?.sellerPayment?.phone ? String(product.sellerPayment.phone).trim() : "";
+  const sellerEmail =
+    store.sellerOnly && product?.sellerPayment?.email ? String(product.sellerPayment.email).trim() : "";
 
   return h(
     "div",
@@ -77,7 +79,20 @@ export function RestaurantContextPanel({ product }) {
                 { key: "ph", className: "mt-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200" },
                 ["Contact: ", h("a", { href: `tel:${phone}`, className: "text-sky-700 underline dark:text-sky-300" }, phone)]
               )
-            : null
+            : sellerEmail
+              ? h(
+                  "p",
+                  { key: "em", className: "mt-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200" },
+                  [
+                    "Email: ",
+                    h(
+                      "a",
+                      { href: `mailto:${sellerEmail}`, className: "text-sky-700 underline dark:text-sky-300" },
+                      sellerEmail
+                    )
+                  ]
+                )
+              : null
         ])
       ]),
       store.href

@@ -6,6 +6,12 @@ import { orderStatusUpdateSchema } from "../orders/order.schemas";
 import { paystackPayoutAccountSchema, vendorAnalyticsEventBodySchema } from "./vendor.schemas";
 import vendorSubscriptionRoutes from "../vendorSubscription/vendorSubscription.routes";
 import {
+  createVendorPromotion,
+  endVendorPromotion,
+  listVendorPromotions
+} from "../promotions/promotion.controller";
+import { vendorCreatePromotionSchema } from "../promotions/promotion.schemas";
+import {
   confirmVendorPaymentReceived,
   getPaystackGhanaBanks,
   listVendorOrders,
@@ -64,5 +70,23 @@ router.post(
 );
 router.get("/analytics", protect, requireActiveAccount, authorize("seller", "admin"), vendorAnalytics);
 router.get("/reviews", protect, requireActiveAccount, authorize("seller", "admin"), listVendorReviews);
+
+router.get("/promotions", protect, requireActiveAccount, authorize("seller", "admin"), listVendorPromotions);
+router.post(
+  "/promotions",
+  protect,
+  requireActiveAccount,
+  authorize("seller"),
+  validateBody(vendorCreatePromotionSchema),
+  createVendorPromotion
+);
+
+router.post(
+  "/promotions/:id/end",
+  protect,
+  requireActiveAccount,
+  authorize("seller"),
+  endVendorPromotion
+);
 
 export default router;

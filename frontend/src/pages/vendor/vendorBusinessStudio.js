@@ -17,6 +17,7 @@ const BUSINESS_TYPES = [
   { value: "fashion_store", label: "Fashion store" },
   { value: "electronics_shop", label: "Electronics shop" },
   { value: "beauty_shop", label: "Beauty shop" },
+  { value: "baby_infant_store", label: "Baby / infant shop" },
   { value: "grocery_store", label: "Grocery store" },
   { value: "academic_book", label: "Books / Academic" },
   { value: "service_provider", label: "Service provider" }
@@ -208,6 +209,7 @@ export function VendorStoresPage() {
             ["Fashion", "/fashion"],
             ["Electronics", "/electronics"],
             ["Beauty", "/beauty"],
+            ["Babies", "/babies"],
             ["Groceries", "/groceries"],
             ["Books", "/books"],
             ["Services", "/services"]

@@ -111,6 +111,9 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
       throw new HttpError(400, "Invalid transition");
     }
     order.status = status as typeof order.status;
+    if (status === "delivered") {
+      (order as { deliveredAt?: Date | null }).deliveredAt = new Date();
+    }
   }
 
   await order.save();

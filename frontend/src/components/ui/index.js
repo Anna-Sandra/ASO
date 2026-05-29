@@ -17,7 +17,7 @@ const base =
 
 const variants = {
   primary:
-    "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-900/30 hover:from-sky-400 hover:to-blue-500 dark:from-sky-600 dark:to-blue-700 dark:hover:from-sky-500 dark:hover:to-blue-600",
+    "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg shadow-violet-900/30 hover:from-violet-500 hover:to-fuchsia-500 dark:from-violet-600 dark:to-fuchsia-700 dark:hover:from-violet-500 dark:hover:to-fuchsia-600",
   ghost:
     "border border-slate-300/80 bg-white/30 text-slate-800 hover:bg-white/50 dark:border-white/15 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10",
   danger:

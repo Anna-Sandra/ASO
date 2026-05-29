@@ -7,9 +7,9 @@ import { Review } from "../reviews/review.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { resolveListingPublishOutcome } from "../platform/listingPolicyApply";
 import type { ProductCategory, ProductDoc } from "./product.model";
-import { Product } from "./product.model";
+import { Product, PRODUCT_CATEGORIES } from "./product.model";
 import { normalizeCategoryAttributes } from "./categoryAttributes.schema";
-import { listProductsQuerySchema, recommendedProductsQuerySchema } from "./product.schemas";
+import { listProductsQuerySchema, recommendedProductsQuerySchema, smartSearchBodySchema } from "./product.schemas";
 import {
   activeStoreBusinessIds,
   attachSellerPayments,
@@ -19,7 +19,22 @@ import {
 import { BuyerProductView } from "./buyerProductView.model";
 import { ProductSave } from "./productSave.model";
 import { assertProductBusinessLink, getSellerDefaultBusinessId } from "../businesses/business.controller";
+import { notifySaversPriceDrop } from "../notifications/notification.service";
+import { groqCompletion, groqConfigured } from "../assistant/groqChat";
+import { detectCategoryFromMessage } from "../assistant/assistantFallback";
+import { computeListingSearchAssist, isValidMarketplaceSubcategory } from "./productSubcategories";
 
+/** Subcategory facet for buyer search chips + keyword assist; rejects unknown slugs once category is fixed. */
+function normalizeProductSubcategoryForCategory(cat: ProductCategory, raw: unknown): string | null {
+  if (raw === null) return null;
+  if (raw === undefined || raw === "") return null;
+  const id = String(raw).trim();
+  if (!id) return null;
+  if (!isValidMarketplaceSubcategory(cat, id)) {
+    throw new HttpError(400, "Pick a Marketplace sub-category that belongs to your listing category.");
+  }
+  return id;
+}
 /** Public-facing fields; changes require re-approval if the listing was already live. */
 const SELLER_UPDATE_KEYS = [
   "name",
@@ -35,13 +50,15 @@ const SELLER_UPDATE_KEYS = [
   "menuSectionId",
   "listingKind",
   "prepTimeMinutes",
-  "addons"
+  "addons",
+  "subcategory"
 ] as const;
 
 const MODERATION_REAPPROVE_KEYS = [
   "name",
   "description",
   "category",
+  "subcategory",
   "price",
   "compareAtPrice",
   "tags",
@@ -88,6 +105,141 @@ function sellerModerationTouched(
   return false;
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const SMART_SEARCH_ROWS_CAP = 300;
+
+/** Strip trailing ``` fences models sometimes emit. */
+function stripJsonMarkdownFences(s: string): string {
+  let t = s.trim();
+  if (!t.startsWith("`")) return t;
+  t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+  return t;
+}
+
+/** Quick token split — used when Groq is off or returns junk. */
+function heuristicSearchKeywords(q: string): string[] {
+  const t = q.trim().toLowerCase().replace(/\s+/g, " ");
+  const stop = new Set([
+    "the",
+    "a",
+    "an",
+    "for",
+    "and",
+    "or",
+    "to",
+    "want",
+    "looking",
+    "cheap",
+    "buy",
+    "best",
+    "near",
+    "some",
+    "please",
+    "need",
+    "get",
+    "under",
+    "within",
+    "with",
+    "show",
+    "me",
+    "find"
+  ]);
+  const parts = t
+    .split(/\s+/)
+    .filter((w) => w.length >= 2 && !stop.has(w))
+    .slice(0, 6);
+  if (parts.length) return parts;
+  return t.length >= 2 ? [t.slice(0, 80)] : [];
+}
+
+async function aiExpandShopSearchTerms(q: string): Promise<{ keywords: string[]; categoryHint: ProductCategory | null }> {
+  const fallbackKw = heuristicSearchKeywords(q);
+  const heuristicCat = detectCategoryFromMessage(q);
+  if (!groqConfigured()) {
+    return { keywords: fallbackKw, categoryHint: heuristicCat };
+  }
+  const allowedCats = PRODUCT_CATEGORIES.join(", ");
+  const system = `You help shoppers search a Ghana e-commerce marketplace (SHOPIQGH).
+
+Respond with ONLY valid JSON — no markdown, no explanation. Keys:
+- "keywords": array of 1–6 short phrases or words for catalogue search (include common synonyms and variants; omit filler words like "cheap", "best", "want", "looking for", "please").
+- "category_hint": one of exactly [${allowedCats}] or null if unclear.
+
+Prefer category_hint null when unsure.`;
+
+  try {
+    const text = await groqCompletion(system, [{ role: "user", content: q.trim().slice(0, 250) }]);
+    if (!text) return { keywords: fallbackKw, categoryHint: heuristicCat };
+    const trimmed = stripJsonMarkdownFences(text);
+    const parsed = JSON.parse(trimmed) as { keywords?: unknown; category_hint?: unknown };
+    const rawKw = Array.isArray(parsed.keywords) ? parsed.keywords : [];
+    const keywords = [
+      ...new Set(
+        rawKw
+          .map((x) => String(x ?? "").trim().toLowerCase().replace(/\s+/g, " "))
+          .filter((s) => s.length >= 2 && s.length <= 64)
+      )
+    ].slice(0, 8);
+    let categoryHint: ProductCategory | null = null;
+    if (typeof parsed.category_hint === "string") {
+      const c = parsed.category_hint.trim();
+      if ((PRODUCT_CATEGORIES as readonly string[]).includes(c)) categoryHint = c as ProductCategory;
+    }
+    return {
+      keywords: keywords.length ? keywords : fallbackKw,
+      categoryHint: categoryHint ?? heuristicCat
+    };
+  } catch {
+    return { keywords: fallbackKw, categoryHint: heuristicCat };
+  }
+}
+
+async function fetchShopProductRows(opts: {
+  filter: Record<string, unknown>;
+  searchStr?: string;
+}): Promise<Record<string, unknown>[]> {
+  const { filter, searchStr } = opts;
+  if (!searchStr?.trim()) {
+    return (await Product.find(filter).sort({ updatedAt: -1 }).limit(SMART_SEARCH_ROWS_CAP).lean()) as unknown as Record<
+      string,
+      unknown
+    >[];
+  }
+  const trimmed = searchStr.trim();
+  let rows: Record<string, unknown>[];
+  try {
+    rows = (await Product.find({
+      ...filter,
+      $text: { $search: trimmed }
+    })
+      .sort({ score: { $meta: "textScore" } })
+      .limit(SMART_SEARCH_ROWS_CAP)
+      .lean()) as unknown as Record<string, unknown>[];
+  } catch {
+    rows = [];
+  }
+  if (!rows.length) {
+    const terms = trimmed
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    const termBlocks = terms.map((term) => {
+      const re = new RegExp(escapeRegex(term), "i");
+      return { $or: [{ name: re }, { description: re }, { tags: re }, { listingSearchAssist: re }] };
+    });
+    /** Smart search expands to many synonyms — OR matches any (“shoes”, “heels”, …), not ALL at once */
+    const altFilter = termBlocks.length ? { ...filter, $or: termBlocks } : { ...filter };
+    rows = (await Product.find(altFilter).sort({ updatedAt: -1 }).limit(SMART_SEARCH_ROWS_CAP).lean()) as unknown as Record<
+      string,
+      unknown
+    >[];
+  }
+  return rows;
+}
+
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
   const parsed = listProductsQuerySchema.safeParse(req.query);
   if (!parsed.success) throw new HttpError(400, "Invalid product filters.");
@@ -103,25 +255,95 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
     filter.category = q.category;
   }
   if (q.tag) filter.tags = q.tag;
+  if (q.subcategory?.trim()) {
+    filter.subcategory = q.subcategory.trim();
+  }
 
   const priceCond: Record<string, number> = {};
   if (q.minPrice != null) priceCond.$gte = q.minPrice;
   if (q.maxPrice != null) priceCond.$lte = q.maxPrice;
   if (Object.keys(priceCond).length) filter.price = priceCond;
 
-  let rows;
-  if (q.q?.trim()) {
-    rows = await Product.find({
-      ...filter,
-      $text: { $search: q.q.trim() }
-    })
-      .sort({ score: { $meta: "textScore" } })
-      .lean();
+  let rows: Record<string, unknown>[];
+  const searchStr = q.q?.trim();
+  if (searchStr) {
+    try {
+      rows = (await Product.find({
+        ...filter,
+        $text: { $search: searchStr }
+      })
+        .sort({ score: { $meta: "textScore" } })
+        .lean()) as unknown as Record<string, unknown>[];
+    } catch {
+      rows = [];
+    }
+    if (!rows.length) {
+      const terms = searchStr
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      const termBlocks =
+        terms.length > 0
+          ? terms.map((term) => {
+              const re = new RegExp(escapeRegex(term), "i");
+              return { $or: [{ name: re }, { description: re }, { tags: re }, { listingSearchAssist: re }] };
+            })
+          : [];
+      const altFilter =
+        termBlocks.length > 0 ? { ...filter, $and: termBlocks } : { ...filter };
+      rows = (await Product.find(altFilter).sort({ updatedAt: -1 }).limit(500).lean()) as unknown as Record<
+        string,
+        unknown
+      >[];
+    }
   } else {
-    rows = await Product.find(filter).sort({ updatedAt: -1 }).lean();
+    rows = (await Product.find(filter).sort({ updatedAt: -1 }).lean()) as unknown as Record<string, unknown>[];
   }
   const enriched = await enrichPublicProducts(rows as unknown as Record<string, unknown>[]);
   res.json({ products: enriched });
+});
+
+/** Search bar intelligence: synonym expansion (+ optional Groq) and implicit category narrowing. */
+export const smartSearchProducts = asyncHandler(async (req: Request, res: Response) => {
+  const parsed = smartSearchBodySchema.safeParse(req.body);
+  if (!parsed.success) throw new HttpError(400, "Invalid smart search payload.");
+
+  const body = parsed.data;
+  const filter: Record<string, unknown> = { status: "active" };
+  const activeIds = await activeStoreBusinessIds();
+  Object.assign(filter, foodMenuStoreFilter(activeIds));
+
+  /** Only filter by category when the shopper picked a chip — never auto-apply AI/heuristic hints (hurts recall, e.g. shoes miscategorized). */
+  const effectiveCategory: ProductCategory | undefined = body.category;
+  const { keywords, categoryHint } = await aiExpandShopSearchTerms(body.q);
+  if (effectiveCategory) filter.category = effectiveCategory;
+  if (body.tag) filter.tags = body.tag;
+  if (body.subcategory?.trim()) filter.subcategory = body.subcategory.trim();
+
+  const priceCond: Record<string, number> = {};
+  if (body.minPrice != null) priceCond.$gte = body.minPrice;
+  if (body.maxPrice != null) priceCond.$lte = body.maxPrice;
+  if (Object.keys(priceCond).length) filter.price = priceCond;
+
+  const uniqKw = [...new Set(keywords)].slice(0, 6);
+  const searchBlob = (uniqKw.length ? uniqKw.join(" ") : "").trim() || body.q.trim();
+
+  let rows = await fetchShopProductRows({ filter, searchStr: searchBlob.slice(0, 400) });
+  if (!rows.length && searchBlob !== body.q.trim()) {
+    rows = await fetchShopProductRows({ filter, searchStr: body.q.trim() });
+  }
+
+  const enriched = await enrichPublicProducts(rows as unknown as Record<string, unknown>[]);
+  res.json({
+    products: enriched,
+    smart: {
+      keywordsUsed: [...new Set(keywords)].slice(0, 8),
+      expandedQuery: searchBlob,
+      categoryApplied: effectiveCategory ?? null,
+      /** Softer UX hint — not applied as a Mongo filter unless the user taps that category chip. */
+      categorySuggestion: !effectiveCategory ? categoryHint : null
+    }
+  });
 });
 
 function clamp01(v: number) {
@@ -134,6 +356,7 @@ const REC_CATEGORY_LABEL: Record<string, string> = {
   fashion_accessories: "Fashion & Accessories",
   electronics_gadgets: "Electronics & Gadgets",
   beauty_personal_care: "Beauty & Personal Care",
+  babies_infants: "Babies & Infants",
   services: "Services",
   books_academic: "Books & Academic Materials",
   groceries_essentials: "Groceries & Essentials"
@@ -436,14 +659,18 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   if (p.status !== "active" && !isOwner && !isAdmin) {
     throw new HttpError(404, "Product not found");
   }
-  const [out] = await enrichPublicProducts([p as unknown as Record<string, unknown>]);
+  const [out] = await enrichPublicProducts([p as unknown as Record<string, unknown>], {
+    includePayoutDetails: req.user?.role === "admin"
+  });
   res.json({ product: out });
 });
 
 export const listMyProducts = asyncHandler(async (req: Request, res: Response) => {
   const sellerId = new mongoose.Types.ObjectId(req.user!.id);
   const rows = await Product.find({ sellerId }).sort({ updatedAt: -1 }).lean();
-  const enriched = await attachSellerPayments(rows as unknown as Record<string, unknown>[]);
+  const enriched = await attachSellerPayments(rows as unknown as Record<string, unknown>[], {
+    includePayoutDetails: true
+  });
   res.json({ products: enriched });
 });
 
@@ -481,6 +708,9 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   const menuSidRaw = body.menuSectionId;
   delete body.businessId;
   delete body.menuSectionId;
+  delete (body as { listingSearchAssist?: unknown }).listingSearchAssist;
+  const subRawPick = Object.prototype.hasOwnProperty.call(body, "subcategory") ? body.subcategory : undefined;
+  delete body.subcategory;
 
   const categoryStr = String((body as { category?: string }).category || "");
   if (bizIdRaw === undefined || (typeof bizIdRaw === "string" && !String(bizIdRaw).trim())) {
@@ -507,11 +737,16 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   const createPayload: Record<string, unknown> = { ...body, status, sellerId };
   createPayload.businessId = businessIdOid;
   createPayload.menuSectionId = menuSectionIdOid;
+  const catRef = categoryStr as ProductCategory;
+  createPayload.subcategory = normalizeProductSubcategoryForCategory(catRef, subRawPick);
+  createPayload.listingSearchAssist = computeListingSearchAssist(catRef, createPayload.subcategory as string | null);
   if (flagged) createPayload.flagged = true;
   if (rejectionReason) createPayload.rejectionReason = rejectionReason;
 
   const p = await Product.create(createPayload);
-  const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>]);
+  const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>], {
+    includePayoutDetails: true
+  });
   res.status(201).json({ product: out });
 });
 
@@ -528,12 +763,13 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   if (Object.prototype.hasOwnProperty.call(body, "tags")) {
     body.tags = normalizeSellerTags(body.tags);
   }
+  delete (body as { listingSearchAssist?: unknown }).listingSearchAssist;
   const modTouched = sellerModerationTouched(beforeDoc, body);
   const settings = await getOrCreateSettings();
 
   for (const key of SELLER_UPDATE_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
-    if (key === "businessId" || key === "menuSectionId") continue;
+    if (key === "businessId" || key === "menuSectionId" || key === "subcategory") continue;
     if (key === "categoryAttributes") {
       const cat =
         body.category !== undefined ? (body.category as ProductCategory) : (p.category as ProductCategory);
@@ -615,16 +851,44 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
   p.businessId = businessIdOid;
   p.menuSectionId = menuSectionIdOid;
 
+  const mergedCatResolved = mergedCat;
+  const prevCat = beforeDoc.category as ProductCategory;
+  const prevSub = beforeDoc.subcategory ? String(beforeDoc.subcategory) : null;
+  let nextSub: string | null;
+  if (Object.prototype.hasOwnProperty.call(body, "subcategory")) {
+    nextSub = normalizeProductSubcategoryForCategory(mergedCatResolved, body.subcategory);
+  } else if (
+    mergedCatResolved !== prevCat &&
+    prevSub != null &&
+    !isValidMarketplaceSubcategory(mergedCatResolved, prevSub)
+  ) {
+    nextSub = null;
+  } else {
+    nextSub = p.subcategory != null ? String(p.subcategory) : null;
+  }
+  p.subcategory = nextSub;
+  p.set("listingSearchAssist", computeListingSearchAssist(mergedCatResolved, nextSub));
+
   const mergedPrice = Number(p.price);
-  if (mergedCat !== "services" && mergedCat !== "food_drinks" && !(mergedPrice > 0)) {
-    throw new HttpError(
-      400,
-      "Set a price greater than zero for this listing type, or choose Services / Food & Drinks for contact- or call-to-order listings."
-    );
+  if (!(mergedPrice > 0)) {
+    throw new HttpError(400, "Set a price greater than zero for this listing.");
   }
 
   await p.save();
-  const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>]);
+  const newPriceN = Number(p.price);
+  const oldPriceN = Number(beforeDoc.price);
+  if (p.status === "active" && newPriceN < oldPriceN - 1e-9) {
+    notifySaversPriceDrop({
+      productId: p._id,
+      oldPrice: oldPriceN,
+      newPrice: newPriceN,
+      productName: String(p.name || "Listing")
+    });
+  }
+
+  const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>], {
+    includePayoutDetails: true
+  });
   res.json({ product: out });
 });
 

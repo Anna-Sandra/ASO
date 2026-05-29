@@ -1,8 +1,12 @@
 import mongoose from "mongoose";
 import { User } from "../auth/user.model";
 import { Business } from "../businesses/business.model";
+import { Review } from "../reviews/review.model";
 import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
 import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
+import type { ProductCategory } from "./product.model";
+import { marketplaceSubcategoryLabel } from "./productSubcategories";
+import { attachDealPricingToPublicProducts } from "../promotions/promotionDeal.service";
 
 export type PublicStoreRef = {
   id: string;
@@ -10,6 +14,9 @@ export type PublicStoreRef = {
   slug: string;
   logoUrl: string | null;
   businessType: string;
+  /** When set, storefront ETA / fee hints can use this (GHS). */
+  deliveryFeeGhs?: number | null;
+  deliveryAvailable?: boolean;
 };
 
 export function toPublicProduct(p: Record<string, unknown>) {
@@ -33,6 +40,9 @@ export function toPublicProduct(p: Record<string, unknown>) {
   const sidRaw = p.sellerId;
   const sellerId =
     sidRaw instanceof mongoose.Types.ObjectId ? sidRaw.toString() : sidRaw != null && sidRaw !== "" ? String(sidRaw) : "";
+  const pc = typeof p.category === "string" ? (p.category as ProductCategory) : ("food_drinks" as ProductCategory);
+  const subRaw = typeof p.subcategory === "string" ? p.subcategory.trim() : "";
+  const subcategory = subRaw || undefined;
   return {
     id,
     sellerId,
@@ -44,6 +54,9 @@ export function toPublicProduct(p: Record<string, unknown>) {
     name: p.name,
     description: p.description,
     category: p.category,
+    ...(subcategory
+      ? { subcategory, subcategoryLabel: marketplaceSubcategoryLabel(pc, subcategory) ?? subcategory.replace(/_/g, " ") }
+      : {}),
     categoryAttributes: (p.categoryAttributes && typeof p.categoryAttributes === "object" ? p.categoryAttributes : {}) as Record<
       string,
       unknown
@@ -58,11 +71,31 @@ export function toPublicProduct(p: Record<string, unknown>) {
       ? (p.imageUrls as unknown[]).map((u) => (typeof u === "string" ? rewriteStoredMediaUrl(u) : u))
       : p.imageUrls,
     createdAt: p.createdAt,
-    updatedAt: p.updatedAt
+    updatedAt: p.updatedAt,
+    ...(() => {
+      const st = Math.max(0, Math.floor(Number(p.stock) || 0));
+      let stockHint: "out" | "critical" | "low" | "ok" = "ok";
+      if (st <= 0) stockHint = "out";
+      else if (st <= 2) stockHint = "critical";
+      else if (st <= 10) stockHint = "low";
+      return { stockHint };
+    })()
   };
 }
 
-export async function attachSellerPayments(products: Record<string, unknown>[]) {
+export type AttachSellerPaymentsOpts = {
+  /**
+   * When false (default), public buyers only see basic contact — not MoMo/bank used for Paystack payouts
+   * (avoids buyers paying the vendor wallet directly). Set true for admin or the vendor’s own dashboard APIs.
+   */
+  includePayoutDetails?: boolean;
+};
+
+export async function attachSellerPayments(
+  products: Record<string, unknown>[],
+  opts?: AttachSellerPaymentsOpts
+) {
+  const includePayoutDetails = Boolean(opts?.includePayoutDetails);
   if (!products.length) return [];
   const commissionPercent = await getEffectiveCommissionPercent();
   const sellerIds = [
@@ -94,20 +127,32 @@ export async function attachSellerPayments(products: Record<string, unknown>[]) 
           ? String(raw)
           : "";
     if (!sellerKey) return base;
-    const su = byId.get(sellerKey);
-    if (!su) return base;
+    const suRaw = byId.get(sellerKey);
+    if (!suRaw) return base;
+    const su = suRaw as unknown as {
+      displayName?: string;
+      phone?: string;
+      email?: string;
+      bankName?: string;
+      bankAccountNumber?: string;
+      bankAccountName?: string;
+    };
+    const contactOnly = {
+      displayName: String(su.displayName ?? ""),
+      email: String(su.email ?? "").trim()
+    };
+    const full = {
+      ...contactOnly,
+      phone: String(su.phone ?? ""),
+      bankName: String(su.bankName ?? ""),
+      bankAccountNumber: String(su.bankAccountNumber ?? ""),
+      bankAccountName: String(su.bankAccountName ?? "")
+    };
     return {
       ...base,
       /** Service fee rate on the seller’s list price; fees are added for the buyer at checkout (v2 orders). */
       platformCommissionPercent: commissionPercent,
-      sellerPayment: {
-        displayName: su.displayName ?? "",
-        phone: su.phone ?? "",
-        email: su.email ?? "",
-        bankName: su.bankName ?? "",
-        bankAccountNumber: su.bankAccountNumber ?? "",
-        bankAccountName: su.bankAccountName ?? ""
-      }
+      sellerPayment: includePayoutDetails ? full : contactOnly
     };
   });
 }
@@ -118,7 +163,11 @@ function storeRefFromBusiness(b: {
   slug?: string;
   logoUrl?: string | null;
   businessType?: string;
+  deliveryFee?: number | null;
+  deliveryAvailable?: boolean;
 }): PublicStoreRef {
+  const df = b.deliveryFee;
+  const feeNum = df != null && Number.isFinite(Number(df)) ? Number(df) : null;
   return {
     id: b._id.toString(),
     name: String(b.name || "").trim() || "Store",
@@ -130,7 +179,9 @@ function storeRefFromBusiness(b: {
       if (!s) return null;
       return rewriteStoredMediaUrl(s);
     })(),
-    businessType: String(b.businessType || "")
+    businessType: String(b.businessType || ""),
+    deliveryAvailable: Boolean(b.deliveryAvailable),
+    deliveryFeeGhs: feeNum != null && feeNum >= 0 ? feeNum : null
   };
 }
 
@@ -153,7 +204,7 @@ export async function attachStoreToProducts<T extends Record<string, unknown>>(p
     _id: { $in: bizIds.map((id) => new mongoose.Types.ObjectId(id)) },
     status: "active"
   })
-    .select("name slug logoUrl businessType")
+    .select("name slug logoUrl businessType deliveryFee deliveryAvailable")
     .lean();
   const byId = new Map(businesses.map((b) => [b._id.toString(), storeRefFromBusiness(b)]));
   return products.map((p) => {
@@ -168,9 +219,49 @@ export async function attachStoreToProducts<T extends Record<string, unknown>>(p
   });
 }
 
-export async function enrichPublicProducts(products: Record<string, unknown>[]) {
-  const withSeller = await attachSellerPayments(products);
-  return attachStoreToProducts(withSeller);
+/** Batch-attach average rating + count for discovery tiles (avoids N+1). */
+async function attachReviewStats<T extends Record<string, unknown>>(products: T[]) {
+  if (!products.length) return products;
+  const ids = [
+    ...new Set(
+      products
+        .map((p) => {
+          const raw = (p as { id?: unknown }).id;
+          return typeof raw === "string" && mongoose.isValidObjectId(raw) ? raw.trim() : "";
+        })
+        .filter(Boolean)
+    )
+  ] as string[];
+  if (!ids.length) return products;
+  type AggRow = { _id: mongoose.Types.ObjectId; avg?: number; n?: number };
+  const aggRows: AggRow[] = await Review.aggregate<AggRow>([
+    { $match: { productId: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) } } },
+    { $group: { _id: "$productId", avg: { $avg: "$rating" }, n: { $sum: 1 } } }
+  ]);
+  const byId = new Map<string, { reviewAvg: number; reviewCount: number }>();
+  for (const r of aggRows) {
+    const n = Number(r.n) || 0;
+    if (!n) continue;
+    const avg = Math.round((Number(r.avg) || 0) * 10) / 10;
+    byId.set(r._id.toString(), { reviewAvg: avg, reviewCount: n });
+  }
+  return products.map((p) => {
+    const rawId = (p as { id?: unknown }).id;
+    const id = typeof rawId === "string" ? rawId.trim() : "";
+    const st = id ? byId.get(id) : undefined;
+    if (!st) return p;
+    return { ...p, reviewAvg: st.reviewAvg, reviewCount: st.reviewCount };
+  });
+}
+
+export async function enrichPublicProducts(
+  products: Record<string, unknown>[],
+  opts?: AttachSellerPaymentsOpts
+) {
+  const withSeller = await attachSellerPayments(products, opts);
+  const withStore = await attachStoreToProducts(withSeller);
+  const withReviews = await attachReviewStats(withStore);
+  return await attachDealPricingToPublicProducts(withReviews);
 }
 
 /** Live storefront ids — food linked only to these stores counts as “on a menu”. */

@@ -64,7 +64,7 @@ export function AboutUsPage() {
               h(
                 "p",
                 { className: "mt-2" },
-                `${SITE_NAME} is Ghana’s marketplace — a place to discover clothing, electronics, groceries, beauty, books, professional services, and more from independent sellers and businesses. We provide the storefronts, discovery tools, checkout, and support rails; sellers are responsible for their listings and fulfilment unless the platform provides a specific service (for example integrated payments or courier programs where available).`
+                `${SITE_NAME} is Ghana’s marketplace — a place to discover clothing, electronics, groceries, beauty, baby & infant essentials, books, professional services, and more from independent sellers and businesses. We provide the storefronts, discovery tools, checkout, and support rails; sellers are responsible for their listings and fulfilment unless the platform provides a specific service (for example integrated payments or courier programs where available).`
               )
             ]),
             h("section", { key: "ab2" }, [

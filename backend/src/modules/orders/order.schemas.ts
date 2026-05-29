@@ -6,7 +6,8 @@ export const checkoutSchema = z.object({
       z.object({
         productId: z.string().min(1),
         quantity: z.coerce.number().int().positive(),
-        customization: z.string().trim().max(280).optional().default("")
+        customization: z.string().trim().max(280).optional().default(""),
+        selectedAddonLabels: z.array(z.string().trim().min(1)).max(24).optional()
       })
     )
     .min(1)
@@ -15,7 +16,9 @@ export const checkoutSchema = z.object({
   guestEmail: z.string().trim().email().optional(),
   /** Optional legacy — when omitted, server derives display name from email local-part. */
   guestName: z.string().trim().min(2).max(120).optional(),
-  guestPhone: z.string().trim().min(8).max(24).optional()
+  guestPhone: z.string().trim().min(8).max(24).optional(),
+  /** Loyalty: redeem points (100 pts = GHS 1 off merchandise). Logged-in buyers only. */
+  redeemPoints: z.coerce.number().int().min(0).max(1_000_000).optional().default(0)
 });
 
 export const orderStatusUpdateSchema = z.object({

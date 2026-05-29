@@ -54,16 +54,19 @@ function unpublishedListingsBannerText(count) {
 }
 
 function buildDeliveryEtaLabel(business) {
-  if (business?.estimatedDeliveryMins == null) return null;
+  if (!business?.deliveryAvailable || business?.estimatedDeliveryMins == null) return null;
   const mins = business.estimatedDeliveryMins;
   return `${Math.max(5, mins - 8)}–${mins + 12} min`;
 }
 
 function buildDeliveryFeeLabel(business) {
+  if (!business?.deliveryAvailable) {
+    return business?.pickupAvailable ? "Pickup" : null;
+  }
   if (business?.deliveryFee != null && Number.isFinite(Number(business.deliveryFee))) {
     return `${formatGhc(Number(business.deliveryFee))} delivery`;
   }
-  return business?.deliveryAvailable ? "Delivery" : null;
+  return "Delivery";
 }
 
 function buildPublicStoreUrl(storeSlug) {

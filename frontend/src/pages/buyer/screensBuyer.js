@@ -173,7 +173,7 @@ function buyerVendorPayPanel(sellerPayment, opts) {
   ]);
 }
 
-function ReviewStars({ value, className = "" }) {
+export function ReviewStars({ value, className = "" }) {
   const v = Math.min(5, Math.max(0, Math.round(Number(value) || 0)));
   return h(
     "span",

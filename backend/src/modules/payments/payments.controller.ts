@@ -18,6 +18,7 @@ import { handlePaystackRefundWebhookEvent } from "./paystackRefundSync";
 import { notifyOrderPaid } from "../notifications/notification.service";
 import { paystackGet, paystackPost } from "./paystackClient";
 import { finalizeVendorSubscriptionFromPaystack } from "../vendorSubscription/vendorSubscription.controller";
+import { runLoyaltySettlementForPaidOrder } from "../orders/orderPaymentSideEffects";
 
 const stripe = env.STRIPE_SECRET_KEY ? new Stripe(env.STRIPE_SECRET_KEY) : null;
 
@@ -191,6 +192,7 @@ export async function finalizePaystackSuccessIfValid(
       }
     }
     void notifyOrderPaid(order._id.toString());
+    void runLoyaltySettlementForPaidOrder(order._id);
     const paidDoc = await Order.findById(order._id);
     if (paidDoc) await mirrorOrderStatusToDelivery(paidDoc);
     return true;
@@ -533,6 +535,7 @@ export const stripeWebhook = asyncHandler(async (req: Request, res: Response) =>
         }
       }
       void notifyOrderPaid(orderId);
+      void runLoyaltySettlementForPaidOrder(new mongoose.Types.ObjectId(orderId));
       const paidDoc = await Order.findById(orderId);
       if (paidDoc) await mirrorOrderStatusToDelivery(paidDoc);
     }

@@ -102,6 +102,16 @@ export interface OrderDoc {
    * Used so UIs can show "Delivered · Refunded" only when the order had reached delivered before the refund.
    */
   refundFulfillmentWasDelivered?: boolean;
+  /** When rider/vendor marked order delivered (buyer confirm / payout window). */
+  deliveredAt?: Date | null;
+  /** Buyer tapped "Confirm received" — triggers payout release for legacy transfer mode. */
+  buyerConfirmedReceiptAt?: Date | null;
+  /** Points the buyer requested to redeem at checkout (deducted when payment succeeds). */
+  pointsRedeemed?: number;
+  /** After successful payment: points earn + redeem applied exactly once. */
+  pointsSettlementDone?: boolean;
+  /** First-time buyer 15% merchandise discount applied to this order. */
+  firstOrderDiscountApplied?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -216,7 +226,12 @@ const orderSchema = new Schema<OrderDoc>(
     paystackRefundId: { type: Number, default: null },
     paystackRefundRemoteStatus: { type: String, default: "" },
     refundStockRestored: { type: Boolean, default: false },
-    refundFulfillmentWasDelivered: { type: Boolean }
+    refundFulfillmentWasDelivered: { type: Boolean },
+    deliveredAt: { type: Date, default: null },
+    buyerConfirmedReceiptAt: { type: Date, default: null },
+    pointsRedeemed: { type: Number, default: 0, min: 0 },
+    pointsSettlementDone: { type: Boolean, default: false },
+    firstOrderDiscountApplied: { type: Boolean, default: false }
   },
   { timestamps: true }
 );

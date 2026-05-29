@@ -15,22 +15,33 @@ const CartContext = createContext({
 
 const KEY = StorageKeys.CART;
 
-const NO_CART_CATEGORIES = new Set(["services", "food_drinks"]);
+const NO_CART_CATEGORIES = new Set([]);
 
 function normalizeCustomization(s) {
   const t = String(s || "").trim();
   return t.length > 280 ? t.slice(0, 280) : t;
 }
 
-function stableLineKey(productId, customization) {
-  return `${String(productId)}::${normalizeCustomization(customization)}`;
+function addonKeyFromProduct(p) {
+  const labels = p && typeof p === "object" && Array.isArray(p.selectedAddonLabels) ? p.selectedAddonLabels : [];
+  return labels
+    .map((s) => String(s).trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join("|");
+}
+
+function stableLineKey(product, customization) {
+  const id = product && typeof product === "object" ? product.id : "";
+  const cust = normalizeCustomization(customization);
+  const ak = addonKeyFromProduct(product);
+  return `${String(id)}::${cust}::${ak}`;
 }
 
 function migrateLoadedItem(p) {
   if (!p || typeof p !== "object") return null;
-  if (NO_CART_CATEGORIES.has(p.category)) return null;
   const cust = normalizeCustomization(p.customization);
-  const lk = stableLineKey(p.id, cust);
+  const lk = stableLineKey(p, cust);
   return { ...p, customization: cust, _lineKey: p._lineKey || lk };
 }
 
@@ -51,12 +62,12 @@ export function CartProvider({ children }) {
     if (!product || NO_CART_CATEGORIES.has(product.category)) return;
     const q = Number(qty) || 1;
     const cust = normalizeCustomization(customization);
-    const lk = stableLineKey(product.id, cust);
+    const lk = stableLineKey(product, cust);
     setItems((prev) => {
-      const i = prev.findIndex((row) => row._lineKey === lk || (row.id === product.id && normalizeCustomization(row.customization) === cust));
+      const i = prev.findIndex((row) => row._lineKey === lk || (row.id === product.id && normalizeCustomization(row.customization) === cust && addonKeyFromProduct(row) === addonKeyFromProduct(product)));
       if (i === -1) return [...prev, { ...product, qty: q, customization: cust, _lineKey: lk }];
       const next = [...prev];
-      next[i] = { ...next[i], qty: next[i].qty + q, customization: cust, _lineKey: lk };
+      next[i] = { ...next[i], qty: next[i].qty + q, customization: cust, _lineKey: lk, ...product };
       return next;
     });
   }, []);
@@ -78,15 +89,15 @@ export function CartProvider({ children }) {
       const idx = prev.findIndex((p) => p._lineKey === lineKey);
       if (idx === -1) return prev;
       const row = prev[idx];
-      const nextKey = stableLineKey(row.id, cust);
-      const clashIdx = prev.findIndex((j, ji) => ji !== idx && j.id === row.id && normalizeCustomization(j.customization) === cust);
+      const nextKey = stableLineKey({ ...row, selectedAddonLabels: row.selectedAddonLabels }, cust);
+      const clashIdx = prev.findIndex((j, ji) => ji !== idx && j.id === row.id && normalizeCustomization(j.customization) === cust && addonKeyFromProduct(j) === addonKeyFromProduct(row));
       if (clashIdx >= 0) {
         const next = [...prev];
         next[clashIdx] = {
           ...next[clashIdx],
           qty: next[clashIdx].qty + row.qty,
           customization: cust,
-          _lineKey: stableLineKey(row.id, cust)
+          _lineKey: stableLineKey(row, cust)
         };
         next.splice(idx, 1);
         return next;

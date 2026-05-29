@@ -158,6 +158,10 @@ export function serializeOrder(o: Record<string, unknown>) {
       typeof (o as { refundFulfillmentWasDelivered?: unknown }).refundFulfillmentWasDelivered === "boolean"
         ? (o as { refundFulfillmentWasDelivered: boolean }).refundFulfillmentWasDelivered
         : null,
+    deliveredAt: (o as { deliveredAt?: Date | null }).deliveredAt ?? null,
+    buyerConfirmedReceiptAt: (o as { buyerConfirmedReceiptAt?: Date | null }).buyerConfirmedReceiptAt ?? null,
+    pointsRedeemed: Number((o as { pointsRedeemed?: number }).pointsRedeemed) || 0,
+    firstOrderDiscountApplied: Boolean((o as { firstOrderDiscountApplied?: boolean }).firstOrderDiscountApplied),
     createdAt: o.createdAt,
     updatedAt: o.updatedAt
   };

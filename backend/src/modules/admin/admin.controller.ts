@@ -37,6 +37,7 @@ import {
   adminBusinessesQuerySchema,
   adminRejectBusinessSchema,
   adminRejectProductSchema,
+  adminApproveProductsBulkSchema,
   adminReportPatchSchema,
   adminReportsQuerySchema,
   adminResetPasswordSchema,
@@ -580,6 +581,84 @@ export const listAdminProducts = asyncHandler(async (req: Request, res: Response
     total,
     page: q.page,
     limit: q.limit
+  });
+});
+
+const ADMIN_BULK_APPROVE_PENDING_CAP = 400;
+
+/** Approve many listings in one round-trip (explicit ids or all pending matching search). */
+export const approveProductsBulk = asyncHandler(async (req: Request, res: Response) => {
+  const body = adminApproveProductsBulkSchema.parse(req.body);
+
+  if (body.ids && body.ids.length > 0) {
+    const ids = [...new Set(body.ids)];
+    const oids = ids.map((id) => new mongoose.Types.ObjectId(id));
+    const result = await Product.updateMany(
+      { _id: { $in: oids }, status: { $in: ["pending_approval", "draft", "rejected"] } },
+      { $set: { status: "active", rejectionReason: null } }
+    );
+    await recordAdminAuditEvent({
+      actorId: req.user?.id,
+      action: "product.approve_bulk",
+      title: `Bulk-approved ${result.modifiedCount} listing(s) (by id)`,
+      detail: `${ids.length} id(s) requested · matched ${result.matchedCount}`
+    });
+    res.json({
+      ok: true,
+      mode: "ids" as const,
+      requested: ids.length,
+      approved: result.modifiedCount,
+      matched: result.matchedCount
+    });
+    return;
+  }
+
+  const filter: Record<string, unknown> = { status: "pending_approval" };
+  const q = typeof body.search === "string" ? body.search.trim() : "";
+  if (q.length > 0) {
+    const re = new RegExp(escapeRegex(q), "i");
+    filter.$or = [{ name: re }, { description: re }];
+  }
+
+  const batch = await Product.find(filter)
+    .sort({ updatedAt: -1 })
+    .limit(ADMIN_BULK_APPROVE_PENDING_CAP)
+    .select("_id")
+    .lean();
+
+  const idBatch = batch.map((d) => d._id);
+
+  if (idBatch.length === 0) {
+    res.json({
+      ok: true,
+      mode: "approveAllPendingMatchingSearch" as const,
+      approved: 0,
+      scanned: 0,
+      batchCap: ADMIN_BULK_APPROVE_PENDING_CAP,
+      repeatSuggested: false
+    });
+    return;
+  }
+
+  const result = await Product.updateMany(
+    { _id: { $in: idBatch }, status: "pending_approval" },
+    { $set: { status: "active", rejectionReason: null } }
+  );
+
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "product.approve_bulk",
+    title: `Bulk-approved ${result.modifiedCount} pending listing(s)`,
+    detail: q ? `search “${q.slice(0, 120)}${q.length > 120 ? "…" : ""}” · batch ${idBatch.length}` : `batch ${idBatch.length}`
+  });
+
+  res.json({
+    ok: true,
+    mode: "approveAllPendingMatchingSearch" as const,
+    approved: result.modifiedCount,
+    scanned: idBatch.length,
+    batchCap: ADMIN_BULK_APPROVE_PENDING_CAP,
+    repeatSuggested: batch.length >= ADMIN_BULK_APPROVE_PENDING_CAP
   });
 });
 
@@ -2037,35 +2116,46 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
     return;
   }
 
-  /** Approve */
   if (!applicant && appEmailNorm) {
-    applicant = await User.findOne({ email: appEmailNorm });
-  }
-  if (!applicant) {
-    throw new HttpError(
-      400,
-      `No shopper account uses ${app.email}. Ask the applicant to register with this exact email, then approve the application again.`
-    );
-  }
-  const applicantEmailNorm = ((applicant as { email?: string }).email || "").trim().toLowerCase();
-  if (!applicantEmailNorm || applicantEmailNorm !== appEmailNorm) {
-    throw new HttpError(
-      400,
-      "Applicant account email does not match the application email. Verify the shopper registered with the same address."
-    );
-  }
+  applicant = await User.findOne({ email: appEmailNorm });
+}
 
-  if (!app.userId) {
-    app.userId = applicant._id;
-    await app.save();
-  }
+// If no account exists, create one automatically for the guest applicant
+if (!applicant) {
+ const tempPassword = require("crypto").randomBytes(16).toString("hex");
+const passwordHash = await bcrypt.hash(tempPassword, BCRYPT_SALT);
 
-  const applicantOid = applicant._id as mongoose.Types.ObjectId;
+  applicant = await User.create({
+    email: appEmailNorm,
+    passwordHash,
+    displayName: app.fullName.trim(),
+    phone: app.phone.trim(),
+    role: "buyer",
+    emailVerifiedAt: new Date(),
+    accountStatus: "active"
+  });
+}
 
-  if (normalizeUserRole(applicant.role) !== "buyer") {
-    throw new HttpError(400, "Applicant is not a shopper account; cannot approve.");
-  }
+const applicantEmailNorm = ((applicant as { email?: string }).email || "").trim().toLowerCase();
 
+if (!app.userId) {
+  app.userId = applicant._id;
+  await app.save();
+}
+
+const applicantOid = applicant._id as mongoose.Types.ObjectId;
+
+// Allow buyer or guest (newly created) — block only admin and rider
+const applicantRole = normalizeUserRole(applicant.role);
+if (applicantRole === "admin") {
+  throw new HttpError(400, "Admin accounts cannot be approved as vendors.");
+}
+if (applicantRole === "rider") {
+  throw new HttpError(400, "Rider accounts cannot be approved as vendors.");
+}
+if (applicantRole === "seller") {
+  throw new HttpError(400, "This account is already a vendor.");
+}
   app.status = "approved";
   app.adminNote = body.adminNote || "";
   app.reviewedAt = new Date();

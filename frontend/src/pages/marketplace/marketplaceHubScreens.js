@@ -1,14 +1,70 @@
-import React, { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ChevronRight, Clock, MapPin, Share2, Sparkles, Star, Truck } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { ChevronRight, Clock, MapPin, Package, Share2, Sparkles, Star, Truck } from "lucide-react";
 import { apiFetch, fetchBusinessStorefront, getApiBase } from "services/api";
-import { useAuth } from "context";
-import { BuyerLayout, CartDrawer } from "pages/buyer/screensBuyer";
+import { useAuth, useNotice } from "context";
+import { BuyerLayout, CartDrawer, ReviewStars } from "pages/buyer/screensBuyer";
 import { formatGhc } from "utils/money";
 import { h, f } from "utils/h";
 import { storeStatusLabel } from "utils/storeStatus";
-import { Button, GlassPanel } from "components/ui";
-import { isFoodCallToOrderCategory, isOfflineQuoteCategory } from "config/catalog";
+import { Button, GlassPanel, Field, TextArea, InlineNotice } from "components/ui";
+import { CATEGORY_LABELS, isFoodCallToOrderCategory, isOfflineQuoteCategory, productCategoryForBusinessType } from "config/catalog";
+
+function HubListingFallbackCard({ p }) {
+  const to = `/products/${encodeURIComponent(p.id)}`;
+  const src =
+    Array.isArray(p.imageUrls) && typeof p.imageUrls[0] === "string" && String(p.imageUrls[0]).trim()
+      ? p.imageUrls[0]
+      : "";
+  const priceNum = Number(p.price);
+  return h(
+    Link,
+    {
+      to,
+      className:
+        "flex gap-3 overflow-hidden rounded-2xl border border-slate-200/90 bg-white/90 p-3 shadow-sm transition hover:-translate-y-0.5 hover:border-violet-300 hover:shadow-md dark:border-white/10 dark:bg-night-900/50 dark:hover:border-violet-400/40"
+    },
+    [
+      h(
+        "div",
+        {
+          key: "th",
+          className:
+            "flex h-[4.25rem] w-[4.25rem] shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 dark:bg-night-950/60"
+        },
+        src
+          ? h("img", {
+              src,
+              alt: "",
+              loading: "lazy",
+              decoding: "async",
+              className: "h-full w-full object-cover"
+            })
+          : h(Package, { className: "h-7 w-7 text-slate-400 dark:text-slate-500", "aria-hidden": true })
+      ),
+      h("div", { key: "txt", className: "min-w-0 flex-1" }, [
+        h(
+          "p",
+          {
+            key: "n",
+            className: "line-clamp-2 font-display text-sm font-bold leading-snug text-slate-900 dark:text-white"
+          },
+          String(p.name || "Listing")
+        ),
+        Number.isFinite(priceNum)
+          ? h(
+              "p",
+              {
+                key: "pr",
+                className: "mt-1 font-semibold tabular-nums text-violet-700 dark:text-violet-200"
+              },
+              formatGhc(priceNum)
+            )
+          : null
+      ])
+    ]
+  );
+}
 
 /** Path segment → API `businessType` (must match backend `BUSINESS_TYPES`). */
 export const CATEGORY_HUB_CONFIG = {
@@ -51,6 +107,16 @@ export const CATEGORY_HUB_CONFIG = {
     badge: "Beauty",
     accent: "text-pink-100",
     accentSoft: "text-pink-200/85"
+  },
+  babies: {
+    businessType: "baby_infant_store",
+    title: "Babies & infants",
+    subtitle: "Gentle essentials — nursery gear, feeding, diapers, apparel, and care from trusted sellers.",
+    heroClass:
+      "from-cyan-400/95 via-sky-500/92 to-indigo-600/95 shadow-indigo-900/30",
+    badge: "Little ones",
+    accent: "text-sky-50",
+    accentSoft: "text-cyan-100/95"
   },
   groceries: {
     businessType: "grocery_store",
@@ -162,10 +228,16 @@ function StoreCard({ b }) {
 
 export function CategoryHubPage({ slug }) {
   const cfg = CATEGORY_HUB_CONFIG[slug];
+  const productCatKey = useMemo(
+    () => (cfg ? productCategoryForBusinessType(cfg.businessType) : null),
+    [cfg]
+  );
   const [cartOpen, setCartOpen] = useState(false);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState("");
   const [stores, setStores] = useState([]);
+  const [hubProdsBusy, setHubProdsBusy] = useState(true);
+  const [hubProducts, setHubProducts] = useState([]);
 
   useEffect(() => {
     if (!cfg) return;
@@ -194,9 +266,35 @@ export function CategoryHubPage({ slug }) {
     };
   }, [cfg]);
 
+  useEffect(() => {
+    if (!cfg || !productCatKey) return;
+    let on = true;
+    setHubProdsBusy(true);
+    void (async () => {
+      try {
+        const raw = await apiFetch(
+          `/api/products?category=${encodeURIComponent(productCatKey)}&limit=40`,
+          { credentials: "omit" }
+        );
+        if (!on) return;
+        const list = raw && raw.products ? raw.products : [];
+        setHubProducts(Array.isArray(list) ? list : []);
+      } catch {
+        if (on) setHubProducts([]);
+      } finally {
+        if (on) setHubProdsBusy(false);
+      }
+    })();
+    return () => {
+      on = false;
+    };
+  }, [cfg, productCatKey]);
+
   if (!cfg) {
     return h(NavMissing);
   }
+
+  const catLabel = productCatKey ? CATEGORY_LABELS[productCatKey] || productCatKey : cfg.title;
 
   return h(f, null, [
     h(
@@ -237,27 +335,62 @@ export function CategoryHubPage({ slug }) {
                 err
               )
             : stores.length === 0
-              ? h(
-                  GlassPanel,
-                  { key: "em", className: "mx-auto mt-10 max-w-lg text-center" },
-                  [
-                    h("p", { className: "font-semibold text-slate-900 dark:text-white" }, "No storefronts yet"),
-                    h(
-                      "p",
-                      { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
-                      "Approved vendors can create a business profile in Vendor hub → Stores, then attach listings."
+              ? hubProdsBusy
+                ? h(
+                    "p",
+                    { key: "ldp", className: "py-10 text-center text-sm text-slate-500 dark:text-slate-400" },
+                    "Loading marketplace listings…"
+                  )
+                : hubProducts.length > 0
+                  ? h(f, { key: "fallback-prods" }, [
+                      h("div", { key: "rail-h", className: "mx-auto mb-10 mt-10 max-w-3xl rounded-3xl bg-violet-50/95 p-6 text-center dark:bg-violet-950/35" }, [
+                        h(
+                          "p",
+                          {
+                            key: "t",
+                            className:
+                              "text-sm font-bold uppercase tracking-[0.12em] text-violet-800 dark:text-violet-200"
+                          },
+                          `${catLabel} on the marketplace`
+                        ),
+                        h(
+                          "p",
+                          {
+                            key: "sub",
+                            className: "mx-auto mt-2 max-w-lg text-xs leading-relaxed text-slate-600 dark:text-slate-400 sm:text-sm"
+                          },
+                          "There isn’t an approved storefront in this aisle yet — these are live catalogue listings that shoppers can browse from Home. Open Storefront Studio as a Seller to spin up your shop here."
+                        )
+                      ]),
+                      h(
+                        "ul",
+                        {
+                          key: "flist",
+                          className:
+                            "mt-8 grid gap-4 sm:grid-cols-2 lg:gap-6"
+                        },
+                        hubProducts.map((p) => h("li", { key: p.id }, h(HubListingFallbackCard, { p })))
+                      )
+                    ])
+                  : h(
+                      GlassPanel,
+                      { key: "em", className: "mx-auto mt-10 max-w-lg text-center" },
+                      [
+                        h("p", { className: "font-semibold text-slate-900 dark:text-white" }, "Nothing here yet"),
+                        h(
+                          "p",
+                          { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
+                          "No approved storefronts in this aisle, and nothing live in catalogue with this category yet. From Home, shoppers can browse all approvals once sellers publish listings."
+                        )
+                      ]
                     )
-                  ]
-                )
               : h(
                   "ul",
                   {
                     key: "grid",
                     className: "mt-10 grid gap-4 sm:grid-cols-2 lg:gap-6"
                   },
-                  stores.map((b) =>
-                    h("li", { key: b.slug || b.id }, h(StoreCard, { b }))
-                  )
+                  stores.map((b) => h("li", { key: b.slug || b.id }, h(StoreCard, { b })))
                 )
       ])
     ),
@@ -358,6 +491,7 @@ export function BrowseStoresPage() {
     ["Fashion", "/fashion"],
     ["Electronics", "/electronics"],
     ["Beauty", "/beauty"],
+    ["Babies", "/babies"],
     ["Groceries", "/groceries"],
     ["Books", "/books"],
     ["Services", "/services"]
@@ -630,11 +764,21 @@ export function StorefrontProductCard({ product, business, vendorMode = false })
 
 export function BusinessStorefrontPage() {
   const { slug } = useParams();
+  const [searchParams] = useSearchParams();
+  const orderIdFromUrl = searchParams.get("orderId") || "";
   const { user, accessToken } = useAuth();
+  const { toast } = useNotice();
   const [cartOpen, setCartOpen] = useState(false);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState("");
   const [payload, setPayload] = useState(null);
+  const [storeReviews, setStoreReviews] = useState([]);
+  const [storeReviewStatus, setStoreReviewStatus] = useState(null);
+  const [storeReviewStatusErr, setStoreReviewStatusErr] = useState("");
+  const [storeRating, setStoreRating] = useState(5);
+  const [storeComment, setStoreComment] = useState("");
+  const [storeReviewSubmitting, setStoreReviewSubmitting] = useState(false);
+  const [storeReviewMsg, setStoreReviewMsg] = useState("");
 
   useEffect(() => {
     let on = true;
@@ -660,7 +804,8 @@ export function BusinessStorefrontPage() {
   const business = payload?.business || null;
   const menuSections = Array.isArray(payload?.menuSections) ? payload.menuSections : [];
   const products = Array.isArray(payload?.products) ? payload.products : [];
-  const reviewSummary = payload?.reviewSummary || { avgRating: null, count: 0 };
+  const productReviewSummary = payload?.productReviewSummary || payload?.reviewSummary || { avgRating: null, count: 0 };
+  const storeReviewSummary = payload?.storeReviewSummary || { avgRating: null, count: 0 };
 
   const hubEntry = business
     ? Object.entries(CATEGORY_HUB_CONFIG).find(([, v]) => v.businessType === business.businessType)
@@ -677,6 +822,97 @@ export function BusinessStorefrontPage() {
     unassigned
   });
 
+  useEffect(() => {
+    if (!slug || !business) return;
+    let cancelled = false;
+    apiFetch(`/api/businesses/${encodeURIComponent(slug)}/reviews`)
+      .then((d) => {
+        if (!cancelled) setStoreReviews(d.reviews || []);
+      })
+      .catch(() => {
+        if (!cancelled) setStoreReviews([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, business?.id]);
+
+  useEffect(() => {
+    if (!accessToken || !slug) {
+      setStoreReviewStatus(null);
+      setStoreReviewStatusErr("");
+      return;
+    }
+    let cancelled = false;
+    setStoreReviewStatusErr("");
+    const qs = orderIdFromUrl
+      ? `?orderId=${encodeURIComponent(orderIdFromUrl)}&_=${Date.now()}`
+      : `?_=${Date.now()}`;
+    apiFetch(`/api/businesses/${encodeURIComponent(slug)}/review-status${qs}`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    })
+      .then((d) => {
+        if (!cancelled) {
+          setStoreReviewStatus(d);
+          setStoreReviewStatusErr("");
+        }
+      })
+      .catch((ex) => {
+        if (!cancelled) {
+          setStoreReviewStatus(null);
+          setStoreReviewStatusErr(ex.message || "Could not load store review eligibility");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, slug, orderIdFromUrl]);
+
+  const storeAvgDisplay = useMemo(() => {
+    if (storeReviewSummary?.avgRating != null) return storeReviewSummary.avgRating;
+    if (!storeReviews.length) return null;
+    const s = storeReviews.reduce((a, r) => a + (Number(r.rating) || 0), 0);
+    return Math.round((s / storeReviews.length) * 10) / 10;
+  }, [storeReviewSummary, storeReviews]);
+
+  const submitStoreReview = async () => {
+    setStoreReviewMsg("");
+    if (!accessToken || !slug || !storeReviewStatus?.canSubmit) return;
+    const oid =
+      storeReviewStatus.orderId != null && String(storeReviewStatus.orderId).trim()
+        ? String(storeReviewStatus.orderId).trim()
+        : "";
+    if (!storeReviewStatus.skipVerifiedPurchase && !oid) return;
+    setStoreReviewSubmitting(true);
+    try {
+      await apiFetch(`/api/businesses/${encodeURIComponent(slug)}/reviews`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { rating: storeRating, comment: storeComment.trim(), ...(oid ? { orderId: oid } : {}) }
+      });
+      setStoreComment("");
+      const qs2 = orderIdFromUrl
+        ? `?orderId=${encodeURIComponent(orderIdFromUrl)}&_=${Date.now()}`
+        : `?_=${Date.now()}`;
+      const [rv, st, raw] = await Promise.all([
+        apiFetch(`/api/businesses/${encodeURIComponent(slug)}/reviews`),
+        apiFetch(`/api/businesses/${encodeURIComponent(slug)}/review-status${qs2}`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        }),
+        fetchBusinessStorefront(slug, { accessToken })
+      ]);
+      setStoreReviews(rv.reviews || []);
+      setStoreReviewStatus(st);
+      setPayload(raw);
+      setStoreReviewMsg("Thanks — your store review was posted.");
+      toast("Store review posted", { variant: "success" });
+    } catch (ex) {
+      setStoreReviewMsg(ex.message || "Could not submit store review");
+    } finally {
+      setStoreReviewSubmitting(false);
+    }
+  };
+
   const viewerOwnsStore = Boolean(
     user?.role === "seller" && user?.id && business?.ownerId && String(user.id) === String(business.ownerId)
   );
@@ -684,17 +920,38 @@ export function BusinessStorefrontPage() {
   const hoursSnippet = formatOperatingHoursSnippet(business?.operatingHours);
   const listingCount = products.length;
 
+  const pickupOk = Boolean(business?.pickupAvailable);
+  const deliveryOk = Boolean(business?.deliveryAvailable);
+
   const etaRange =
-    business?.estimatedDeliveryMins != null
+    deliveryOk && business?.estimatedDeliveryMins != null
       ? `${Math.max(5, business.estimatedDeliveryMins - 8)}–${business.estimatedDeliveryMins + 12} min`
       : null;
 
   const feeLine =
-    business?.deliveryFee != null && Number.isFinite(Number(business.deliveryFee))
+    deliveryOk &&
+    business?.deliveryFee != null &&
+    Number.isFinite(Number(business.deliveryFee)) &&
+    Number(business.deliveryFee) > 0
       ? `${formatGhc(Number(business.deliveryFee))} delivery fee`
-      : business?.deliveryAvailable
-        ? "Delivery fees at checkout"
-        : "Pickup or ask seller";
+      : deliveryOk
+        ? "Delivery fees — confirm at checkout / with seller"
+        : pickupOk
+          ? "Pickup — arrange with seller"
+          : "Contact seller";
+
+  const storefrontLocationSnippet = business?.locationLabel?.trim()
+    ? String(business.locationLabel).trim()
+    : pickupOk && deliveryOk
+      ? "Pickup and delivery offered — message the seller for pickup address / delivery zones."
+      : deliveryOk && !pickupOk
+        ? "Delivery offered — seller will confirm zones and timing."
+        : pickupOk && !deliveryOk
+          ? "Pickup — message the seller for pickup details."
+          : "How to get your order — message the seller.";
+
+  const storefrontServiceSnippet = [pickupOk && "Pickup", deliveryOk && "Delivery"].filter(Boolean).join(" · ") ||
+    "See listings for how to buy";
 
   const shareStore = () => {
     const url = typeof window !== "undefined" ? window.location.href : "";
@@ -853,18 +1110,22 @@ export function BusinessStorefrontPage() {
                               )
                             ]),
                             h("div", { className: "mt-3 flex flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-300" }, [
-                              reviewSummary.count
+                              storeReviewSummary.count > 0 || storeReviews.length > 0
                                 ? h(
                                     "span",
                                     {
                                       key: "rate",
                                       className:
-                                        "inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 font-bold text-amber-900 ring-1 ring-amber-200/80 dark:bg-amber-500/15 dark:text-amber-100 dark:ring-amber-400/30"
+                                        "inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 font-bold text-amber-900 ring-1 ring-amber-200/80 dark:bg-amber-500/15 dark:text-amber-100 dark:ring-amber-400/30",
+                                      title: "Store rating — service & fulfilment (not the same as product ratings)"
                                     },
                                     [
                                       h(Star, { key: "i", className: "h-3.5 w-3.5 fill-amber-400 text-amber-500" }),
-                                      `${reviewSummary.avgRating ?? "–"}`,
-                                      h("span", { key: "c", className: "font-semibold text-slate-500 dark:text-slate-400" }, `(${reviewSummary.count})`)
+                                      `${storeAvgDisplay != null ? storeAvgDisplay : "–"}`,
+                                      h("span", { key: "c", className: "font-semibold text-slate-500 dark:text-slate-400" }, `(${
+                                        storeReviewSummary.count || storeReviews.length
+                                      })`),
+                                      h("span", { key: "lbl", className: "ml-1 font-semibold text-slate-500 dark:text-slate-400" }, "store")
                                     ]
                                   )
                                 : null,
@@ -940,9 +1201,7 @@ export function BusinessStorefrontPage() {
                             infoTile(
                               h(MapPin, { className: "h-5 w-5" }),
                               "Location",
-                              business?.locationLabel
-                                ? String(business.locationLabel)
-                                : "Local pickup — message the seller for pickup details."
+                              storefrontLocationSnippet
                             ),
                             infoTile(
                               h(Clock, { className: "h-5 w-5" }),
@@ -952,10 +1211,233 @@ export function BusinessStorefrontPage() {
                             infoTile(
                               h(Truck, { className: "h-5 w-5" }),
                               "Service",
-                              [business?.pickupAvailable && "Pickup", business?.deliveryAvailable && "Delivery"].filter(Boolean).join(" · ") ||
-                                "See listings for how to buy"
+                              storefrontServiceSnippet
                             ),
                             infoTile(h(Sparkles, { className: "h-5 w-5" }), "Fees", feeLine)
+                          ]
+                        ),
+                        h(
+                          "section",
+                          {
+                            key: "store-reviews",
+                            id: "store-reviews",
+                            className:
+                              "mt-10 scroll-mt-24 rounded-3xl border border-amber-200/80 bg-gradient-to-br from-amber-50/90 to-white p-5 shadow-sm dark:border-amber-500/20 dark:from-amber-950/30 dark:to-night-900/80 sm:p-6"
+                          },
+                          [
+                            h("div", { key: "sr-h", className: "flex flex-wrap items-end justify-between gap-3" }, [
+                              h("div", { className: "min-w-0" }, [
+                                h(
+                                  "h2",
+                                  {
+                                    className: "font-display text-xl font-bold text-slate-900 dark:text-white"
+                                  },
+                                  "Store reviews"
+                                ),
+                                h(
+                                  "p",
+                                  {
+                                    className: "mt-1 max-w-2xl text-xs leading-relaxed text-slate-600 dark:text-slate-400"
+                                  },
+                                  "Service, packaging, and delivery for this shop — separate from ratings on individual products (open a listing for item reviews)."
+                                )
+                              ]),
+                              storeAvgDisplay != null
+                                ? h("div", { key: "agg", className: "hidden text-right sm:block" }, [
+                                    h("div", { className: "flex items-center justify-end gap-2" }, [
+                                      h(ReviewStars, { value: storeAvgDisplay, className: "scale-90" }),
+                                      h(
+                                        "span",
+                                        { className: "text-lg font-black text-slate-900 dark:text-white" },
+                                        String(storeAvgDisplay)
+                                      ),
+                                      h("span", { className: "text-sm font-semibold text-slate-500 dark:text-slate-400" }, "/ 5")
+                                    ]),
+                                    h(
+                                      "p",
+                                      { className: "mt-0.5 text-[11px] text-slate-500 dark:text-slate-400" },
+                                      `${storeReviewSummary.count || storeReviews.length || 0} review${
+                                        (storeReviewSummary.count || storeReviews.length) === 1 ? "" : "s"
+                                      }`
+                                    )
+                                  ])
+                                : null
+                            ]),
+                            productReviewSummary.count > 0
+                              ? h(
+                                  "p",
+                                  {
+                                    key: "pavg",
+                                    className: "mt-3 text-[11px] text-slate-500 dark:text-slate-400"
+                                  },
+                                  [
+                                    "Product ratings on this shop’s listings (avg ",
+                                    h(
+                                      "span",
+                                      { className: "font-semibold text-slate-700 dark:text-slate-200" },
+                                      String(productReviewSummary.avgRating ?? "–")
+                                    ),
+                                    `, ${productReviewSummary.count} total) — different from the store score above.`
+                                  ]
+                                )
+                              : null,
+                            storeReviewStatusErr &&
+                              h(
+                                InlineNotice,
+                                {
+                                  key: "sre",
+                                  variant: "error",
+                                  className: "mt-3",
+                                  onDismiss: () => setStoreReviewStatusErr("")
+                                },
+                                storeReviewStatusErr
+                              ),
+                            accessToken && storeReviewStatus?.canSubmit
+                              ? h(GlassPanel, { key: "sf", className: "mt-4 !border-amber-500/25" }, [
+                                  h("h3", { className: "font-semibold text-slate-900 dark:text-white" }, "Rate this store"),
+                                  h(
+                                    "p",
+                                    { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" },
+                                    "One store review per account — about your overall experience with this seller."
+                                  ),
+                                  h("div", { className: "mt-3" }, [
+                                    h(
+                                      "p",
+                                      { className: "mb-2 text-sm font-medium text-slate-700 dark:text-slate-200" },
+                                      "Your rating"
+                                    ),
+                                    h(RatingStarPicker, { value: storeRating, onChange: setStoreRating, starSizeClass: "h-7 w-7" }),
+                                    h(
+                                      "p",
+                                      { className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
+                                      `${storeRating} of 5 stars`
+                                    )
+                                  ]),
+                                  h(
+                                    "div",
+                                    { key: "comm", className: "mt-3" },
+                                    h(
+                                      Field,
+                                      { label: "Comment (optional)" },
+                                      h(TextArea, {
+                                        value: storeComment,
+                                        onChange: (e) => setStoreComment(e.target.value),
+                                        rows: 4,
+                                        placeholder: "Delivery speed, packaging, communication…"
+                                      })
+                                    )
+                                  ),
+                                  storeReviewMsg &&
+                                    (String(storeReviewMsg).startsWith("Thanks")
+                                      ? h(
+                                          InlineNotice,
+                                          {
+                                            key: "srm-ok",
+                                            variant: "success",
+                                            className: "mt-3",
+                                            onDismiss: () => setStoreReviewMsg("")
+                                          },
+                                          storeReviewMsg
+                                        )
+                                      : h(
+                                          InlineNotice,
+                                          {
+                                            key: "srm-bad",
+                                            variant: "error",
+                                            className: "mt-3",
+                                            onDismiss: () => setStoreReviewMsg("")
+                                          },
+                                          storeReviewMsg
+                                        )),
+                                  h(
+                                    Button,
+                                    {
+                                      key: "sub",
+                                      className: "mt-4",
+                                      type: "button",
+                                      loading: storeReviewSubmitting,
+                                      onClick: () => void submitStoreReview()
+                                    },
+                                    "Submit store review"
+                                  )
+                                ])
+                              : null,
+                            accessToken &&
+                            storeReviewStatus &&
+                            !storeReviewStatus.canSubmit &&
+                            !storeReviewStatus.hasReview &&
+                            storeReviewStatus.reason === "purchase_required"
+                              ? h(
+                                  "p",
+                                  { key: "need", className: "mt-4 text-sm text-slate-500 dark:text-slate-400" },
+                                  [
+                                    "Order from this store first, then you can leave a store review.",
+                                    " ",
+                                    h(
+                                      Link,
+                                      { to: "/orders", className: "font-medium text-sky-600 hover:underline dark:text-sky-300" },
+                                      "My orders"
+                                    )
+                                  ]
+                                )
+                              : null,
+                            accessToken && storeReviewStatus?.hasReview
+                              ? h(
+                                  "p",
+                                  {
+                                    key: "done",
+                                    className: "mt-4 text-sm text-emerald-700 dark:text-emerald-300"
+                                  },
+                                  "You already left a store review."
+                                )
+                              : null,
+                            !accessToken
+                              ? h(
+                                  "p",
+                                  { key: "guest", className: "mt-4 text-sm text-slate-500 dark:text-slate-400" },
+                                  "Sign in to review this store after you place an order."
+                                )
+                              : null,
+                            h(
+                              "div",
+                              { key: "sr-list", className: "mt-5 space-y-3" },
+                              storeReviews.length === 0
+                                ? [
+                                    h(
+                                      "p",
+                                      { key: "empty", className: "text-sm text-slate-500 dark:text-slate-400" },
+                                      "No store reviews yet — be the first after you buy."
+                                    )
+                                  ]
+                                : storeReviews.map((r) =>
+                                    h(GlassPanel, { key: r.id, className: "!border-white/15 !p-4" }, [
+                                      h(
+                                        "div",
+                                        { className: "flex flex-wrap items-center justify-between gap-2" },
+                                        [
+                                          h(
+                                            "span",
+                                            { className: "font-medium text-slate-800 dark:text-slate-100" },
+                                            r.reviewerDisplayName || "Verified buyer"
+                                          ),
+                                          h(
+                                            "span",
+                                            { className: "text-xs text-slate-500" },
+                                            new Date(r.createdAt).toLocaleDateString()
+                                          )
+                                        ]
+                                      ),
+                                      h(ReviewStars, { value: r.rating, className: "mt-1" }),
+                                      r.comment
+                                        ? h(
+                                            "p",
+                                            { className: "mt-2 text-sm leading-relaxed text-slate-700 dark:text-slate-200" },
+                                            r.comment
+                                          )
+                                        : null
+                                    ].filter(Boolean))
+                                  )
+                            )
                           ]
                         ),
                         menuBlocks.length
@@ -1017,8 +1499,8 @@ export function BusinessStorefrontPage() {
                                 h("p", { className: "mt-1 font-display text-2xl font-black text-slate-900 dark:text-white" }, String(listingCount))
                               ]),
                               h("div", { key: "c2", className: "rounded-2xl bg-white/90 p-3 shadow-sm dark:bg-night-950/80" }, [
-                                h("p", { className: "text-[10px] font-bold text-slate-500 dark:text-slate-400" }, "Reviews"),
-                                h("p", { className: "mt-1 font-display text-2xl font-black text-slate-900 dark:text-white" }, String(reviewSummary.count))
+                                h("p", { className: "text-[10px] font-bold text-slate-500 dark:text-slate-400" }, "Store reviews"),
+                                h("p", { className: "mt-1 font-display text-2xl font-black text-slate-900 dark:text-white" }, String(storeReviewSummary.count || 0))
                               ])
                             ]),
                             h(

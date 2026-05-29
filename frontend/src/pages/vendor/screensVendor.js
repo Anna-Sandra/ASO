@@ -7,6 +7,8 @@ import {
   Box,
   CalendarClock,
   Camera,
+  ChevronLeft,
+  ChevronRight,
   Building2,
   LayoutDashboard,
   LineChart,
@@ -14,6 +16,7 @@ import {
   Menu,
   MessageSquare,
   Package,
+  Percent,
   PlusCircle,
   Send,
   Settings,
@@ -36,6 +39,7 @@ import {
   refFromId,
   storeUsesMenuSections
 } from "config/catalog";
+import { MARKETPLACE_SUBCATEGORY_OPTIONS } from "config/marketplaceSubcategories";
 import { useVendorStorePicker } from "hooks/useVendorStorePicker";
 import { resolveMenuSectionIdForStore } from "utils/vendorStore";
 import {
@@ -46,6 +50,7 @@ import {
   mergeAttrsFromServer,
   renderListingCategoryFields
 } from "config/listingCategoryFields";
+import { LISTING_STOCK_WHEN_AVAILABLE } from "config/listingStock";
 import { formatGhc } from "utils/money";
 import { formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
 import { h, f } from "utils/h";
@@ -68,8 +73,103 @@ import {
 const MAX_PRODUCT_IMAGES = 500;
 /** Must match backend `MAX_PRODUCT_IMAGES_PER_UPLOAD`. */
 const UPLOAD_IMAGES_CHUNK = 40;
-/** Sent for category `services` so buyers can checkout (buyer UI blocks when stock is 0). */
-const SERVICE_LISTING_STOCK = 999;
+function vendorListingAddonsBlock(h, Field, TextInput, meta, addons, setAddons, addonLabel, setAddonLabel, addonPrice, setAddonPrice) {
+  if (!meta.showAddons) return null;
+  return h(
+    "div",
+    { key: "addons-section", className: "space-y-3 rounded-2xl border border-slate-200 p-4 dark:border-white/10" },
+    [
+      h("div", { key: "addon-header" }, [
+        h("h3", { key: "addon-title", className: "text-sm font-semibold text-slate-900 dark:text-white" }, meta.addonsLabel || "Customization options"),
+        h(
+          "p",
+          { key: "addon-hint", className: "mt-1 text-xs text-slate-500 dark:text-slate-400" },
+          meta.addonsHint || "Buyers can select these at checkout."
+        )
+      ]),
+      addons.length > 0
+        ? h(
+            "div",
+            { key: "addon-list", className: "space-y-2" },
+            addons.map((a, i) =>
+              h(
+                "div",
+                {
+                  key: `addon-${i}`,
+                  className: "flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 dark:bg-white/5"
+                },
+                [
+                  h(
+                    "span",
+                    { key: "lbl", className: "text-sm text-slate-800 dark:text-slate-200" },
+                    `${a.label}${Number(a.priceDelta) > 0 ? ` +${formatGhc(Number(a.priceDelta))}` : " (free)"}`
+                  ),
+                  h(
+                    "button",
+                    {
+                      key: "rm",
+                      type: "button",
+                      onClick: () => setAddons((prev) => prev.filter((_, j) => j !== i)),
+                      className: "text-xs font-medium text-rose-500 hover:text-rose-700"
+                    },
+                    "Remove"
+                  )
+                ]
+              )
+            )
+          )
+        : null,
+      h("div", { key: "addon-add", className: "flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-2" }, [
+        h(
+          "div",
+          { key: "lbl-w", className: "min-w-0 flex-1" },
+          h(
+            Field,
+            { key: "addon-lbl-field", label: "Option label" },
+            h(TextInput, {
+              value: addonLabel,
+              onChange: (e) => setAddonLabel(e.target.value),
+              placeholder: "e.g. Chicken, Extra soup"
+            })
+          )
+        ),
+        h(
+          "div",
+          { key: "pr-w", className: "w-full sm:w-36" },
+          h(
+            Field,
+            { key: "addon-price-field", label: "Extra (GHS)" },
+            h(TextInput, {
+              type: "number",
+              step: "0.01",
+              min: "0",
+              value: addonPrice,
+              onChange: (e) => setAddonPrice(e.target.value),
+              placeholder: "0"
+            })
+          )
+        ),
+        h(
+          "button",
+          {
+            key: "addon-add-btn",
+            type: "button",
+            onClick: () => {
+              const lbl = addonLabel.trim();
+              if (!lbl) return;
+              const delta = Math.max(0, Number(addonPrice) || 0);
+              setAddons((prev) => [...prev, { label: lbl, priceDelta: delta }]);
+              setAddonLabel("");
+              setAddonPrice("");
+            },
+            className: "mb-1 rounded-xl bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 sm:shrink-0"
+          },
+          "+ Add"
+        )
+      ])
+    ]
+  );
+}
 
 /**
  * Avatar letter: display name first, else email local-part.
@@ -106,8 +206,105 @@ function vendorUserAvatarNode(u, { sizeClass = "h-8 w-8", initialTextClass = "te
   );
 }
 
+/** Hint + dropdown lead option — avoids showing fashion/food examples on electronics & other hubs. */
+function marketplaceSubcategoryVendorCopy(category) {
+  const hints = {
+    food_drinks:
+      "Buyers often search dishes or formats (“jollof platter”, “waakye lunch”, “smoothie”). Match the closest type so Marketplace search finds you.",
+    fashion_accessories:
+      "Buyers often search pieces (“sandals”, “ankara dresses”, “laptop tote”). Pick the closest fit for this listing.",
+    electronics_gadgets:
+      "Buyers often search gadgets (“Samsung phone”, “gaming pad”, “Type-C cable”, “Bluetooth speaker”). Pick the closest electronics bucket for this listing.",
+    beauty_personal_care:
+      "Buyers often search products (“hair oil”, “face serum”, “nail polish”). Pick the closest beauty or grooming type.",
+    groceries_essentials:
+      "Buyers often search packs (“vegetable oil 5L”, “indomie carton”, “detergent”). Pick the closest grocery type.",
+    services:
+      "Buyers often search by service (“Waec tutoring”, “event photos”, “phone screen repair”). Pick the closest fit.",
+    books_academic:
+      "Buyers often search formats (“Level 400 textbook bundle”, “novdec pack”, “exercise books”). Pick the closest type.",
+    babies_infants:
+      "Buyers often search essentials (“feeding bottles”, “newborn diapers”, “stroller”). Pick the closest infant category."
+  };
+  const placeholders = {
+    food_drinks: "Choose food or drink sub-type (recommended)",
+    fashion_accessories: "Choose fashion / accessory sub-type (recommended)",
+    electronics_gadgets: "Choose electronics sub-type — phones, laptops, audio… (recommended)",
+    beauty_personal_care: "Choose beauty sub-type — skin, hair, makeup… (recommended)",
+    groceries_essentials: "Choose grocery sub-type — grains, drinks, hygiene… (recommended)",
+    services: "Choose service sub-type (recommended)",
+    books_academic: "Choose books / stationery sub-type (recommended)",
+    babies_infants: "Choose baby / infant sub-type (recommended)"
+  };
+  const hint =
+    hints[category] ||
+    "Marketplace search uses this with your title. Pick the option that best describes what you are listing.";
+  const placeholder =
+    placeholders[category] || "Choose the closest listing sub-type (recommended)";
+  return { hint, placeholder };
+}
+
+function vendorMarketSubcategorySelect(h, Field, SelectInput, category, subcategory, setSubcategory) {
+  const rows = MARKETPLACE_SUBCATEGORY_OPTIONS[category] || [];
+  const { hint, placeholder } = marketplaceSubcategoryVendorCopy(category);
+  return h(Field, {
+    key: "fld-market-subcategory",
+    label: "Shopping sub-category"
+  }, h("div", { className: "space-y-2" }, [
+    h("p", { key: "h", className: "text-xs text-slate-500 dark:text-slate-400" }, hint),
+    h(SelectInput, { value: subcategory, onChange: (e) => setSubcategory(e.target.value) }, [
+      h("option", { key: "__", value: "" }, placeholder),
+      ...rows.map((r) => h("option", { key: r.value, value: r.value }, r.label))
+    ])
+  ]));
+}
+
+function vendorStockAvailabilityControl(h, Field, meta, inStock, setInStock) {
+  return h(
+    Field,
+    { key: "fld-avail", label: meta.stockLabel || "Availability" },
+    h("div", { className: "space-y-2" }, [
+      h("label", { className: "flex cursor-pointer items-center gap-2.5" }, [
+        h("input", {
+          type: "checkbox",
+          checked: inStock,
+          onChange: (e) => setInStock(e.target.checked),
+          className: "h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-white/20 dark:bg-night-950"
+        }),
+        h("span", { className: "text-sm font-medium text-slate-800 dark:text-slate-100" }, "In stock — available to buy")
+      ]),
+      h(
+        "p",
+        { className: "text-xs text-slate-500 dark:text-slate-400" },
+        "Uncheck when sold out or you are not offering this listing right now. Buyers cannot add out-of-stock items to cart."
+      )
+    ])
+  );
+}
+
 function VendorProductPhotos({ accessToken, imageList, setImageList, setErr, label = "Product photos", hintTail = "" }) {
   const fileInputId = useId().replace(/:/g, "");
+  const [carouselIdx, setCarouselIdx] = useState(0);
+  const thumbStripRef = useRef(null);
+
+  useEffect(() => {
+    setCarouselIdx((i) => {
+      if (imageList.length === 0) return 0;
+      return Math.min(Math.max(0, i), imageList.length - 1);
+    });
+  }, [imageList]);
+
+  useEffect(() => {
+    const strip = thumbStripRef.current;
+    if (!strip || imageList.length < 2) return;
+    const el = strip.querySelector(`button[data-tidx="${carouselIdx}"]`);
+    try {
+      el?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    } catch {
+      el?.scrollIntoView({ inline: "center", block: "nearest" });
+    }
+  }, [carouselIdx, imageList.length]);
+
   const onPick = async (e) => {
     setErr("");
     const files = Array.from(e.target.files || []);
@@ -132,7 +329,20 @@ function VendorProductPhotos({ accessToken, imageList, setImageList, setErr, lab
       setErr(ex.message || "Upload failed");
     }
   };
-  const remove = (idx) => setImageList((prev) => prev.filter((_, i) => i !== idx));
+  const remove = (idx) =>
+    setImageList((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      return next;
+    });
+
+  const goPrev = () => {
+    if (imageList.length < 2) return;
+    setCarouselIdx((i) => (i - 1 + imageList.length) % imageList.length);
+  };
+  const goNext = () => {
+    if (imageList.length < 2) return;
+    setCarouselIdx((i) => (i + 1) % imageList.length);
+  };
 
   const hint = `Add many photos (JPEG, PNG, WebP, or GIF — max 5 MB each, up to ${MAX_PRODUCT_IMAGES} per product). Large selections upload in batches. They appear on the buyer storefront.${hintTail || ""}`;
 
@@ -161,26 +371,121 @@ function VendorProductPhotos({ accessToken, imageList, setImageList, setErr, lab
       h("span", { key: "count", className: "text-xs text-slate-500 dark:text-slate-400" }, `${imageList.length} / ${MAX_PRODUCT_IMAGES}`)
     ]),
     imageList.length > 0
-      ? h(
-          "ul",
-          { key: "previews", className: "grid grid-cols-2 gap-3 sm:grid-cols-3" },
-          imageList.map((url, idx) =>
-            h("li", { key: `${url}-${idx}`, className: "relative overflow-hidden rounded-2xl border border-white/10" }, [
-              h("img", { key: "img", src: url, alt: "", className: "h-28 w-full object-cover" }),
-              h(
-                "button",
-                {
-                  key: "rm",
-                  type: "button",
-                  className:
-                    "absolute right-2 top-2 rounded-full bg-night-950/80 px-2 py-1 text-xs font-semibold text-white hover:bg-rose-600",
-                  onClick: () => remove(idx)
-                },
-                "Remove"
+      ? h("div", { key: "gallery", className: "space-y-3" }, [
+          h("div", { key: "hero", className: "relative overflow-hidden rounded-2xl border border-white/10 bg-slate-100/40 dark:bg-night-900/40" }, [
+            h("img", {
+              key: `hero-${carouselIdx}`,
+              src: imageList[carouselIdx],
+              alt: "",
+              className: "aspect-[4/3] w-full object-cover sm:aspect-[16/10]"
+            }),
+            h(
+              "button",
+              {
+                key: "rm-hero",
+                type: "button",
+                className:
+                  "absolute right-2 top-2 rounded-full bg-night-950/80 px-2 py-1 text-xs font-semibold text-white hover:bg-rose-600",
+                onClick: () => remove(carouselIdx)
+              },
+              "Remove"
+            ),
+            imageList.length > 1
+              ? h(f, { key: "nav" }, [
+                  h(
+                    "button",
+                    {
+                      key: "prev",
+                      type: "button",
+                      onClick: goPrev,
+                      className:
+                        "absolute left-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-800 shadow-md backdrop-blur hover:bg-white dark:bg-night-950/90 dark:text-white dark:hover:bg-night-900",
+                      "aria-label": "Previous image"
+                    },
+                    h(ChevronLeft, { className: "h-6 w-6" })
+                  ),
+                  h(
+                    "button",
+                    {
+                      key: "next",
+                      type: "button",
+                      onClick: goNext,
+                      className:
+                        "absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-800 shadow-md backdrop-blur hover:bg-white dark:bg-night-950/90 dark:text-white dark:hover:bg-night-900",
+                      "aria-label": "Next image"
+                    },
+                    h(ChevronRight, { className: "h-6 w-6" })
+                  ),
+                  h(
+                    "div",
+                    {
+                      key: "ctr",
+                      className:
+                        "absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-night-950/75 px-3 py-1 text-[11px] font-semibold text-white backdrop-blur"
+                    },
+                    `${carouselIdx + 1} / ${imageList.length}`
+                  )
+                ])
+              : null
+          ]),
+          imageList.length > 1
+            ? h(
+                "div",
+                { key: "thumbs-wrap", className: "relative" },
+                h(
+                  "ul",
+                  {
+                    key: "thumbs",
+                    ref: thumbStripRef,
+                    className:
+                      "no-scrollbar flex gap-2 overflow-x-auto scroll-smooth pb-1 pt-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                    role: "tablist",
+                    "aria-label": "Product photo thumbnails"
+                  },
+                  imageList.map((url, idx) =>
+                    h(
+                      "li",
+                      { key: `${url}-${idx}`, className: "relative shrink-0" },
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          role: "tab",
+                          "data-tidx": idx,
+                          "aria-selected": idx === carouselIdx,
+                          onClick: () => setCarouselIdx(idx),
+                          className: `block overflow-hidden rounded-xl border-2 transition ${
+                            idx === carouselIdx
+                              ? "border-sky-500 ring-2 ring-sky-500/40"
+                              : "border-transparent opacity-80 hover:opacity-100"
+                          }`
+                        },
+                        h("img", {
+                          src: url,
+                          alt: "",
+                          className: "h-16 w-16 object-cover sm:h-20 sm:w-20"
+                        })
+                      ),
+                      h(
+                        "button",
+                        {
+                          key: "rmb",
+                          type: "button",
+                          className:
+                            "absolute right-0.5 top-0.5 rounded bg-night-950/75 px-1 py-0.5 text-[9px] font-semibold text-white hover:bg-rose-600",
+                          onClick: (ev) => {
+                            ev.stopPropagation();
+                            remove(idx);
+                          }
+                        },
+                        "×"
+                      )
+                    )
+                  )
+                )
               )
-            ])
-          )
-        )
+            : null
+        ])
       : null
   ].filter(Boolean)));
 }
@@ -398,6 +703,7 @@ export function VendorShell() {
         h(NavItem, { key: "n-dash", to: "/vendor/dashboard", icon: LayoutDashboard }, "Dashboard"),
         h(NavItem, { key: "n-onb", to: "/vendor/onboarding", icon: Sparkles }, "Get started"),
         h(NavItem, { key: "n-str", to: "/vendor/stores", icon: Building2 }, "Stores"),
+        h(NavItem, { key: "n-promo", to: "/vendor/promotions", icon: Percent }, "Deals & offers"),
         h(NavItem, { key: "n-prod", to: "/vendor/products", icon: Box, end: true }, "My products"),
         h(NavItem, { key: "n-add", to: "/vendor/products/new", icon: PlusCircle }, "Add product"),
         h(NavItem, { key: "n-orders", to: "/vendor/orders", icon: ShoppingCart, badge: orderBadge }, "Orders"),
@@ -809,7 +1115,7 @@ export function VendorProductsPage() {
         h("th", { key: "h-prod", className: "px-4 py-3" }, "Product"),
         h("th", { key: "h-cat", className: "px-4 py-3" }, "Category"),
         h("th", { key: "h-price", className: "px-4 py-3" }, "Price"),
-        h("th", { key: "h-stock", className: "px-4 py-3" }, "Stock"),
+        h("th", { key: "h-stock", className: "px-4 py-3" }, "Availability"),
         h("th", { key: "h-st", className: "px-4 py-3" }, "Status"),
         h("th", { key: "h-act", className: "px-4 py-3" }, "Actions")
       ])),
@@ -830,7 +1136,11 @@ export function VendorProductsPage() {
             ])),
             h("td", { key: "c-cat", className: "px-4 py-3 text-slate-600 dark:text-slate-300" }, CATEGORY_LABELS[row.category] || row.category),
             h("td", { key: "c-price", className: "px-4 py-3 font-semibold text-slate-900 dark:text-white" }, row.category === "services" ? "Quote on request" : isFoodCallToOrderCategory(row) ? "Call to order" : formatGhc(row.price)),
-            h("td", { key: "c-stock", className: "px-4 py-3" }, row.category === "services" || isFoodCallToOrderCategory(row) ? "—" : String(row.stock ?? 0)),
+            h(
+              "td",
+              { key: "c-stock", className: "px-4 py-3" },
+              Number(row.stock) > 0 ? "In stock" : "Out of stock"
+            ),
             h("td", { key: "c-st", className: "px-4 py-3" }, h(Badge, { tone: productStatusTone(row.status) }, formatProductStatus(row.status))),
             h("td", { key: "c-act", className: "px-4 py-3" }, h("div", { className: "flex flex-wrap gap-2" }, [
               h(
@@ -1033,7 +1343,11 @@ export function VendorAddProductPage() {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("food_drinks");
   const [price, setPrice] = useState("");
-  const [stock, setStock] = useState("25");
+  const [addons, setAddons] = useState([]);
+  const [addonLabel, setAddonLabel] = useState("");
+  const [addonPrice, setAddonPrice] = useState("");
+  const [inStock, setInStock] = useState(true);
+  const [subcategory, setSubcategory] = useState("");
   const [tagNew, setTagNew] = useState(false);
   const [tagPopular, setTagPopular] = useState(false);
   const [tagSale, setTagSale] = useState(false);
@@ -1048,6 +1362,8 @@ export function VendorAddProductPage() {
   const syncCategoryFromStore = useCallback((cat) => {
     setCategory(cat);
     setAttrs(emptyAttrsForCategory(cat));
+    setAddons([]);
+    setSubcategory("");
   }, []);
 
   useEffect(() => {
@@ -1055,10 +1371,14 @@ export function VendorAddProductPage() {
     const cat = productCategoryForBusinessType(selectedBusiness.businessType);
     setCategory(cat);
     setAttrs(emptyAttrsForCategory(cat));
+    setAddons([]);
+    setSubcategory("");
   }, [selectedBusiness?.id, selectedBusiness?.businessType]);
 
   useEffect(() => {
     setAttrs(emptyAttrsForCategory(category));
+    setAddons([]);
+    setSubcategory("");
   }, [category]);
 
   const submit = async (asDraft) => {
@@ -1079,6 +1399,12 @@ export function VendorAddProductPage() {
         return;
       }
     }
+    if (!asDraft && !subcategory.trim()) {
+      setErr(
+        "Choose a shopping sub-category for this listing — it connects your item to Marketplace search (beyond the broad category)."
+      );
+      return;
+    }
     setLoading(true);
     try {
       const tagList = buildVendorSubmitTags(m.showTags, {
@@ -1090,16 +1416,24 @@ export function VendorAddProductPage() {
       const urls = imageList.slice(0, MAX_PRODUCT_IMAGES);
       const nextStatus = asDraft ? "draft" : "active";
       const attrsPayload = buildCategoryAttributesPayload(category, attrs);
+      const addonsPayload = (m.showAddons ? addons : [])
+        .map((a) => ({
+          label: String(a.label || "").trim(),
+          priceDelta: Math.max(0, Number(a.priceDelta) || 0)
+        }))
+        .filter((a) => a.label);
       const body = {
         name: trimmedName,
         description: description.trim(),
         category,
+        subcategory: subcategory.trim() ? subcategory.trim() : null,
         price: priceNum,
         compareAtPrice: null,
-        stock: m.showStock ? Math.max(0, Math.floor(Number(stock) || 0)) : SERVICE_LISTING_STOCK,
+        stock: inStock ? LISTING_STOCK_WHEN_AVAILABLE : 0,
         status: nextStatus,
         tags: tagList,
         imageUrls: urls,
+        ...(m.showAddons ? { addons: addonsPayload } : {}),
         ...(Object.keys(attrsPayload).length ? { categoryAttributes: attrsPayload } : {}),
         ...(linkedStoreId ? { businessId: linkedStoreId } : {}),
         ...(() => {
@@ -1130,16 +1464,10 @@ export function VendorAddProductPage() {
     }
   };
 
-  const priceStockRow = h(
-    "div",
-    { key: "row-price-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" },
-    [
-      h(Field, { key: "fld-price", label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value), placeholder: "18.99" })),
-      meta.showStock
-        ? h(Field, { key: "fld-stock", label: meta.stockLabel }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value), placeholder: "42" }))
-        : null
-    ].filter(Boolean)
-  );
+  const priceStockRow = h("div", { key: "row-price-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
+    h(Field, { key: "fld-price", label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value), placeholder: "18.99" })),
+    vendorStockAvailabilityControl(h, Field, meta, inStock, setInStock)
+  ]);
 
   const catFieldsNodes = renderListingCategoryFields(h, {
     Field,
@@ -1191,7 +1519,7 @@ export function VendorAddProductPage() {
             className:
               "rounded-2xl border border-amber-400/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-100"
           },
-          "You're creating a service listing — graphic design, hair, typing, laundry, photography, tutoring, etc. Describe how you work and what buyers should send. Pricing is not listed on the shop: buyers use seller contact details on the listing to agree a price with you."
+          "You're creating a service listing — graphic design, hair, typing, laundry, photography, tutoring, etc. Set a base price and optional add-ons; buyers check out on-platform and can message you for details."
         )
       : null,
     category === "food_drinks" && meta.hidePrice
@@ -1205,11 +1533,25 @@ export function VendorAddProductPage() {
           "Food & drinks use call-to-order on the shop: no list price or inventory count here. Set prep time and availability in the fields below; buyers reach you from the listing to confirm price and pickup or delivery."
         )
       : null,
+    vendorMarketSubcategorySelect(h, Field, SelectInput, category, subcategory, setSubcategory),
     h(Field, { key: "fld-name", label: meta.nameLabel }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value), placeholder: meta.namePlaceholder })),
     h(Field, { key: "fld-desc", label: meta.descLabel }, h(TextArea, { value: description, onChange: (e) => setDescription(e.target.value), placeholder: meta.descPlaceholder }))
   ].filter(Boolean);
 
   if (!meta.hidePrice && category !== "groceries_essentials") innerFields.push(priceStockRow);
+  const addonBlockAdd = vendorListingAddonsBlock(
+    h,
+    Field,
+    TextInput,
+    meta,
+    addons,
+    setAddons,
+    addonLabel,
+    setAddonLabel,
+    addonPrice,
+    setAddonPrice
+  );
+  if (addonBlockAdd) innerFields.push(addonBlockAdd);
   innerFields.push(...catFieldsNodes);
   if (!meta.hidePrice && category === "groceries_essentials") innerFields.push(priceStockRow);
   if (category === "books_academic") {
@@ -1311,7 +1653,11 @@ export function VendorEditProductPage() {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("food_drinks");
   const [price, setPrice] = useState("");
-  const [stock, setStock] = useState("25");
+  const [addons, setAddons] = useState([]);
+  const [addonLabel, setAddonLabel] = useState("");
+  const [addonPrice, setAddonPrice] = useState("");
+  const [inStock, setInStock] = useState(true);
+  const [subcategory, setSubcategory] = useState("");
   const [status, setStatus] = useState("draft");
   const [serverStatus, setServerStatus] = useState(null);
   const [rejectionReason, setRejectionReason] = useState(null);
@@ -1330,6 +1676,8 @@ export function VendorEditProductPage() {
   const syncCategoryFromStore = useCallback((cat) => {
     setCategory(cat);
     setAttrs(emptyAttrsForCategory(cat));
+    setAddons([]);
+    setSubcategory("");
   }, []);
 
   useEffect(() => {
@@ -1349,7 +1697,8 @@ export function VendorEditProductPage() {
         setDescription(p.description || "");
         setCategory(cat);
         setPrice(String(p.price ?? ""));
-        setStock(String(p.stock ?? 0));
+        setInStock(Number(p.stock) > 0);
+        setSubcategory(typeof p.subcategory === "string" ? p.subcategory : "");
         setServerStatus(p.status || "draft");
         setRejectionReason(p.rejectionReason || null);
         if (p.status === "active" || p.status === "pending_approval") {
@@ -1363,6 +1712,11 @@ export function VendorEditProductPage() {
         setTagSale(promo.tagSale);
         setTagExtras(promo.tagExtras);
         setAttrs(mergeAttrsFromServer(cat, p.categoryAttributes));
+        setAddons(
+          Array.isArray(p.addons)
+            ? p.addons.map((a) => ({ label: String(a.label || "").trim(), priceDelta: Math.max(0, Number(a.priceDelta) || 0) })).filter((a) => a.label)
+            : []
+        );
         setImageList(Array.isArray(p.imageUrls) ? [...p.imageUrls] : []);
         if (p.businessId) setBusinessId(String(p.businessId));
         if (p.menuSectionId) setMenuSectionId(String(p.menuSectionId));
@@ -1382,6 +1736,8 @@ export function VendorEditProductPage() {
     const c = e.target.value;
     setCategory(c);
     setAttrs(emptyAttrsForCategory(c));
+    setAddons([]);
+    setSubcategory("");
   };
 
   const save = async () => {
@@ -1403,6 +1759,13 @@ export function VendorEditProductPage() {
         setSaving(false);
         return;
       }
+      if (status === "active" && !subcategory.trim()) {
+        setErr(
+          'Choose a shopping sub-category — required on Active listings so Marketplace keyword search matches your item type.'
+        );
+        setSaving(false);
+        return;
+      }
       let patchPrice = 0;
       if (!m.hidePrice) {
         patchPrice = Number(price);
@@ -1412,6 +1775,12 @@ export function VendorEditProductPage() {
           return;
         }
       }
+      const addonsPayload = (m.showAddons ? addons : [])
+        .map((a) => ({
+          label: String(a.label || "").trim(),
+          priceDelta: Math.max(0, Number(a.priceDelta) || 0)
+        }))
+        .filter((a) => a.label);
       await apiFetch(`/api/products/${productId}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -1419,12 +1788,14 @@ export function VendorEditProductPage() {
           name: name.trim(),
           description: description.trim(),
           category,
+          subcategory: subcategory.trim() ? subcategory.trim() : null,
           price: patchPrice,
           compareAtPrice: null,
-          stock: m.showStock ? Number(stock) || 0 : SERVICE_LISTING_STOCK,
+          stock: inStock ? LISTING_STOCK_WHEN_AVAILABLE : 0,
           status,
           tags: tagList,
           imageUrls: urls,
+          ...(m.showAddons ? { addons: addonsPayload } : {}),
           categoryAttributes: buildCategoryAttributesPayload(category, attrs),
           businessId: linkedStoreId || null,
           menuSectionId: resolveMenuSectionIdForStore(menuSectionId, menuSections, selectedBusiness?.businessType) ?? null
@@ -1439,16 +1810,10 @@ export function VendorEditProductPage() {
     }
   };
 
-  const priceStockRow = h(
-    "div",
-    { key: "row-price-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" },
-    [
-      h(Field, { key: "fld-price", label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value) })),
-      meta.showStock
-        ? h(Field, { key: "fld-stock", label: meta.stockLabel }, h(TextInput, { type: "number", value: stock, onChange: (e) => setStock(e.target.value) }))
-        : null
-    ].filter(Boolean)
-  );
+  const priceStockRow = h("div", { key: "row-price-stock", className: "grid grid-cols-1 gap-4 sm:grid-cols-2" }, [
+    h(Field, { key: "fld-price", label: "Price (Ghc)" }, h(TextInput, { type: "number", step: "0.01", value: price, onChange: (e) => setPrice(e.target.value) })),
+    vendorStockAvailabilityControl(h, Field, meta, inStock, setInStock)
+  ]);
 
   const catFieldsNodes = renderListingCategoryFields(h, {
     Field,
@@ -1500,7 +1865,7 @@ export function VendorEditProductPage() {
             className:
               "rounded-2xl border border-amber-400/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-100"
           },
-          "This is a service listing — pricing is not fixed here. Buyers use seller contact info on your listing and Messages to arrange details."
+          "This is a service listing — set your base price and optional add-ons. Buyers can check out on SHOPIQGH and message you for details."
         )
       : null,
     category === "food_drinks" && meta.hidePrice
@@ -1514,11 +1879,25 @@ export function VendorEditProductPage() {
           "Food & drinks are call-to-order: list price and stock are not shown to buyers. Use prep time and availability below; buyers contact you to order."
         )
       : null,
+    vendorMarketSubcategorySelect(h, Field, SelectInput, category, subcategory, setSubcategory),
     h(Field, { key: "fld-name", label: meta.nameLabel }, h(TextInput, { value: name, onChange: (e) => setName(e.target.value), placeholder: meta.namePlaceholder })),
     h(Field, { key: "fld-desc", label: meta.descLabel }, h(TextArea, { value: description, onChange: (e) => setDescription(e.target.value), placeholder: meta.descPlaceholder }))
   ].filter(Boolean);
 
   if (!meta.hidePrice && category !== "groceries_essentials") innerFields.push(priceStockRow);
+  const addonBlockAdd = vendorListingAddonsBlock(
+    h,
+    Field,
+    TextInput,
+    meta,
+    addons,
+    setAddons,
+    addonLabel,
+    setAddonLabel,
+    addonPrice,
+    setAddonPrice
+  );
+  if (addonBlockAdd) innerFields.push(addonBlockAdd);
   innerFields.push(...catFieldsNodes);
   if (!meta.hidePrice && category === "groceries_essentials") innerFields.push(priceStockRow);
   if (category === "books_academic") {
@@ -2720,11 +3099,11 @@ export function VendorSettingsPage() {
         h(
           "p",
           { className: "mb-4 text-sm text-slate-600 dark:text-slate-400" },
-          "Your MoMo number and bank details can be shown to buyers on your listings so they can pay you directly."
+          "Shoppers see your display name and contact email on listings. MoMo and bank details are for Paystack payouts only — they are not shown on public product pages (admins can view them for support)."
         ),
         h(Field, { label: "Display name" }, h(TextInput, { value: displayName, onChange: (e) => setDisplayName(e.target.value) })),
         h(Field, { label: "Contact email" }, h(TextInput, { type: "email", value: email, disabled: true })),
-        h(Field, { label: "Mobile money number (for buyer payments)" }, h(TextInput, { value: phone, onChange: (e) => setPhone(e.target.value) })),
+        h(Field, { label: "Mobile money number (Paystack payouts)" }, h(TextInput, { value: phone, onChange: (e) => setPhone(e.target.value) })),
         h(Field, { label: "Bank name" }, h(TextInput, { value: bankName, onChange: (e) => setBankName(e.target.value) })),
         h(Field, { label: "Account name" }, h(TextInput, { value: bankAccountName, onChange: (e) => setBankAccountName(e.target.value) })),
         h(Field, { label: "Account number" }, h(TextInput, { value: bankAccountNumber, onChange: (e) => setBankAccountNumber(e.target.value) })),

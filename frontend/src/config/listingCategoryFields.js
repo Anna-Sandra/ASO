@@ -65,6 +65,35 @@ const ATTR_FIELDS = {
     },
     { key: "expiryDate", label: "Expiry / best before", placeholder: "e.g. 2027-06 or Approx. 12 months sealed" }
   ],
+  babies_infants: [
+    {
+      key: "ageRangeOrStage",
+      label: "Age range / stage",
+      placeholder: "e.g. Newborn · 0–6 months · 12–24 months · maternity"
+    },
+    {
+      key: "sizingOrDimensions",
+      label: "Sizing / dimensions",
+      optional: true,
+      placeholder: "e.g. 3–6 kg diapers · Onesie 3M · Fits standard cribs"
+    },
+    {
+      key: "compositionOrMaterials",
+      label: "Materials / composition",
+      type: "textarea",
+      optional: true,
+      rows: 3,
+      placeholder: "e.g. 100% organic cotton · BPA-free silicone · hypoallergenic filling"
+    },
+    {
+      key: "safetyOrComplianceNotes",
+      label: "Safety / certifications (optional)",
+      type: "textarea",
+      optional: true,
+      rows: 3,
+      placeholder: "e.g. CE-marked toy · ASTM F963 · meets local infant safety guidance — link docs in description if needed"
+    }
+  ],
   books_academic: [
     { key: "author", label: "Author", placeholder: "Author or editor name" },
     { key: "courseCode", label: "Course code / module", placeholder: "e.g. STAT201" },
@@ -117,7 +146,7 @@ const DEFAULT_META = {
   showTags: true,
   /** When true, vendor UI omits listing price — stored as GHS 0 on the API. */
   hidePrice: false,
-  stockLabel: "Stock quantity",
+  stockLabel: "Availability",
   photosLabel: "Product photos",
   photosHintTail: "",
   publishTitle: "Publish",
@@ -131,12 +160,14 @@ export const LISTING_FORM_META = {
   food_drinks: {
     ...DEFAULT_META,
     formPanelTitle: "Food & drink listing",
-    /** Menu-style: buyers contact / call to order; storefront hides list price (stored as 0). */
-    hidePrice: true,
-    showStock: false,
+    hidePrice: false,
+    showStock: true,
     namePlaceholder: "e.g. Jollof lunch box, iced cocoa 500ml",
     photosLabel: "Food images",
-    photosHintTail: " Clear shots help buyers decide quickly."
+    photosHintTail: " Clear shots help buyers decide quickly.",
+    showAddons: true,
+    addonsLabel: "Customization options (proteins, extras, sides)",
+    addonsHint: "Buyers can add or remove items. Set label and extra cost."
   },
   fashion_accessories: {
     ...DEFAULT_META,
@@ -157,6 +188,17 @@ export const LISTING_FORM_META = {
     namePlaceholder: "e.g. Moisturiser 120ml · Castor oil braid spray",
     photosLabel: "Images"
   },
+  babies_infants: {
+    ...DEFAULT_META,
+    formPanelTitle: "Baby & infant listing",
+    pageHeading: "Add baby / infant product",
+    namePlaceholder: "e.g. Muslin swaddle set · Gentle baby wash · Convertible stroller",
+    descPlaceholder:
+      "Care essentials, sizing, washes, allergens, expiry if applicable — parents read every detail.",
+    photosLabel: "Product photos",
+    photosHintTail: " Clear, well-lit photos build trust with parents.",
+    draftHelp: "Listings require honest age guidance and material notes when relevant."
+  },
   books_academic: {
     ...DEFAULT_META,
     formPanelTitle: "Book / academic listing",
@@ -168,13 +210,14 @@ export const LISTING_FORM_META = {
   groceries_essentials: {
     ...DEFAULT_META,
     formPanelTitle: "Groceries listing",
-    stockLabel: "How many units / packs in stock",
     namePlaceholder: "e.g. Indomie carton · Sanitiser refill 500ml",
     photosLabel: "Images"
   },
   services: {
+    ...DEFAULT_META,
     isService: true,
-    hidePrice: true,
+    hidePrice: false,
+    showStock: true,
     pageHeading: "Add service listing",
     formPanelTitle: "Your service — not a physical product listing",
     nameLabel: "Service name",
@@ -182,16 +225,17 @@ export const LISTING_FORM_META = {
     descLabel: "Overview for buyers",
     descPlaceholder:
       "Describe outcomes, typical process, boundaries, how booking works — buyers often message before paying.",
-    showStock: false,
     showTags: false,
-    stockLabel: "Capacity (optional)",
     photosLabel: "Portfolio / proof images",
     photosHintTail: " Show past work builds trust.",
     publishTitle: "Publish service",
     publishBlurb:
       "Adds your service for admin review. Buyers often confirm details in Messages before or after booking.",
     draftHelp:
-      "Services still go through moderation. Buyers often continue in Messages — reply promptly after approval."
+      "Services still go through moderation. Buyers often continue in Messages — reply promptly after approval.",
+    showAddons: true,
+    addonsLabel: "Service add-ons (optional extras buyers can select)",
+    addonsHint: "e.g. Express delivery +GHS 10, Extra revision +GHS 20"
   }
 };
 

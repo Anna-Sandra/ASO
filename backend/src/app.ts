@@ -31,6 +31,7 @@ import { recommendedProductsQuerySchema } from "./modules/products/product.schem
 import uploadRoutes from "./modules/uploads/upload.routes";
 import { uploadBookPdf, uploadBookPdfMiddleware } from "./modules/uploads/upload.controller";
 import vendorRoutes from "./modules/vendor/vendor.routes";
+import promotionPublicRoutes from "./modules/promotions/promotion.public.routes";
 import vendorApplicationRoutes from "./modules/vendorApplications/vendorApplication.routes";
 import courierApplicationRoutes from "./modules/courierApplications/courierApplication.routes";
 import { getAssistantLlmStatus, postAssistantChat } from "./modules/assistant/assistant.controller";
@@ -191,6 +192,7 @@ export function createApp() {
   );
   app.use("/api/uploads", uploadRoutes);
   app.use("/api/businesses", businessRoutes);
+  app.use("/api/promotions", promotionPublicRoutes);
   app.use("/api/service-inquiries", serviceInquiryRoutes);
   /**
    * Registered here (before `/api/products` router) so `GET …/recommended` is never swallowed by `GET …/:id`

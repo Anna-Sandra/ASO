@@ -46,3 +46,21 @@ export function productFeedPriceLabel(product) {
   const px = Number(product.price);
   return Number.isFinite(px) ? formatGhc(px) : "";
 }
+
+/** Labels for ETA / delivery fee ribbons on catalog tiles (store + prep time). */
+export function productTileDeliveryHints(product) {
+  if (!product) return [];
+  const store = product.store;
+  const prep = Number(product.prepTimeMinutes);
+  const out = [];
+  if (Number.isFinite(prep) && prep > 0) {
+    out.push({ key: "prep", label: `~${Math.round(prep)} min` });
+  } else if (store?.businessType === "food_restaurant") {
+    out.push({ key: "eta", label: "10–30 min" });
+  }
+  const fee = store?.deliveryFeeGhs != null ? Number(store.deliveryFeeGhs) : null;
+  if (store?.deliveryAvailable && fee != null && fee > 0) {
+    out.push({ key: "fee", label: `${formatGhc(fee)} delivery` });
+  }
+  return out;
+}

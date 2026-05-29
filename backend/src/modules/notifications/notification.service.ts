@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { Order } from "../orders/order.model";
+import { ProductSave } from "../products/productSave.model";
 import { Notification, type NotificationType } from "./notification.model";
 
 type FirePayload = {
@@ -117,6 +118,68 @@ export function notifyBuyerRefundProcessed(orderIdStr: string, buyerId: mongoose
     message: "Your refund has been processed to your payment method.",
     orderId: oid
   });
+}
+
+/** Saved-item watchers (logged-in `u:<id>` keys only) when an active listing price decreases. */
+export function notifySaversPriceDrop(args: {
+  productId: mongoose.Types.ObjectId;
+  oldPrice: number;
+  newPrice: number;
+  productName: string;
+}): void {
+  if (!(args.newPrice < args.oldPrice)) return;
+  const denom = args.oldPrice > 0 ? args.oldPrice : 1;
+  const dropPct = Math.max(1, Math.round(((args.oldPrice - args.newPrice) / denom) * 100));
+  void (async () => {
+    const saves = await ProductSave.find({ productId: args.productId }).select("ownerKey").lean();
+    const seen = new Set<string>();
+    const title = dropPct >= 5 ? "Price dropped" : "Price updated";
+    const shortName = String(args.productName || "Saved item").trim().slice(0, 90);
+    const msg = `${shortName} — now ₵${args.newPrice.toFixed(2)} (${dropPct}% off list).`;
+    for (const row of saves) {
+      const key = String((row as { ownerKey?: string }).ownerKey || "");
+      if (!key.startsWith("u:")) continue;
+      const uid = key.slice(2);
+      if (!mongoose.isValidObjectId(uid) || seen.has(uid)) continue;
+      seen.add(uid);
+      fireNotification(new mongoose.Types.ObjectId(uid), {
+        type: "price_drop",
+        title,
+        message: msg
+      });
+    }
+  })();
+}
+
+/** In-app ping for users who saved a product when an admin-approved flash / deal goes live. */
+export function notifySaversDealLive(args: {
+  productId: mongoose.Types.ObjectId;
+  productName: string;
+  salePrice: number;
+  wasPrice: number;
+  endsAt: Date;
+  vendorLabel: string;
+}): void {
+  void (async () => {
+    const saves = await ProductSave.find({ productId: args.productId }).select("ownerKey").lean();
+    const seen = new Set<string>();
+    const shortName = String(args.productName || "Saved item").trim().slice(0, 90);
+    const vendor = String(args.vendorLabel || "A shop").trim().slice(0, 50);
+    const endStr = args.endsAt.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+    const msg = `🔥 ${vendor} — ${shortName} now ₵${args.salePrice.toFixed(2)} (was ₵${args.wasPrice.toFixed(2)}). Hurry — ends ${endStr}.`;
+    for (const row of saves) {
+      const key = String((row as { ownerKey?: string }).ownerKey || "");
+      if (!key.startsWith("u:")) continue;
+      const uid = key.slice(2);
+      if (!mongoose.isValidObjectId(uid) || seen.has(uid)) continue;
+      seen.add(uid);
+      fireNotification(new mongoose.Types.ObjectId(uid), {
+        type: "deal_live",
+        title: "Deal on a saved item",
+        message: msg
+      });
+    }
+  })();
 }
 
 export function notifyBuyerOrderStatus(orderIdStr: string, buyerId: mongoose.Types.ObjectId, label: string): void {

@@ -37,7 +37,14 @@ async function migrateLegacyProductCategories() {
     books: "books_academic",
     clothing: "fashion_accessories",
     footwears: "fashion_accessories",
-    other: "groceries_essentials"
+    other: "groceries_essentials",
+    // Older baby / typo slugs → canonical marketplace enum (fixes empty “Babies” chip queries)
+    baby: "babies_infants",
+    babies: "babies_infants",
+    infant: "babies_infants",
+    infants: "babies_infants",
+    baby_infants: "babies_infants",
+    babies_infant: "babies_infants"
   };
 
   const allowed = new Set<string>(PRODUCT_CATEGORIES);

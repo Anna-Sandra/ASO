@@ -4,6 +4,12 @@ import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { requireVendorSubscription } from "../../middleware/requireVendorSubscription";
 import { validateBody, validateQuery } from "../../middleware/validate";
 import {
+  createBusinessReview,
+  getBusinessReviewStatus,
+  listBusinessReviews
+} from "../reviews/businessReview.controller";
+import { createReviewSchema } from "../reviews/review.schemas";
+import {
   createMenuSection,
   createMyBusiness,
   deleteMenuSection,
@@ -27,6 +33,9 @@ import {
 
 const router = Router();
 
+/** Same as product reviews: logged-in shoppers may rate stores they bought from. */
+const shopAccountRoles = ["buyer", "seller", "admin"] as const;
+
 router.get("/", validateQuery(listBusinessesQuerySchema), listPublicBusinesses);
 router.get("/mine", protect, requireActiveAccount, authorize("seller", "admin"), listMyBusinesses);
 router.post(
@@ -39,6 +48,16 @@ router.post(
   createMyBusiness
 );
 router.get("/:key/storefront", optionalProtect, getBusinessStorefront);
+router.get("/:key/reviews", listBusinessReviews);
+router.get("/:key/review-status", protect, requireActiveAccount, authorize(...shopAccountRoles), getBusinessReviewStatus);
+router.post(
+  "/:key/reviews",
+  protect,
+  requireActiveAccount,
+  authorize(...shopAccountRoles),
+  validateBody(createReviewSchema),
+  createBusinessReview
+);
 router.post(
   "/:key/link-listings",
   protect,

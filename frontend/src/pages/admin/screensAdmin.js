@@ -27,6 +27,7 @@ import {
   MessageCircle,
   MessageSquare,
   Package,
+  Percent,
   RefreshCcw,
   Search,
   Settings as SettingsIcon,
@@ -48,10 +49,12 @@ import {
 import { useAuth, useNotice, useTheme } from "context";
 import { apiFetch, getApiBase } from "services/api";
 import { CATEGORY_LABELS, withAllCategoryFirst } from "config/catalog";
+import { LISTING_STOCK_WHEN_AVAILABLE } from "config/listingStock";
 import { formatGhc } from "utils/money";
 import { adminOrderFulfillmentBadgeTone, formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
 import { h } from "utils/h";
 import { AdminStoresPanel } from "pages/admin/adminStoresPanel";
+import { AdminPromotionsPanel } from "pages/admin/adminPromotionsPanel";
 import {
   Badge,
   Button,
@@ -106,6 +109,7 @@ const SIDEBAR_ITEMS = [
   { id: "riders", label: "Riders", icon: Bike },
   { id: "vendor-apps", label: "Vendor requests", icon: ClipboardList, badgeKey: "vendor-apps" },
   { id: "stores", label: "Stores", icon: Store, badgeKey: "stores" },
+  { id: "promotions", label: "Deals & coupons", icon: Percent },
   { id: "courier-apps", label: "Courier requests", icon: Truck, badgeKey: "courier-apps" },
   { id: "sellers", label: "Sellers", icon: UserCheck },
   { id: "listings", label: "Listings", icon: Package, badgeKey: "listings" },
@@ -123,6 +127,10 @@ const PAGE_TITLES = {
   riders: { title: "Riders & couriers", hint: "Delivery accounts with vehicle profile (separate from marketplace users)" },
   "vendor-apps": { title: "Vendor applications", hint: "Review requests to become a seller" },
   stores: { title: "Store approvals", hint: "Review vendor storefronts before they go public" },
+  promotions: {
+    title: "Deals & coupons",
+    hint: "Approve vendor-submitted banners, flash sales, and coupon codes before shoppers see them"
+  },
   "courier-apps": { title: "Courier applications", hint: "Review shoppers who applied to deliver (delivery partner)" },
   sellers: { title: "Sellers verification", hint: "Verify and approve seller accounts" },
   listings: { title: "Listings", hint: "Manage every product on the platform" },
@@ -917,11 +925,12 @@ export function AdminPage() {
   const [listingsSearch, setListingsSearch] = useState("");
   const [listingsSearchInput, setListingsSearchInput] = useState("");
   const listingsLimit = 15;
+  const [bulkApproveBusy, setBulkApproveBusy] = useState(false);
   const [rejectProduct, setRejectProduct] = useState(null);
   const [rejectReasonSel, setRejectReasonSel] = useState(REJECT_REASONS[0]);
   const [rejectNote, setRejectNote] = useState("");
   const [editProduct, setEditProduct] = useState(null);
-  const [editForm, setEditForm] = useState({ name: "", price: "", stock: "", category: "", description: "" });
+  const [editForm, setEditForm] = useState({ name: "", price: "", inStock: true, category: "", description: "" });
   const [viewProduct, setViewProduct] = useState(null);
 
   /* Orders */
@@ -1817,6 +1826,47 @@ export function AdminPage() {
     }
   };
 
+  const ADMIN_BULK_APPROVE_PENDING_CAP = 400;
+
+  const approveAllPendingListings = async () => {
+    if (!auth) return;
+    if (listingsTab !== "pending_approval") return;
+    const searchHint = (listingsSearch || "").trim();
+    const cap = ADMIN_BULK_APPROVE_PENDING_CAP;
+    const detail = searchHint
+      ? `This approves up to ${cap} pending listings whose title or description matches your current search. Repeat if more are still pending.`
+      : `This approves up to ${cap} pending listings at once (most recently updated first). Repeat if more are still pending.`;
+    const ok = await confirm(detail, { title: "Approve all pending?", confirmLabel: `Approve up to ${cap}` });
+    if (!ok) return;
+    setBulkApproveBusy(true);
+    try {
+      const d = await apiFetch("/api/admin/products/bulk-approve", {
+        method: "POST",
+        ...auth,
+        json: { approveAllPendingMatchingSearch: true, search: searchHint }
+      });
+      const approved = typeof d?.approved === "number" ? d.approved : 0;
+      const repeat = Boolean(d?.repeatSuggested);
+      if (approved === 0) {
+        toast("No pending listings matched.", { variant: "warning" });
+      } else {
+        toast(
+          repeat
+            ? `Approved ${approved} listing${approved === 1 ? "" : "s"}. More may remain — approve all again if needed (${cap} per batch).`
+            : `Approved ${approved} listing${approved === 1 ? "" : "s"}.`,
+          { variant: "success" }
+        );
+      }
+      await loadListings();
+      await loadDashboard();
+      loadNavBadges();
+    } catch (ex) {
+      await alert(ex.message || "Bulk approve failed", { variant: "error" });
+    } finally {
+      setBulkApproveBusy(false);
+    }
+  };
+
   const openReject = (p) => {
     setRejectProduct(p);
     setRejectReasonSel(REJECT_REASONS[0]);
@@ -1848,7 +1898,7 @@ export function AdminPage() {
     setEditForm({
       name: p.name || "",
       price: String(p.price ?? ""),
-      stock: String(p.stock ?? ""),
+      inStock: Number(p.stock) > 0,
       category: p.category || "",
       description: p.description || ""
     });
@@ -1857,15 +1907,11 @@ export function AdminPage() {
   const submitEditListing = async () => {
     if (!editProduct) return;
     const price = Number(editForm.price);
-    const stock = Number(editForm.stock);
     if (!Number.isFinite(price) || price < 0) {
       await alert("Enter a valid price", { variant: "warning" });
       return;
     }
-    if (!Number.isFinite(stock) || stock < 0) {
-      await alert("Enter a valid stock quantity", { variant: "warning" });
-      return;
-    }
+    const stock = editForm.inStock ? LISTING_STOCK_WHEN_AVAILABLE : 0;
     try {
       await apiFetch(`/api/admin/products/${editProduct.id}`, {
         method: "PATCH",
@@ -3845,6 +3891,20 @@ export function AdminPage() {
         { key: "bar", className: "flex flex-wrap items-center justify-between gap-3" },
         [
           h(TabBar, { key: "t", tabs: LISTING_TABS, value: listingsTab, onChange: setListingsTab }),
+          isPending && listingsTotal > 0
+            ? h(
+                Button,
+                {
+                  key: "aa",
+                  className: "!min-h-[36px] !px-3 !text-xs whitespace-nowrap",
+                  disabled: bulkApproveBusy,
+                  onClick: () => void approveAllPendingListings()
+                },
+                bulkApproveBusy
+                  ? "Approving…"
+                  : [h(Check, { key: "i", className: "h-4 w-4" }), ` Approve all (up to ${ADMIN_BULK_APPROVE_PENDING_CAP})`]
+              )
+            : null,
           h(
             "form",
             {
@@ -3915,7 +3975,9 @@ export function AdminPage() {
                         h(
                           "p",
                           { className: "mt-1 text-xs text-slate-500" },
-                          `${CATEGORY_LABELS[p.category] || p.category} · ${formatGhc(p.price)} · Stock ${p.stock ?? 0}`
+                          `${CATEGORY_LABELS[p.category] || p.category} · ${formatGhc(p.price)} · ${
+                            Number(p.stock) > 0 ? "In stock" : "Out of stock"
+                          }`
                         ),
                         h(
                           "p",
@@ -3962,7 +4024,7 @@ export function AdminPage() {
                     h("th", { className: "w-[9%] px-3 py-2" }, "Seller"),
                     h("th", { className: "w-[12%] px-3 py-2" }, "Category"),
                     h("th", { className: "w-[8%] px-3 py-2" }, "Price"),
-                    h("th", { className: "w-[6%] px-3 py-2" }, "Stock"),
+                    h("th", { className: "w-[8%] px-3 py-2" }, "Availability"),
                     h("th", { className: "w-[10%] px-3 py-2" }, "Status"),
                     h("th", { className: "w-[11%] px-3 py-2" }, "Date"),
                     h("th", { className: "w-[14%] px-3 py-2" }, "Actions")
@@ -4021,7 +4083,7 @@ export function AdminPage() {
                             h("td", { className: "truncate px-3 py-2 text-slate-700 dark:text-slate-200" }, p.sellerLabel || "—"),
                             h("td", { className: "truncate px-3 py-2 text-slate-600 dark:text-slate-300" }, CATEGORY_LABELS[p.category] || p.category || "—"),
                             h("td", { className: "whitespace-nowrap px-3 py-2 font-medium tabular-nums" }, formatGhc(p.price)),
-                            h("td", { className: "whitespace-nowrap px-3 py-2 tabular-nums" }, String(p.stock ?? 0)),
+                            h("td", { className: "whitespace-nowrap px-3 py-2" }, Number(p.stock) > 0 ? "In stock" : "Out of stock"),
                             h("td", { className: "px-3 py-2" }, h(Badge, { tone: listingStatusTone(p.status) }, formatListingStatus(p.status))),
                             h("td", { className: "whitespace-nowrap px-3 py-2 text-[10px] text-slate-500" }, fmtDateTable(p.createdAt)),
                             h("td", { className: "px-3 py-2" }, h("div", { className: "flex flex-nowrap items-center gap-0.5" }, [
@@ -5943,6 +6005,7 @@ export function AdminPage() {
     if (tab === "riders") return renderRiders();
     if (tab === "vendor-apps") return renderVendorApplications();
     if (tab === "stores") return h(AdminStoresPanel, { auth, confirm, toast, alert });
+    if (tab === "promotions") return h(AdminPromotionsPanel, { auth, confirm, toast, alert });
     if (tab === "courier-apps") return renderCourierApplications();
     if (tab === "sellers") return renderSellers();
     if (tab === "listings") return renderListings();
@@ -6241,12 +6304,22 @@ export function AdminPage() {
               value: editForm.price,
               onChange: (e) => setEditForm((s) => ({ ...s, price: e.target.value }))
             })),
-            h(Field, { key: "s", label: "Stock" }, h(TextInput, {
-              type: "number",
-              min: 0,
-              value: editForm.stock,
-              onChange: (e) => setEditForm((s) => ({ ...s, stock: e.target.value }))
-            }))
+            h(Field, { key: "s", label: "Availability" }, h("div", { className: "space-y-2" }, [
+              h("label", { className: "flex cursor-pointer items-center gap-2.5" }, [
+                h("input", {
+                  type: "checkbox",
+                  checked: editForm.inStock,
+                  onChange: (e) => setEditForm((s) => ({ ...s, inStock: e.target.checked })),
+                  className: "h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-white/20 dark:bg-night-950"
+                }),
+                h("span", { className: "text-sm font-medium text-slate-800 dark:text-slate-100" }, "In stock — available to buy")
+              ]),
+              h(
+                "p",
+                { className: "text-xs text-slate-500 dark:text-slate-400" },
+                "Uncheck when sold out. Buyers cannot add out-of-stock items to cart."
+              )
+            ]))
           ]),
           h(Field, { key: "c", label: "Category slug" }, h(TextInput, {
             value: editForm.category,
@@ -6279,7 +6352,11 @@ export function AdminPage() {
             viewProduct.flagged ? h(Badge, { key: "f", tone: "warn" }, "Flagged") : null,
             h(Badge, { key: "c", tone: "neutral" }, CATEGORY_LABELS[viewProduct.category] || viewProduct.category || "—")
           ].filter(Boolean)),
-          h("p", { key: "p", className: "text-slate-700 dark:text-slate-200" }, `Price: ${formatGhc(viewProduct.price)} · Stock: ${viewProduct.stock ?? 0}`),
+          h(
+            "p",
+            { key: "p", className: "text-slate-700 dark:text-slate-200" },
+            `Price: ${formatGhc(viewProduct.price)} · ${Number(viewProduct.stock) > 0 ? "In stock" : "Out of stock"}`
+          ),
           h("p", { key: "se", className: "text-slate-600 dark:text-slate-300" }, `Seller: ${viewProduct.sellerLabel || "—"}`),
           viewProduct.rejectionReason
             ? h(InlineNotice, { key: "rr", variant: "error", title: "Rejection reason" }, viewProduct.rejectionReason)

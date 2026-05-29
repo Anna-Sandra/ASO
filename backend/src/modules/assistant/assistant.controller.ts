@@ -13,7 +13,7 @@ import { ProductSave } from "../products/productSave.model";
 import { Order } from "../orders/order.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { activeStoreBusinessIds, enrichPublicProducts, foodMenuStoreFilter } from "../products/product.publicSerialize";
-import { buildAssistantCatalogReply, buildAssistantIdleReply, formatProductLine } from "./assistantFallback";
+import { buildAssistantCatalogReply, buildAssistantIdleReply, findProductsForFallback, formatProductLine, shouldUseNoCategoryFallback } from "./assistantFallback";
 import { groqChatStream, groqCompletion, groqConfigured } from "./groqChat";
 
 function resolvePublicApiOrigin(): string {
@@ -43,6 +43,7 @@ const SHOPPER_CAT_LABEL: Record<string, string> = {
   fashion_accessories: "Fashion & Accessories",
   electronics_gadgets: "Electronics & Gadgets",
   beauty_personal_care: "Beauty & Personal Care",
+  babies_infants: "Babies & Infants",
   services: "Services",
   books_academic: "Books & Academic Materials",
   groceries_essentials: "Groceries & Essentials"
@@ -173,8 +174,12 @@ async function loadAssistantPrompt(
   const appOrigin = env.APP_ORIGIN.replace(/\/$/, "");
 
   const activeIds = await activeStoreBusinessIds();
-  const [settings, sampleProductsRaw, sampleStores] = await Promise.all([
+  const strictListings = shouldUseNoCategoryFallback(String(message || "").trim());
+  const [settings, queryMatchedProducts, sampleProductsFallback, sampleStores] = await Promise.all([
     getOrCreateSettings(),
+    findProductsForFallback(message, ASSISTANT_PRODUCT_LIMIT, {
+      noCategoryFallback: strictListings
+    }),
     Product.find({
       status: "active",
       $or: [{ category: "services" }, { stock: { $gt: 0 } }, { category: "food_drinks" }],
@@ -191,7 +196,12 @@ async function loadAssistantPrompt(
       .lean()
   ]);
 
-  const sampleProducts = await enrichPublicProducts(sampleProductsRaw as unknown as Record<string, unknown>[]);
+  const sampleProducts =
+    queryMatchedProducts.length > 0
+      ? queryMatchedProducts
+      : strictListings
+        ? []
+        : await enrichPublicProducts(sampleProductsFallback as unknown as Record<string, unknown>[]);
 
   const siteName =
     typeof settings?.siteName === "string" && settings.siteName.trim()
@@ -230,6 +240,11 @@ async function loadAssistantPrompt(
     return `- [${name}](${appOrigin}/store/${encodeURIComponent(slug)}) — ${String(b.businessType || "store")}${blurb ? ` · ${blurb}` : ""}`;
   });
 
+  const factsNoMatch =
+    strictListings && lines.length === 0
+      ? `- **No listing lines below** matched this question — the catalog search returned nothing for that product/budget request. Tell the shopper clearly you don’t see matching items on ${siteName} in these results **right now**. Do NOT invent products, brands, specs, or GHS prices. Suggest **Search** or a category hub (e.g. \`/electronics\` for laptops). Then you may add the one-line ordering tip (🛒→🧺→📋→💳 Paystack; 🍽️ food call-to-order; 📩 services quote).\n`
+      : "";
+
   const system = `You are the ${siteName} shopping assistant — a Ghana marketplace platform. ${userNote}${personalizeBlock}
 
 IDENTITY:
@@ -242,7 +257,7 @@ IDENTITY:
 BEHAVIOUR:
 - Be concise and warm. Emoji OK sparingly ✨ 🛒. Short answers unless they ask "explain" style questions
 - If the message is only a short greeting (hi, hello, hey, good morning), reply warmly and introduce yourself as the ${siteName} assistant — do NOT push products or food
-- For hunger/food/eating intent (hungry, "im hungry", food, lunch, dinner, snacks, etc.), ALWAYS show 2–3 relevant food listings from the catalog context below immediately, then you may ask ONE short follow-up — NEVER ask questions before showing food listings
+- For hunger/food/eating intent (hungry, "im hungry", food, lunch, dinner, snacks, etc.), ALWAYS show 2–3 relevant food listings from the catalog context below immediately when those listing lines exist — then you may ask ONE short follow-up — NEVER ask questions before showing food listings. If there are **no** food listing lines below, say you don’t see matching dishes in the snapshot and suggest Food & drinks or search — do not invent dishes
 
 FORMATTING RULES — follow exactly:
 - Format each food item like: "🍽️ [Item Name](full-https-url) at [Store Name](full-store-https-url) — call to order"
@@ -257,14 +272,14 @@ PRICING RULES — CRITICAL:
 - ONLY ordinary physical products (not food_drinks, not services) may show a GHS price, and only when it appears in the listing lines below
 
 FACTS:
-- Only cite products using the listing lines below — never invent items or prices
+${factsNoMatch}- Only cite products using the listing lines below — never invent items or prices
 - Guest checkout: shoppers can tap Buy and pay without logging in; checkout asks for email and phone. Never tell users they must sign in for cart or Paystack checkout for normal products
 - How to pay (priced products): when asked, use clear numbered steps with emoji cues if you like (e.g. 🛒 Buy → 🧺 Cart → 📋 Checkout with email/phone as guest → 💳 Paystack). The Buy button adds the item to the cart. Then mention 🍽️ call-to-order food (Place Order / seller on listing) and 📩 services (Send request / quote) when relevant
 - If unsure, suggest search or category hubs
 - Always include the restaurant/store link when present in a listing line
 
 CONTACT / VENDOR QUESTIONS:
-- If the user asks **how to contact the seller**, **phone**, **WhatsApp**, or **where is the vendor**: say contact/payout details appear **on each product page** (seller section); food items use **call to order** / **Place Order** from the listing; **Messages** may require a user account and an order when the platform supports it
+- If the user asks **how to contact the seller**, **phone**, **WhatsApp**, or **where is the vendor**: say **email or contact** on the listing when shown; full payout wallet numbers are **not** shown to shoppers — payments go through checkout. Food: **call to order** / **Place Order** from the listing; **Messages** may require an account
 
 CRITICAL — food & local dishes (catalog only):
 - When asked about food, local dishes, Ghanaian/regional dishes, or similar, ALWAYS show real listings from the "Listings (partial)" lines below with full markdown links (🍽️ line + store link + call to order)

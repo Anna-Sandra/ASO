@@ -6,6 +6,7 @@ export const BUSINESS_TYPES = [
   "fashion_store",
   "electronics_shop",
   "beauty_shop",
+  "baby_infant_store",
   "grocery_store",
   "academic_book",
   "service_provider"
@@ -97,6 +98,8 @@ export function primaryProductCategoryForBusinessType(bt: BusinessType): Product
       return "electronics_gadgets";
     case "beauty_shop":
       return "beauty_personal_care";
+    case "baby_infant_store":
+      return "babies_infants";
     case "grocery_store":
       return "groceries_essentials";
     case "academic_book":

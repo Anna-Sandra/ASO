@@ -1,10 +1,12 @@
 import { createServer } from "node:http";
 import { Server } from "socket.io";
+import mongoose from "mongoose";
 import { createApp } from "./app";
 import { connectDb } from "./config/db";
 import { env } from "./config/env";
 import { setupDeliverySockets } from "./modules/deliveries/delivery.socket";
 import { warmupOllamaInBackground } from "./config/ollamaWarmup";
+import { runAutoConfirmDeliveredOrders } from "./modules/orders/orderAutoConfirm.job";
 
 async function main() {
   try {
@@ -32,6 +34,19 @@ async function main() {
       warmupOllamaInBackground();
     }
   });
+
+  const AUTO_CONFIRM_MS = 60 * 60 * 1000;
+  setInterval(() => {
+    if (mongoose.connection.readyState !== 1) return;
+    void runAutoConfirmDeliveredOrders().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn("[jobs] auto-confirm delivered orders:", err);
+    });
+  }, AUTO_CONFIRM_MS);
+  setTimeout(() => {
+    if (mongoose.connection.readyState !== 1) return;
+    void runAutoConfirmDeliveredOrders().catch(() => {});
+  }, 45_000);
 
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {

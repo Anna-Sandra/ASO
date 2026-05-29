@@ -47,6 +47,15 @@ const beautyCategoryAttributesSchema = z
   })
   .strict();
 
+const babiesInfantsCategoryAttributesSchema = z
+  .object({
+    ageRangeOrStage: z.string().max(200).optional(),
+    compositionOrMaterials: z.string().max(600).optional(),
+    safetyOrComplianceNotes: z.string().max(500).optional(),
+    sizingOrDimensions: z.string().max(200).optional()
+  })
+  .strict();
+
 const booksCategoryAttributesSchema = z
   .object({
     author: z.string().max(300).optional(),
@@ -79,6 +88,7 @@ const byCategory: Record<ProductCategory, z.ZodType<Record<string, unknown>>> = 
   fashion_accessories: fashionCategoryAttributesSchema,
   electronics_gadgets: electronicsCategoryAttributesSchema,
   beauty_personal_care: beautyCategoryAttributesSchema,
+  babies_infants: babiesInfantsCategoryAttributesSchema,
   books_academic: booksCategoryAttributesSchema,
   groceries_essentials: groceriesCategoryAttributesSchema,
   services: servicesCategoryAttributesSchema

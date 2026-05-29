@@ -535,7 +535,9 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         bankName: u.bankName,
         bankAccountNumber: u.bankAccountNumber,
         bankAccountName: u.bankAccountName,
-        adminLevel: "super" as const
+        adminLevel: "super" as const,
+        rewardPoints: 0,
+        firstOrderDiscountEligible: false
       }
     });
     return;
@@ -548,6 +550,17 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   const recipient = String((user as { paystackTransferRecipientCode?: string }).paystackTransferRecipientCode || "").trim();
   const subacct = String((user as { paystackSubaccountCode?: string }).paystackSubaccountCode || "").trim();
   const vendorBilling = role === "seller" ? await vendorBillingForUserId(user._id.toString()) : null;
+  const rewardPoints = Math.max(0, Math.floor(Number((user as { rewardPoints?: number }).rewardPoints) || 0));
+  let firstOrderDiscountEligible = false;
+  if (role === "buyer" || role === "seller" || role === "admin") {
+    const priorPaid = await Order.countDocuments({
+      buyerId: user._id,
+      status: { $nin: ["pending_payment", "cancelled"] }
+    });
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const withinWeek = Date.now() - new Date(user.createdAt).getTime() <= weekMs;
+    firstOrderDiscountEligible = priorPaid === 0 && withinWeek;
+  }
   res.json({
     user: {
       id: user._id.toString(),
@@ -565,6 +578,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
       bankName: user.bankName ?? "",
       bankAccountNumber: user.bankAccountNumber ?? "",
       bankAccountName: user.bankAccountName ?? "",
+      rewardPoints,
+      firstOrderDiscountEligible,
       ...(role === "seller"
         ? {
             paystackPayoutRegistered: Boolean(recipient),

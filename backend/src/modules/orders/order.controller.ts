@@ -7,7 +7,8 @@ import { getEffectiveCommissionPercent } from "../platform/platformSettings.serv
 import { buyerTotalForMerchantNetGhs, roundMoney, serviceFeeOnVendorGross } from "../../utils/commission";
 import type { OrderDoc } from "./order.model";
 import { Order } from "./order.model";
-import { Product } from "../products/product.model";
+import { Product, type ProductDoc } from "../products/product.model";
+import { User, normalizeUserRole } from "../auth/user.model";
 import { withContacts } from "./orderSerialize";
 import {
   newGuestOrderSecret,
@@ -15,16 +16,19 @@ import {
   readGuestSecretFromRequest,
   GUEST_ORDER_MESSAGE_SENDER_ID
 } from "./orderAccess";
-import { notifyOrderCancelledForCounterparties, notifyOrderMessageRecipients, notifySellersNewOrder, notifySellersPaymentSubmitted } from "../notifications/notification.service";
+import { notifyOrderCancelledForCounterparties, notifyOrderMessageRecipients, notifySellersNewOrder, notifySellersPaymentSubmitted, fireNotification } from "../notifications/notification.service";
+import { maybeReleaseVendorPayoutAfterConfirm } from "./orderPaymentSideEffects";
+import { checkoutListingUnitBeforeAddons } from "../promotions/promotionDeal.service";
 
 type InboxMsg = { senderRole: string; text: string; createdAt: Date; senderId: mongoose.Types.ObjectId | string };
 
 export const checkout = asyncHandler(async (req: Request, res: Response) => {
   const body = req.body as {
-    items: { productId: string; quantity: number; customization?: string }[];
+    items: { productId: string; quantity: number; customization?: string; selectedAddonLabels?: string[] }[];
     guestEmail?: string;
     guestName?: string;
     guestPhone?: string;
+    redeemPoints?: number;
   };
   const { items } = body;
 
@@ -62,6 +66,84 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     guestAccessSecret = newGuestOrderSecret();
   }
 
+  type ValidRow = {
+    p: ProductDoc;
+    qty: number;
+    note: string;
+  };
+  const validated: ValidRow[] = [];
+
+  const addonDeltaForProduct = (p: ProductDoc, labels: string[] | undefined): number => {
+    if (!labels?.length) return 0;
+    const defs = p.addons || [];
+    const byNorm = new Map(defs.map((d) => [String(d.label).trim().toLowerCase(), Number(d.priceDelta) || 0]));
+    const seen = new Set<string>();
+    let s = 0;
+    for (const raw of labels) {
+      const k = String(raw).trim().toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      if (!byNorm.has(k)) {
+        throw new HttpError(400, `Invalid add-on for «${p.name}»: ${String(raw).trim()}`);
+      }
+      s += byNorm.get(k)!;
+    }
+    return roundMoney(s);
+  };
+
+  const commissionPct = await getEffectiveCommissionPercent();
+  for (const row of items) {
+    if (!mongoose.isValidObjectId(row.productId)) throw new HttpError(400, "Invalid product id");
+    const p = await Product.findById(row.productId);
+    if (!p || p.status !== "active") throw new HttpError(400, `Product unavailable: ${row.productId}`);
+    const baseList = await checkoutListingUnitBeforeAddons(p._id, Number(p.price));
+    const addonExtra = addonDeltaForProduct(p.toObject() as ProductDoc, row.selectedAddonLabels);
+    const listUnit = roundMoney(baseList + addonExtra);
+    if (!(listUnit > 0)) {
+      throw new HttpError(400, `Listing has no checkout price: ${p.name}`);
+    }
+    if (p.stock < row.quantity) throw new HttpError(400, `Insufficient stock for ${p.name}`);
+    const note = typeof row.customization === "string" ? row.customization.trim().slice(0, 280) : "";
+    const merged = { ...(p.toObject() as ProductDoc), price: listUnit };
+    validated.push({ p: merged, qty: row.quantity, note });
+  }
+
+  const rawSubtotal = roundMoney(validated.reduce((s, v) => s + v.p.price * v.qty, 0));
+
+  let redeemPts = 0;
+  let firstOrderApplied = false;
+  let scale = 1;
+
+  if (buyerId) {
+    const u = await User.findById(buyerId).select("rewardPoints createdAt").lean();
+    if (!u) throw new HttpError(400, "Account not found");
+    const priorPaid = await Order.countDocuments({
+      buyerId,
+      status: { $nin: ["pending_payment", "cancelled"] }
+    });
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const withinWeek = Date.now() - new Date(u.createdAt).getTime() <= weekMs;
+    const normRole = normalizeUserRole(role);
+    const firstEligible = priorPaid === 0 && withinWeek && (normRole === "buyer" || normRole === "seller" || normRole === "admin");
+
+    let merchandiseOff = 0;
+    if (firstEligible) {
+      merchandiseOff += roundMoney(rawSubtotal * 0.15);
+      firstOrderApplied = true;
+    }
+    const afterFirst = roundMoney(rawSubtotal - merchandiseOff);
+    const reqRedeem = Math.max(0, Math.floor(Number(body.redeemPoints) || 0));
+    const bal = Math.max(0, Math.floor(Number((u as { rewardPoints?: number }).rewardPoints) || 0));
+    const maxRedeemPts = Math.min(bal, Math.max(0, Math.floor(afterFirst * 100)));
+    redeemPts = Math.min(reqRedeem, maxRedeemPts);
+    const pointsOff = roundMoney(redeemPts / 100);
+    const afterAll = roundMoney(rawSubtotal - merchandiseOff - pointsOff);
+    if (afterAll < 0.5) {
+      throw new HttpError(400, "Discounts exceed this cart total — reduce points or remove items.");
+    }
+    scale = afterAll / rawSubtotal;
+  }
+
   const lineItems: Array<{
     productId: mongoose.Types.ObjectId;
     sellerId: mongoose.Types.ObjectId;
@@ -73,38 +155,17 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     buyerNote?: string;
   }> = [];
 
-  const commissionPct = await getEffectiveCommissionPercent();
-  for (const row of items) {
-    if (!mongoose.isValidObjectId(row.productId)) throw new HttpError(400, "Invalid product id");
-    const p = await Product.findById(row.productId);
-    if (!p || p.status !== "active") throw new HttpError(400, `Product unavailable: ${row.productId}`);
-    if (p.category === "services") {
-      throw new HttpError(
-        400,
-        "Service listings are quoted with vendors directly. Remove them from your cart — open the listing and use seller contact details."
-      );
-    }
-    if (p.category === "food_drinks") {
-      throw new HttpError(
-        400,
-        "Food & drink items are priced on request. Remove them from your cart — call or message the vendor from the listing to order."
-      );
-    }
-    if (!(Number(p.price) > 0)) {
-      throw new HttpError(400, `Listing has no checkout price: ${p.name}`);
-    }
-    if (p.stock < row.quantity) throw new HttpError(400, `Insufficient stock for ${p.name}`);
-
-    const vendorGross = roundMoney(p.price * row.quantity);
+  for (const { p, qty, note } of validated) {
+    const newUnit = roundMoney(Number(p.price) * scale);
+    const vendorGross = roundMoney(newUnit * qty);
     const platformFee = serviceFeeOnVendorGross(vendorGross, commissionPct);
     const sellerProceeds = vendorGross;
-    const note = typeof row.customization === "string" ? row.customization.trim().slice(0, 280) : "";
     lineItems.push({
       productId: p._id,
       sellerId: p.sellerId,
       name: p.name,
-      quantity: row.quantity,
-      unitPrice: p.price,
+      quantity: qty,
+      unitPrice: newUnit,
       platformFee,
       sellerProceeds,
       ...(note ? { buyerNote: note } : {})
@@ -131,7 +192,9 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     total,
     pricingVersion: 2,
     processingFeeTotal,
-    status: "pending_payment"
+    status: "pending_payment",
+    pointsRedeemed: redeemPts,
+    firstOrderDiscountApplied: firstOrderApplied
   });
 
   void notifySellersNewOrder(order._id.toString());
@@ -406,6 +469,43 @@ export const cancelMyOrder = asyncHandler(async (req: Request, res: Response) =>
 
   const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
   res.json({ order: serialized });
+});
+
+export const confirmBuyerReceipt = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  const order = await Order.findById(id);
+  if (!order) throw new HttpError(404, "Order not found");
+  const r = normalizeUserRole(req.user!.role);
+  if (r === "admin") {
+    /* support / ops */
+  } else if (r === "buyer") {
+    if (!order.buyerId || order.buyerId.toString() !== req.user!.id) {
+      throw new HttpError(403, "Only the buyer can confirm receipt");
+    }
+  } else {
+    throw new HttpError(403, "Buyer or admin only");
+  }
+  if (order.status !== "delivered") throw new HttpError(400, "Order must be marked delivered first");
+  if (order.buyerConfirmedReceiptAt) {
+    const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+    res.json({ ok: true, order: serialized, alreadyConfirmed: true });
+    return;
+  }
+  order.buyerConfirmedReceiptAt = new Date();
+  await order.save();
+  void maybeReleaseVendorPayoutAfterConfirm(id);
+  const sellerIds = [...new Set(order.items.map((it) => it.sellerId.toString()))];
+  for (const sid of sellerIds) {
+    fireNotification(new mongoose.Types.ObjectId(sid), {
+      type: "seller_payout",
+      title: "Buyer confirmed receipt",
+      message: `Order ${id.slice(-8)} — settlement step completed when Paystack transfers apply.`,
+      orderId: order._id
+    });
+  }
+  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  res.json({ ok: true, order: serialized });
 });
 
 const AMOUNT_EPS = 0.02;

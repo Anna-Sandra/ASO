@@ -68,6 +68,8 @@ export interface UserDoc {
   vendorSubscriptionExpiresAt?: Date | null;
   /** Paystack reference for an in-flight seller subscription checkout. */
   vendorSubscriptionPendingReference?: string;
+  /** SHOPIQGH reward points (earn ~1 pt / GHS spent; redeem 100 pts = GHS 1 at checkout). */
+  rewardPoints?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -114,7 +116,8 @@ const userSchema = new Schema<UserDoc>(
     vendorSubscriptionExempt: { type: Boolean, default: false },
     vendorSubscriptionPaidAt: { type: Date, default: null },
     vendorSubscriptionExpiresAt: { type: Date, default: null },
-    vendorSubscriptionPendingReference: { type: String, default: "", trim: true, maxlength: 120 }
+    vendorSubscriptionPendingReference: { type: String, default: "", trim: true, maxlength: 120 },
+    rewardPoints: { type: Number, default: 0, min: 0 }
   },
   { timestamps: true }
 );

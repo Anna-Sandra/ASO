@@ -105,6 +105,26 @@ export const adminRejectProductSchema = z.object({
   reason: z.string().trim().min(1).max(2000)
 });
 
+/** Either approve by explicit ids, or approve all `pending_approval` rows matching optional search (capped server-side). */
+export const adminApproveProductsBulkSchema = z
+  .object({
+    ids: z.array(z.string().regex(/^[a-f\d]{24}$/i)).max(250).optional(),
+    approveAllPendingMatchingSearch: z.boolean().optional(),
+    search: z.string().trim().max(200).optional().default("")
+  })
+  .superRefine((d, ctx) => {
+    const all = d.approveAllPendingMatchingSearch === true;
+    const hasIds = (d.ids?.length ?? 0) > 0;
+    if (all === hasIds) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'Use exactly one of: { "approveAllPendingMatchingSearch": true, "search": "..." } or { "ids": ["...", ...] }.',
+        path: ["ids"]
+      });
+    }
+  });
+
 export const adminListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional().default(1),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50)

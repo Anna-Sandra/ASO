@@ -11,7 +11,11 @@ export type NotificationType =
   | "dispute_opened"
   | "message_received"
   | "listing_decision"
-  | "vendor_application_decision";
+  | "vendor_application_decision"
+  | "loyalty_points"
+  | "price_drop"
+  | "deal_live"
+  | "seller_payout";
 
 export interface NotificationDoc {
   _id: mongoose.Types.ObjectId;
@@ -43,7 +47,11 @@ const NOTIFICATION_TYPES: NotificationType[] = [
   "dispute_opened",
   "message_received",
   "listing_decision",
-  "vendor_application_decision"
+  "vendor_application_decision",
+  "loyalty_points",
+  "price_drop",
+  "deal_live",
+  "seller_payout"
 ];
 
 const notificationSchema = new Schema<NotificationDoc>(

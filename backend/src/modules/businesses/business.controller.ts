@@ -9,6 +9,7 @@ import { Product } from "../products/product.model";
 import { attachSellerPayments } from "../products/product.publicSerialize";
 import { rewriteStoredMediaNullable } from "../../utils/publicMediaUrl";
 import { Review } from "../reviews/review.model";
+import { BusinessReview } from "../reviews/businessReview.model";
 import {
   createBusinessSchema,
   createMenuSectionSchema,
@@ -90,6 +91,7 @@ const categoryToBusinessType: Partial<Record<string, BusinessType>> = {
   fashion_accessories: "fashion_store",
   electronics_gadgets: "electronics_shop",
   beauty_personal_care: "beauty_shop",
+  babies_infants: "baby_infant_store",
   groceries_essentials: "grocery_store",
   books_academic: "academic_book",
   services: "service_provider"
@@ -138,34 +140,31 @@ function notOnThisStoreFilter(businessId: mongoose.Types.ObjectId) {
   };
 }
 
-/** Products that should move onto this store menu (unlinked or on another of the seller's stores). */
+/**
+ * Products that should move onto this store (unlinked or on another of the seller's stores).
+ * Always scoped to the storefront’s primary marketplace category — e.g. an electronics shop only
+ * pulls `electronics_gadgets` listings, so older “singular” listings in other categories stay
+ * unattached unless the vendor links them explicitly (or edits the listing).
+ */
 export function listingsToStoreFilter(
   sellerId: mongoose.Types.ObjectId,
   businessId: mongoose.Types.ObjectId,
-  businessType: BusinessType,
-  storeCount: number
+  businessType: BusinessType
 ): Record<string, unknown> {
-  const base: Record<string, unknown> = {
+  return {
     sellerId,
-    ...notOnThisStoreFilter(businessId)
+    ...notOnThisStoreFilter(businessId),
+    category: primaryProductCategoryForBusinessType(businessType)
   };
-  if (storeCount === 1) return base;
-  base.category = primaryProductCategoryForBusinessType(businessType);
-  return base;
 }
 
-async function sellerStoreCount(ownerId: mongoose.Types.ObjectId): Promise<number> {
-  return Business.countDocuments({ ownerId });
-}
-
-/** Move matching listings onto this store (e.g. all food from "nat" → "nateats"). */
+/** Move matching listings onto this store (e.g. food → this restaurant storefront). */
 export async function linkSellerListingsToBusiness(
   sellerId: mongoose.Types.ObjectId,
   businessId: mongoose.Types.ObjectId,
   businessType: BusinessType
 ): Promise<number> {
-  const storeCount = await sellerStoreCount(sellerId);
-  const filter = listingsToStoreFilter(sellerId, businessId, businessType, storeCount);
+  const filter = listingsToStoreFilter(sellerId, businessId, businessType);
   const res = await Product.updateMany(filter, { $set: { businessId } });
   return res.modifiedCount ?? 0;
 }
@@ -188,8 +187,7 @@ export async function countListingsMovableToStore(
   businessId: mongoose.Types.ObjectId,
   businessType: BusinessType
 ): Promise<number> {
-  const storeCount = await sellerStoreCount(sellerId);
-  return Product.countDocuments(listingsToStoreFilter(sellerId, businessId, businessType, storeCount));
+  return Product.countDocuments(listingsToStoreFilter(sellerId, businessId, businessType));
 }
 
 export async function assertProductBusinessLink(opts: {
@@ -393,9 +391,23 @@ export const updateMyBusinessByKey = asyncHandler(async (req: Request, res: Resp
   res.json({ business: serializeBusiness(out) });
 });
 
-async function reviewSummaryForOwner(ownerId: mongoose.Types.ObjectId) {
+/** Average of star ratings on **product** reviews for listings belonging to this storefront only. */
+async function productReviewSummaryForBusiness(businessId: mongoose.Types.ObjectId) {
+  const ids = await Product.find({ businessId }).distinct("_id");
+  if (!Array.isArray(ids) || !ids.length) return { avgRating: null as number | null, count: 0 };
   const rows = await Review.aggregate([
-    { $match: { sellerId: ownerId } },
+    { $match: { productId: { $in: ids } } },
+    { $group: { _id: null, avgRating: { $avg: "$rating" }, count: { $sum: 1 } } }
+  ]);
+  const r = rows[0] as { avgRating?: number; count?: number } | undefined;
+  if (!r?.count) return { avgRating: null as number | null, count: 0 };
+  return { avgRating: Math.round(Number(r.avgRating) * 10) / 10, count: Number(r.count) };
+}
+
+/** Average of **store** reviews (shipping, service, packaging — separate from item ratings). */
+async function storeReviewSummaryForBusiness(businessId: mongoose.Types.ObjectId) {
+  const rows = await BusinessReview.aggregate([
+    { $match: { businessId } },
     { $group: { _id: null, avgRating: { $avg: "$rating" }, count: { $sum: 1 } } }
   ]);
   const r = rows[0] as { avgRating?: number; count?: number } | undefined;
@@ -419,12 +431,12 @@ export const getBusinessStorefront = asyncHandler(async (req: Request, res: Resp
     b.businessType === "food_restaurant"
       ? await MenuSection.find({ businessId: bid }).sort({ sortOrder: 1, title: 1 }).lean()
       : [];
-  const storeCount = await sellerStoreCount(b.ownerId);
   let orphanListingCount = 0;
   let linkedOrphanProducts = 0;
   let unpublishedListingCount = 0;
 
-  if (storeCount === 1 || isOwner || isAdmin) {
+  /** Only the seller/admin should trigger auto-link; avoid mutating the DB on anonymous buyer GETs. */
+  if (isOwner || isAdmin) {
     linkedOrphanProducts = await linkSellerListingsToBusiness(
       b.ownerId,
       bid,
@@ -442,8 +454,13 @@ export const getBusinessStorefront = asyncHandler(async (req: Request, res: Resp
 
   const productFilter = isOwner || isAdmin ? { businessId: bid } : { businessId: bid, ...buyerCandidateFilter };
   const productsRaw = await Product.find(productFilter).sort({ updatedAt: -1 }).lean();
-  const products = await attachSellerPayments(productsRaw as unknown as Record<string, unknown>[]);
-  const reviewSummary = await reviewSummaryForOwner(b.ownerId);
+  const products = await attachSellerPayments(productsRaw as unknown as Record<string, unknown>[], {
+    includePayoutDetails: isAdmin
+  });
+  const productReviewSummary = await productReviewSummaryForBusiness(bid);
+  const storeReviewSummary = await storeReviewSummaryForBusiness(bid);
+  /** @deprecated Use productReviewSummary — kept for older vendor studio bundles. */
+  const reviewSummary = productReviewSummary;
   /** Re-read doc so storefront matches DB after linking work; lean may omit booleans saved as defaults. */
   const persistedBusiness =
     ((await Business.findById(bid).lean()) as BusinessDoc | null) ?? (b as BusinessDoc);
@@ -456,6 +473,8 @@ export const getBusinessStorefront = asyncHandler(async (req: Request, res: Resp
     })),
     products,
     reviewSummary,
+    productReviewSummary,
+    storeReviewSummary,
     orphanListingCount,
     linkedOrphanProducts,
     unpublishedListingCount

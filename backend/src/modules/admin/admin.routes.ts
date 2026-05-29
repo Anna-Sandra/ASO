@@ -8,6 +8,7 @@ import {
   adminBulkCleanup,
   adminDashboard,
   approveProduct,
+  approveProductsBulk,
   approveAdminBusiness,
   listAdminBusinesses,
   rejectAdminBusiness,
@@ -48,6 +49,17 @@ import {
   resetAdminUserPassword
 } from "./admin.controller";
 import {
+  adminApprovePromotion,
+  adminCreatePlatformPromotion,
+  adminListPromotions,
+  adminRejectPromotion
+} from "../promotions/promotion.controller";
+import {
+  adminCreatePromotionSchema,
+  adminPromotionsQuerySchema,
+  adminRejectPromotionSchema
+} from "../promotions/promotion.schemas";
+import {
   adminListQuerySchema,
   adminOrderPatchSchema,
   adminOrdersQuerySchema,
@@ -60,6 +72,7 @@ import {
   adminBusinessesQuerySchema,
   adminRejectBusinessSchema,
   adminRejectProductSchema,
+  adminApproveProductsBulkSchema,
   adminReportPatchSchema,
   adminReportsQuerySchema,
   adminResetPasswordSchema,
@@ -139,6 +152,15 @@ router.post(
   rejectAdminBusiness
 );
 router.get("/products", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminProductsQuerySchema), listAdminProducts);
+router.post(
+  "/products/bulk-approve",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateBody(adminApproveProductsBulkSchema),
+  approveProductsBulk
+);
 router.post("/products/:id/approve", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, approveProduct);
 router.post(
   "/products/:id/reject",
@@ -347,6 +369,42 @@ router.post(
   requireAdminEnvSecret,
   requireSuperAdmin,
   adminBulkCleanup
+);
+
+router.get(
+  "/promotions",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateQuery(adminPromotionsQuerySchema),
+  adminListPromotions
+);
+router.post(
+  "/promotions",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateBody(adminCreatePromotionSchema),
+  adminCreatePlatformPromotion
+);
+router.post(
+  "/promotions/:id/approve",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  adminApprovePromotion
+);
+router.post(
+  "/promotions/:id/reject",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  validateBody(adminRejectPromotionSchema),
+  adminRejectPromotion
 );
 
 export default router;

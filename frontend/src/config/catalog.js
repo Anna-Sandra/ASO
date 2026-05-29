@@ -4,6 +4,7 @@ export const CATEGORIES = [
   { id: "fashion_accessories", label: "Fashion & Accessories" },
   { id: "electronics_gadgets", label: "Electronics & Gadgets" },
   { id: "beauty_personal_care", label: "Beauty & Personal Care" },
+  { id: "babies_infants", label: "Babies & Infants" },
   { id: "services", label: "Services" },
   { id: "books_academic", label: "Books & Academic Materials" },
   { id: "groceries_essentials", label: "Groceries & Essentials" }
@@ -34,6 +35,7 @@ export const PRODUCT_CATEGORY_VALUES = [
   "fashion_accessories",
   "electronics_gadgets",
   "beauty_personal_care",
+  "babies_infants",
   "services",
   "books_academic",
   "groceries_essentials"
@@ -44,6 +46,7 @@ export const CATEGORY_LABELS = {
   fashion_accessories: "Fashion & Accessories",
   electronics_gadgets: "Electronics & Gadgets",
   beauty_personal_care: "Beauty & Personal Care",
+  babies_infants: "Babies & Infants",
   services: "Services",
   books_academic: "Books & Academic Materials",
   groceries_essentials: "Groceries & Essentials"
@@ -65,6 +68,8 @@ export function productCategoryForBusinessType(businessType) {
       return "electronics_gadgets";
     case "beauty_shop":
       return "beauty_personal_care";
+    case "baby_infant_store":
+      return "babies_infants";
     case "grocery_store":
       return "groceries_essentials";
     case "academic_book":
@@ -75,32 +80,33 @@ export function productCategoryForBusinessType(businessType) {
   }
 }
 
-/** Fixed cart checkout prices are hidden for service listings — buyers arrange details with vendors. */
+/** Service listings (`category === "services"`). */
 export function isServicesCategory(entity) {
   if (!entity || typeof entity !== "object") return false;
   return entity.category === "services";
 }
 
-/** Food & drinks — no guaranteed fixed price online; storefront shows “Call to order”. */
-export function isFoodCallToOrderCategory(entity) {
-  if (!entity || typeof entity !== "object") return false;
-  return entity.category === "food_drinks";
-}
-
-/** Categories that skip cart / Paystack totals (quoted or called in). */
-export function isOfflineQuoteCategory(entity) {
-  return isServicesCategory(entity) || isFoodCallToOrderCategory(entity);
+/** Legacy: food used call-to-order. Listings now use real prices — keep helper for compatibility (always false). */
+export function isFoodCallToOrderCategory() {
+  return false;
 }
 
 /**
- * “Notes for seller” (allergies, spice, extras, booking preferences) — only Food & Drinks and Services
- * listings use this; other categories use fixed listings without per-order buyer notes in cart.
- * @param {{ category?: string } | null | undefined} entity
+ * Categories that skip cart checkout (quote / contact only). Food & services now use listed prices.
+ */
+export function isOfflineQuoteCategory() {
+  return false;
+}
+
+/**
+ * Per-order buyer notes in cart — food, services, or any listing with vendor-defined add-ons.
+ * @param {{ category?: string, addons?: unknown[] } | null | undefined} entity
  */
 export function supportsCartCustomizationNotes(entity) {
   if (!entity || typeof entity !== "object") return false;
   const c = entity.category;
-  return c === "food_drinks" || c === "services";
+  if (c === "food_drinks" || c === "services") return true;
+  return Array.isArray(entity.addons) && entity.addons.length > 0;
 }
 
 
@@ -112,6 +118,27 @@ export function productMatchesFilter(p, filId) {
   if (filId === "popular") return tags.includes("popular");
   
   return true;
+}
+
+/**
+ * Narrows the product list to listings whose name, description, or tags contain every search word
+ * (case-insensitive). Used on the shop so a query like “running shoes” only shows matching items.
+ * @param {Record<string, unknown>} p
+ * @param {string} query
+ */
+export function productMatchesSearchTerms(p, query) {
+  const raw = String(query || "").trim().toLowerCase();
+  if (!raw) return true;
+  const terms = raw.split(/\s+/).filter((t) => t.length > 0);
+  if (!terms.length) return true;
+  const blob = [
+    String(p.name || ""),
+    String(p.description || ""),
+    ...(Array.isArray(p.tags) ? p.tags.map((x) => String(x)) : [])
+  ]
+    .join(" ")
+    .toLowerCase();
+  return terms.every((t) => blob.includes(t));
 }
 
 /** @param {string} id */
@@ -138,6 +165,25 @@ export function productStorefrontBadges(p) {
   /** @type {Array<{ key: string; label: string; className: string }>} */
   const out = [];
   const tags = /** @type {string[]} */ ((p.tags || []).map((t) => String(t || "").toLowerCase()));
+
+  const ad = p.activeDeal && typeof p.activeDeal === "object" ? p.activeDeal : null;
+  if (ad) {
+    const kind = String(ad.kind || "");
+    const tb = String(ad.tagBadge || "").trim();
+    const label =
+      kind === "flash_sale"
+        ? tb
+          ? `🔥 ${tb.slice(0, 22)}`
+          : "🔥 FLASH SALE"
+        : kind === "deal_bundle"
+          ? tb
+            ? `🎁 ${tb.slice(0, 22)}`
+            : "🎁 BUNDLE"
+          : tb
+            ? `💰 ${tb.slice(0, 22)}`
+            : "💰 SALE";
+    out.push({ key: "deal-chip", label, className: "bg-rose-600 text-white ring-rose-950/40" });
+  }
 
   const list = Number(p.price);
   const cmpRaw = Number(p.compareAtPrice);

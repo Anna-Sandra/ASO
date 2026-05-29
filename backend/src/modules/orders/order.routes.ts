@@ -8,6 +8,7 @@ import {
   addOrderMessage,
   cancelMyOrder,
   checkout,
+  confirmBuyerReceipt,
   deleteMyOrder,
   getOrder,
   listBuyerVendorInbox,
@@ -35,6 +36,13 @@ router.post(
 router.get("/", protect, requireActiveAccount, authorize(...shopRoles), listMyOrders);
 router.get("/buyer/vendor-messages", protect, requireActiveAccount, authorize("buyer", "admin"), listBuyerVendorInbox);
 router.get("/seller/buyer-messages", protect, requireActiveAccount, authorize("seller", "admin"), listSellerBuyerInbox);
+router.post(
+  "/:id/confirm-receipt",
+  protect,
+  requireActiveAccount,
+  authorize("buyer", "admin"),
+  confirmBuyerReceipt
+);
 router.get("/:id", optionalProtect, requireActiveAccount, getOrder);
 router.post("/:id/messages", protect, requireActiveAccount, authorize(...shopRoles), validateBody(orderMessageSchema), addOrderMessage);
 router.post("/:id/pay-manual", optionalProtect, requireActiveAccount, validateBody(orderManualPaymentSchema), markManualPayment);

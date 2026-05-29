@@ -162,6 +162,7 @@ async function finalizeOrderDelivered(order: HydratedDocument<OrderDoc>) {
   const allowedPrev = ["paid", "processing", "sent_for_delivery"];
   if (!allowedPrev.includes(order.status)) return;
   order.status = "delivered";
+  (order as unknown as { deliveredAt?: Date | null }).deliveredAt = new Date();
   await order.save();
   if (order.buyerId) void notifyBuyerOrderStatus(order._id.toString(), order.buyerId, "Delivered");
 }

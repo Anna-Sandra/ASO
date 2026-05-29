@@ -19,13 +19,88 @@ function userWantsFoodSuggestions(message: string): boolean {
   return FOOD_KEYWORDS.test(String(message || ""));
 }
 
+/** Parse GHS budget / range from free text (commas, k = thousand, "under X", ranges). */
+export function parseGhsPriceConstraint(message: string): { min: number; max: number } | null {
+  const raw = String(message || "").replace(/,/g, "");
+  const parseNum = (s: string): number => {
+    const t = s.trim().toLowerCase().replace(/\s+/g, "");
+    if (/k$/i.test(t)) return Math.round(parseFloat(t.replace(/k$/i, "")) * 1000);
+    const n = parseFloat(t.replace(/[^\d.]/g, ""));
+    return Number.isFinite(n) ? n : NaN;
+  };
+
+  const between = raw.match(
+    /\b(?:between|from)\s+([\d.]+\s*k?)\s+(?:and|to|[-–])\s+([\d.]+\s*k?)\b/i
+  );
+  if (between) {
+    const a = parseNum(between[1]);
+    const b = parseNum(between[2]);
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+      return { min: Math.min(a, b), max: Math.max(a, b) };
+    }
+  }
+
+  const dash = raw.match(/\b(\d+(?:\.\d+)?\s*k?)\s+[-–]\s+(\d+(?:\.\d+)?\s*k?)\b/i);
+  if (dash) {
+    const a = parseNum(dash[1]);
+    const b = parseNum(dash[2]);
+    if (Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0) {
+      return { min: Math.min(a, b), max: Math.max(a, b) };
+    }
+  }
+
+  const under = raw.match(/\b(?:under|below|less than|max|up to|upto)\s+(\d+(?:\.\d+)?\s*k?)\b/i);
+  if (under) {
+    const m = parseNum(under[1]);
+    if (Number.isFinite(m) && m > 0) return { min: 0, max: m };
+  }
+
+  const over = raw.match(/\b(?:over|above|more than|at least|from)\s+(\d+(?:\.\d+)?\s*k?)\b/i);
+  if (over) {
+    const m = parseNum(over[1]);
+    if (Number.isFinite(m) && m > 0) return { min: m, max: Number.POSITIVE_INFINITY };
+  }
+
+  return null;
+}
+
+/** When true, do not fill with unrelated “latest in category” if text search finds nothing. */
+export function shouldUseNoCategoryFallback(message: string): boolean {
+  const t = String(message || "").trim();
+  if (parseGhsPriceConstraint(t)) return true;
+  const shoppingCue = /\b(want|need|looking|show\s*me|find|buy|get|budget|price|affordable|cheap|within|range|recommend)\b/i;
+  const specific =
+    /\b(laptop|notebooks?|macbook|chromebook|desktops?|pc\b|monitor|printer|iphone|samsung|pixel\b|smartphone|phones?|tablets?|ipads?|headphones?|earbuds?|speakers?|cameras?|lenses?|routers?|cables?|chargers?|fridges?|freezers?|washing machines?|\b(?:washing machine)\b|tv\b|televisions?|microwaves?)\b/i;
+  if (specific.test(t) && shoppingCue.test(t)) return true;
+  return false;
+}
+
+function filterByPriceConstraint(
+  rows: Record<string, unknown>[],
+  constraint: { min: number; max: number } | null
+): Record<string, unknown>[] {
+  if (!constraint || !rows.length) return rows;
+  const { min, max } = constraint;
+  return rows.filter((r) => {
+    const cat = String((r as { category?: string }).category || "");
+    if (cat === "food_drinks" || cat === "services") return true;
+    const p = Number((r as { price?: unknown }).price);
+    if (!Number.isFinite(p)) return false;
+    if (Number.isFinite(max) && max !== Number.POSITIVE_INFINITY && p > max) return false;
+    if (p < min) return false;
+    return true;
+  });
+}
+
 /** Map casual shopper language to our catalog category (narrow fallback results). */
-function detectCategoryFromMessage(message: string): ProductCategory | null {
+export function detectCategoryFromMessage(message: string): ProductCategory | null {
   const m = String(message || "").toLowerCase();
   if (/shoe|heel|boot|sandal|footwear|sneaker|trainer|slipper/.test(m)) return "fashion_accessories";
   if (/food|eat|eating|hungry|menu|dish|dishes|restaurant|cafeteria|waakye|jollof|fufu|snack\b/.test(m)) return "food_drinks";
   if (/electronic|gadget|laptop|phone|charger|cable|earbud|headphone|tablet/.test(m)) return "electronics_gadgets";
   if (/beauty|makeup|skin|hair|perfume|cosmetic|lipstick/.test(m)) return "beauty_personal_care";
+  if (/\bbaby|babies|infant|infants|newborn|nursery|stroller|pram|crib|diaper|nappy|teether|bodysuit|onesie\b/.test(m))
+    return "babies_infants";
   if (/\bbook|novel|textbook|course ?book\b/.test(m)) return "books_academic";
   if (/service|repair|fix|tutor|plumb|electrician|hire\b/.test(m)) return "services";
   if (/grocery|groceries|vegetable|fruit\b|essentials\b/.test(m)) return "groceries_essentials";
@@ -33,10 +108,16 @@ function detectCategoryFromMessage(message: string): ProductCategory | null {
   return null;
 }
 
-async function findProductsForFallback(message: string, limit = 6) {
+export async function findProductsForFallback(
+  message: string,
+  limit = 6,
+  options?: { noCategoryFallback?: boolean }
+): Promise<Record<string, unknown>[]> {
+  const noCategoryFallback = Boolean(options?.noCategoryFallback);
   const activeIds = await activeStoreBusinessIds();
   const trimmed = String(message || "").trim();
   const detectedCategory = detectCategoryFromMessage(trimmed);
+  const priceConstraint = parseGhsPriceConstraint(trimmed);
 
   const base: Record<string, unknown> = {
     status: "active",
@@ -58,7 +139,7 @@ async function findProductsForFallback(message: string, limit = 6) {
         $text: { $search: trimmed }
       })
         .sort({ score: { $meta: "textScore" } })
-        .limit(limit)
+        .limit(limit * 2)
         .lean()) as unknown as Record<string, unknown>[];
     } catch {
       /* no text index or bad query */
@@ -70,22 +151,25 @@ async function findProductsForFallback(message: string, limit = 6) {
         $or: [{ name: re }, { description: re }, { tags: re }]
       })
         .sort({ updatedAt: -1 })
-        .limit(limit)
+        .limit(limit * 2)
         .lean()) as unknown as Record<string, unknown>[];
     }
   }
 
-  if (!rows.length) {
+  rows = filterByPriceConstraint(rows, priceConstraint).slice(0, limit);
+
+  if (!rows.length && !noCategoryFallback) {
     const catFilter =
       detectedCategory != null
         ? {}
         : preferFood
           ? { category: "food_drinks" as const }
           : {};
-    rows = (await Product.find({ ...base, ...catFilter })
+    const broad = (await Product.find({ ...base, ...catFilter })
       .sort({ updatedAt: -1 })
-      .limit(limit)
+      .limit(limit * 2)
       .lean()) as unknown as Record<string, unknown>[];
+    rows = filterByPriceConstraint(broad, priceConstraint).slice(0, limit);
   }
 
   return enrichPublicProducts(rows);
@@ -183,6 +267,32 @@ function markdownOrderingTipLine(): string {
 const CONTACT_VENDOR_HELP =
   /\b(contact|phone|whatsapp|vendor|reach\s+out|get\s+in\s+touch|talk\s+to)|\bwhere\s+(do\s+i|can\s+i|to)\s+(contact|call|find|reach)|\bhow\s+(do\s+i|to)\s+(contact|reach|call)|contact\s+(the\s+)?(seller|vendor|store)|the\s+seller|seller\s+(details|contact|phone|number)|\bcall\s+the\s+(seller|vendor|restaurant)/i;
 
+/** Optional hub path for discoverability (aligned with marketplace routes). */
+function categorySearchHint(cat: ReturnType<typeof detectCategoryFromMessage>): string {
+  const pathByCat: Partial<Record<string, string>> = {
+    electronics_gadgets: "/electronics",
+    fashion_accessories: "/fashion",
+    food_drinks: "/food",
+    beauty_personal_care: "/beauty",
+    babies_infants: "/babies",
+    groceries_essentials: "/groceries",
+    books_academic: "/books",
+    services: "/services"
+  };
+  const p = cat ? pathByCat[String(cat)] : "";
+  if (p) return `Try **${p}** in the app or use search — new listings appear as vendors join.`;
+  return "Try the category hubs on the home page or use search — new listings appear as vendors join.";
+}
+
+function noMatchReply(siteName: string, message: string): string {
+  const cat = detectCategoryFromMessage(String(message || ""));
+  return (
+    `I don’t see any listings on ${siteName} that match what you asked for right now — the marketplace search didn’t return a matching product.\n\n` +
+    `${categorySearchHint(cat)}\n\n` +
+    markdownOrderingTipLine()
+  );
+}
+
 /** User-friendly reply when Ollama is down, slow, or not configured — real listings, no dev jargon. */
 export async function buildAssistantCatalogReply(
   siteName: string,
@@ -191,10 +301,11 @@ export async function buildAssistantCatalogReply(
   history?: ChatTurn[]
 ): Promise<string> {
   const trimmed = String(message || "").trim();
+  const strict = shouldUseNoCategoryFallback(trimmed);
 
   if (isGreetingOnly(trimmed)) {
     return (
-      `Hey! 👋 I'm your 🏪 ${siteName} shopping assistant. Ask me about food, fashion, electronics, or any products — I'll find real listings for you!`
+      `Hey! 👋 I'm your 🏪 ${siteName} shopping assistant. Ask me about food, fashion, electronics, baby essentials, or any products — I'll find real listings for you!`
     );
   }
 
@@ -207,7 +318,7 @@ export async function buildAssistantCatalogReply(
   }
 
   if (CONTACT_VENDOR_HELP.test(trimmed)) {
-    const products = await findProductsForFallback(message, 3);
+    const products = await findProductsForFallback(message, 3, { noCategoryFallback: false });
     const appOrigin = trimAppOrigin(env.APP_ORIGIN);
     const exampleLines =
       products.length > 0
@@ -223,14 +334,14 @@ export async function buildAssistantCatalogReply(
 
     return (
       `📞 Where to contact a vendor on ${siteName}\n\n` +
-        `1. 📦 Open the product — every listing has its own page. Seller / payout / contact info is on that page (near the description), including call-to-order food.\n` +
+        `1. 📦 Open the product — seller **contact** (e.g. email) is on the listing when provided; food items use **call to order** / **Place Order** from the listing.\n` +
         `2. 🏪 Same store, more items — tap the store name link on a card to open that vendor’s storefront and menu.\n` +
         `3. 📬 After you buy (with an account), use Orders and Messages when chat is available — guests use the email and phone from checkout and details on the listing.\n` +
         exampleLines.join("\n")
     );
   }
 
-  const products = await findProductsForFallback(message, 6);
+  const products = await findProductsForFallback(message, 6, { noCategoryFallback: strict });
   const stores = await Business.find({ status: "active", businessType: "food_restaurant" })
     .sort({ updatedAt: -1 })
     .limit(4)
@@ -239,15 +350,40 @@ export async function buildAssistantCatalogReply(
 
   const appOrigin = trimAppOrigin(env.APP_ORIGIN);
 
+  const food = userWantsFoodSuggestions(message);
+
+  if (food && !products.length && stores.length) {
+    const lines = [
+      `I don’t see that exact dish or item in our current picks — here are some 🍽️ restaurants on ${siteName} you can open for full menus:`,
+      "",
+      ...stores.map((b) => {
+        const slug = String(b.slug || "").trim();
+        const name = String(b.name || "Store").trim();
+        return slug
+          ? `- [${name}](${appOrigin}/store/${encodeURIComponent(slug)}) — view menu`
+          : `- ${name}`;
+      }),
+      "",
+      markdownOrderingTipLine()
+    ];
+    return lines.join("\n");
+  }
+
   if (!products.length && !stores.length) {
+    if (strict) {
+      return noMatchReply(siteName, message);
+    }
     return (
       `I'm having trouble loading suggestions right now, but you can still browse ${siteName} from the home page. ` +
-      `Try Food & drinks in the menu, or search. You can check out as a guest or sign in to track orders and message sellers when available.`
+        `Try Food & drinks in the menu, or search. You can check out as a guest or sign in to track orders and message sellers when available.`
     );
   }
 
+  if (!food && !products.length && strict) {
+    return noMatchReply(siteName, message);
+  }
+
   const parts: string[] = [];
-  const food = userWantsFoodSuggestions(message);
 
   if (food) {
     parts.push(
@@ -266,10 +402,10 @@ export async function buildAssistantCatalogReply(
     );
   }
 
-  if (food && stores.length) {
+  if (food && stores.length && products.length) {
     parts.push(
       "",
-      "🏪 Restaurants & stores:",
+      "🏪 More restaurants & stores:",
       ...stores.map((b) => {
         const slug = String(b.slug || "").trim();
         const name = String(b.name || "Store").trim();

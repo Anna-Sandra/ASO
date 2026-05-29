@@ -1,12 +1,12 @@
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 import { env, getEmailTransportDiagnostics, isEmailTransportConfigured } from "../config/env";
 import { EmailLog } from "../modules/emailLog/emailLog.model";
 
-type Transporter = ReturnType<typeof nodemailer.createTransport>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let cached: Transporter<any> | null = null;
 
-let cached: Transporter | null = null;
-
-function buildTransporter(): Transporter | null {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildTransporter(): Transporter<any> | null {
   if (!isEmailTransportConfigured()) return null;
 
   const hasSmtp = Boolean(env.SMTP_HOST?.trim() && env.SMTP_USER && env.SMTP_PASS);
@@ -15,23 +15,33 @@ function buildTransporter(): Transporter | null {
       host: env.SMTP_HOST,
       port: env.SMTP_PORT,
       secure: env.SMTP_PORT === 465,
-      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS }
+      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 10000
     });
   }
 
-  // Gmail: leave SMTP_HOST empty, set EMAIL_USER + EMAIL_PASS (Google App Password).
+  // Gmail via explicit SMTP host — forces IPv4 (Render free tier has no IPv6)
   if (env.EMAIL_USER && env.EMAIL_PASS) {
     const pass = env.EMAIL_PASS.replace(/\s/g, "");
     return nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: env.EMAIL_USER, pass }
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: { user: env.EMAIL_USER, pass },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 10000
     });
   }
 
   return null;
 }
 
-function getTransporter(): Transporter | null {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getTransporter(): Transporter<any> | null {
   if (cached) return cached;
   cached = buildTransporter();
   return cached;
@@ -54,12 +64,19 @@ async function recordEmailLog(entry: {
 }
 
 /**
- * Send HTML email. If mail is not configured, logs a dev line and no-ops (and writes a skipped EmailLog row).
+ * Send HTML email. If mail is not configured, logs a dev line and no-ops.
  * Uses either SMTP (SMTP_*) or Gmail (EMAIL_USER + EMAIL_PASS, SMTP_HOST empty).
+ * Never throws — email failure is logged but never crashes the caller.
  */
-export async function sendEmail(to: string, subject: string, html: string, meta?: SendEmailMeta) {
+export async function sendEmail(
+  to: string,
+  subject: string,
+  html: string,
+  meta?: SendEmailMeta
+) {
   const category = (meta?.category || "general").slice(0, 80);
   const transporter = getTransporter();
+
   if (!transporter) {
     const diag = getEmailTransportDiagnostics();
     const reason =
@@ -74,7 +91,11 @@ export async function sendEmail(to: string, subject: string, html: string, meta?
       errorMessage: reason
     });
     // eslint-disable-next-line no-console
-    console.log("[email:not-configured]", { to, subject, html: html.replace(/\s+/g, " ").slice(0, 200) });
+    console.log("[email:not-configured]", {
+      to,
+      subject,
+      html: html.replace(/\s+/g, " ").slice(0, 200)
+    });
     return;
   }
 
@@ -91,6 +112,8 @@ export async function sendEmail(to: string, subject: string, html: string, meta?
       category,
       status: "sent"
     });
+    // eslint-disable-next-line no-console
+    console.log("[email:sent]", { to, subject });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "sendMail failed";
     await recordEmailLog({
@@ -100,6 +123,8 @@ export async function sendEmail(to: string, subject: string, html: string, meta?
       status: "failed",
       errorMessage: msg.slice(0, 2000)
     });
-    throw err;
+    // eslint-disable-next-line no-console
+    console.error("[email:failed]", msg);
+    // Never throw — email failure must not crash login/register flows
   }
 }

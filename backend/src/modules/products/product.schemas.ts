@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { MAX_PRODUCT_GALLERY_IMAGES } from "../../config/productLimits";
 import { LISTING_KINDS, PRODUCT_CATEGORIES } from "./product.model";
 import { normalizeCategoryAttributes, safeParseCategoryAttributes } from "./categoryAttributes.schema";
+import { isValidMarketplaceSubcategory } from "./productSubcategories";
 
 const categoryEnum = z.enum(PRODUCT_CATEGORIES);
 
@@ -23,6 +24,8 @@ const productCore = {
   name: z.string().min(1).max(200),
   description: z.string().max(10000).optional().default(""),
   category: categoryEnum,
+  subcategory: z
+    .preprocess((v) => (v === "" || v === undefined ? undefined : v), z.union([z.string().trim().max(64), z.null()]).optional()),
   categoryAttributes: z.unknown().optional(),
   businessId: optionalObjectId("Invalid business id"),
   menuSectionId: optionalObjectId("Invalid menu section id"),
@@ -58,6 +61,13 @@ export const createProductSchema = createBody
         });
       }
     }
+    if (data.subcategory != null && !isValidMarketplaceSubcategory(data.category, data.subcategory)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Subcategory must match your listing marketplace category.",
+        path: ["subcategory"]
+      });
+    }
   })
   .transform((d) => ({
     ...d,
@@ -90,6 +100,8 @@ export const updateProductSchema = createBody
 export const listProductsQuerySchema = z.object({
   category: categoryEnum.optional(),
   tag: z.string().max(32).optional(),
+  /** Marketplace facet under the listing `category`. */
+  subcategory: z.string().max(64).optional(),
   q: z.string().max(200).optional(),
   businessId: z
     .string()
@@ -104,6 +116,22 @@ export const listProductsQuerySchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "minPrice cannot be greater than maxPrice", path: ["minPrice"] });
   }
 });
+
+/** AI-assisted marketplace search bar — expands query synonyms and narrows category when helpful. */
+export const smartSearchBodySchema = z
+  .object({
+    q: z.string().trim().min(1).max(200),
+    category: categoryEnum.optional(),
+    tag: z.string().max(32).optional(),
+    subcategory: z.string().max(64).optional(),
+    minPrice: z.coerce.number().min(0).optional(),
+    maxPrice: z.coerce.number().min(0).optional()
+  })
+  .superRefine((d, ctx) => {
+    if (d.minPrice != null && d.maxPrice != null && d.minPrice > d.maxPrice) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "minPrice cannot be greater than maxPrice", path: ["minPrice"] });
+    }
+  });
 
 export const recommendedProductsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(24).optional().default(12),

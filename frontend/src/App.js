@@ -30,12 +30,14 @@ import {
   ShopPage,
   SavedProductsPage
 } from "pages/buyer/screensBuyer";
+import { BuyerCouponsPage, BuyerDealsPage, BuyerWalletPage } from "pages/buyer/buyerMarketingPages";
 import { CourierApplicationPage } from "pages/applications/screensCourierApply";
 import { VendorApplicationPage } from "pages/applications/screensVendorApply";
 import { BrowseStoresPage, CategoryHubPage, BusinessStorefrontPage } from "pages/marketplace/marketplaceHubScreens";
 import { VendorStoresPage } from "pages/vendor/vendorBusinessStudio";
 import { VendorStorefrontManagePage } from "pages/vendor/vendorStorefrontStudio";
 import { VendorStoreMenuPage } from "pages/vendor/vendorStoreMenu";
+import { VendorPromotionsPage } from "pages/vendor/vendorPromotionsPage";
 import { VendorOnboardingPage } from "pages/vendor/vendorOnboardingWizard";
 import { VendorReviewsPage } from "pages/vendor/VendorReviewsPage";
 import { VendorServiceInquiriesPage } from "pages/vendor/vendorServiceInquiries";
@@ -92,7 +94,7 @@ function isPublicMarketplacePath(pathname) {
   const p = String(pathname || "").split("?")[0];
   if (p.startsWith("/store/")) return true;
   if (p.startsWith("/products/")) return true;
-  return ["/food", "/fashion", "/electronics", "/beauty", "/groceries", "/books", "/services", "/browse-stores"].includes(p);
+  return ["/food", "/fashion", "/electronics", "/beauty", "/babies", "/groceries", "/books", "/services", "/browse-stores", "/deals", "/coupons"].includes(p);
 }
 
 function BuyerGate({ children }) {
@@ -184,6 +186,11 @@ function AppRoutes() {
       key: "r-beauty"
     }),
     h(Route, {
+      path: "/babies",
+      element: h(BuyerGate, null, h(CategoryHubPage, { slug: "babies" })),
+      key: "r-babies"
+    }),
+    h(Route, {
       path: "/groceries",
       element: h(BuyerGate, null, h(CategoryHubPage, { slug: "groceries" })),
       key: "r-groceries"
@@ -214,6 +221,13 @@ function AppRoutes() {
       key: "r-browse-stores"
     }),
     h(Route, { path: "/saved", element: h(BuyerGate, null, h(SavedProductsPage)), key: "r-saved" }),
+    h(Route, { path: "/deals", element: h(BuyerGate, null, h(BuyerDealsPage)), key: "r-deals" }),
+    h(Route, { path: "/coupons", element: h(BuyerGate, null, h(BuyerCouponsPage)), key: "r-coupons" }),
+    h(Route, {
+      path: "/wallet",
+      element: h(BuyerGate, null, h(RequireBuyerAuth, null, h(BuyerWalletPage))),
+      key: "r-wallet"
+    }),
     h(Route, { path: "/admin/login", element: h(AdminLoginPage), key: "r-admin-login" }),
     h(Route, { path: "/admin/login-otp", element: h(AdminLoginOtpPage), key: "r-admin-login-otp" }),
     h(Route, { path: "/admin", element: h(AdminGate, null, h(AdminPage)), key: "r-admin" }),
@@ -300,6 +314,7 @@ function AppRoutes() {
       h(Route, { path: "notifications", element: h(VendorNotificationsPage), key: "r-v-notif" }),
       h(Route, { path: "reports", element: h(VendorReportsPage), key: "r-v-reports" }),
       h(Route, { path: "analytics", element: h(VendorAnalyticsPage), key: "r-v-analytics" }),
+      h(Route, { path: "promotions", element: h(VendorPromotionsPage), key: "r-v-promo" }),
       h(Route, { path: "reviews", element: h(VendorReviewsPage), key: "r-v-reviews" }),
       h(Route, { path: "settings", element: h(VendorSettingsPage), key: "r-v-settings" }),
       h(Route, { path: "profile", element: h(VendorProfilePage), key: "r-v-profile" })
