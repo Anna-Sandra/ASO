@@ -2124,7 +2124,8 @@ export const listVendorApplications = asyncHandler(async (req: Request, res: Res
       const emailNorm = (r.email || "").trim().toLowerCase();
       const linked = (emailNorm ? byEmail.get(emailNorm) : undefined) ?? (uid ? byId.get(uid) : undefined);
       const accountRole = linked ? normalizeUserRole((linked as { role?: unknown }).role) : null;
-      const sellerRolePending = r.status === "approved" && accountRole != null && accountRole !== "seller";
+      const sellerRolePending =
+        r.status === "approved" && accountRole !== "seller" && accountRole !== "admin" && accountRole !== "rider";
       return {
       id: r._id.toString(),
       userId: uid,

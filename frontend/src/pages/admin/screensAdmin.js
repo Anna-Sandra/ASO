@@ -3487,7 +3487,7 @@ export function AdminPage() {
                       )
                     ]
                   ),
-                  row.sellerRolePending
+                  row.status === "approved" && row.accountRole !== "seller"
                     ? h(
                         "p",
                         {
@@ -3495,7 +3495,11 @@ export function AdminPage() {
                           className:
                             "mt-3 rounded-xl border border-amber-300/60 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-950/30 dark:text-amber-100"
                         },
-                        "Approved, but this email is still a buyer in Users. Apply seller role so they can open the vendor dashboard (same email as on the form)."
+                        row.accountRole === "buyer" || row.sellerRolePending
+                          ? "Approved, but this email is still a buyer in Users. Use Apply seller role below (requires latest admin + API deploy)."
+                          : row.accountRole == null
+                            ? "Approved — no shopper account with this email yet. They must register with the same email, then use Apply seller role."
+                            : `Approved — linked account role is “${row.accountRole}”. Use Apply seller role if they should be a vendor.`
                       )
                     : null,
                   h("div", { key: "actions", className: "mt-4 flex flex-wrap gap-2" }, [
@@ -3544,7 +3548,7 @@ export function AdminPage() {
                           )
                         ]
                       : null,
-                    row.sellerRolePending
+                    row.status === "approved" && row.accountRole !== "seller" && row.accountRole !== "admin" && row.accountRole !== "rider"
                       ? h(
                           Button,
                           {
