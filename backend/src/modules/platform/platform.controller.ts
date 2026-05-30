@@ -1,6 +1,12 @@
 import type { Request, Response } from "express";
 import { DEFAULT_SITE_NAME } from "../../config/brand";
-import { env, isPaystackCheckoutSplitEnabled, isPaystackMoneyRailEnabled } from "../../config/env";
+import {
+  env,
+  getEmailTransportMode,
+  isEmailTransportConfigured,
+  isPaystackCheckoutSplitEnabled,
+  isPaystackMoneyRailEnabled
+} from "../../config/env";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { getEffectiveCommissionPercent, getOrCreateSettings } from "./platformSettings.service";
 import { getPlatformTrialEndsAt, isPlatformLaunchTrialActive } from "../vendorSubscription/vendorSubscription.service";
@@ -41,6 +47,11 @@ export const getPublicPlatformConfig = asyncHandler(async (_req: Request, res: R
       trialMonths: doc.vendorTrialMonths ?? env.VENDOR_TRIAL_MONTHS,
       subscriptionPriceGhs: doc.vendorSubscriptionPriceGhs ?? env.VENDOR_SUBSCRIPTION_PRICE_GHS,
       subscriptionPeriodMonths: doc.vendorSubscriptionPeriodMonths ?? env.VENDOR_SUBSCRIPTION_PERIOD_MONTHS
+    },
+    /** Helps debug OTP mail on Render (no secrets exposed). */
+    email: {
+      configured: isEmailTransportConfigured(),
+      transport: getEmailTransportMode()
     }
   });
 });

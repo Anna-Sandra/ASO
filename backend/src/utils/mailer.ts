@@ -88,7 +88,8 @@ async function sendViaBrevo(to: string, subject: string, html: string): Promise<
         sender: { name: sender.name, email: sender.email },
         to: [{ email: to.trim().toLowerCase() }],
         subject,
-        htmlContent: html
+        htmlContent: html,
+        textContent: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
       }),
       signal: controller.signal
     });
@@ -96,6 +97,11 @@ async function sendViaBrevo(to: string, subject: string, html: string): Promise<
     if (!res.ok) {
       const msg = body.message || body.code || `Brevo HTTP ${res.status}`;
       return { ok: false, reason: msg };
+    }
+    const messageId = (body as { messageId?: string }).messageId;
+    if (messageId) {
+      // eslint-disable-next-line no-console
+      console.log("[email:brevo:messageId]", messageId);
     }
     return { ok: true };
   } catch (err: unknown) {
