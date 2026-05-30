@@ -211,6 +211,36 @@ export const uploadBookPdf = asyncHandler(async (req: Request, res: Response) =>
   res.status(201).json({ url });
 });
 
+const deliveryProofDir = path.resolve(process.cwd(), "uploads", "delivery-proof");
+const deliveryProofStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(deliveryProofDir, { recursive: true });
+    cb(null, deliveryProofDir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const safe = [".jpg", ".jpeg", ".png", ".webp"].includes(ext) ? ext : ".jpg";
+    cb(null, `${randomUUID()}${safe}`);
+  }
+});
+
+export const uploadDeliveryProofMiddleware = multer({
+  storage: isCloudinaryConfigured() ? memoryStorage : deliveryProofStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: imageFilter
+}).single("image");
+
+export const uploadDeliveryProof = asyncHandler(async (req: Request, res: Response) => {
+  const file = req.file as Express.Multer.File | undefined;
+  if (!file) throw new HttpError(400, "No image file received");
+
+  const url = isCloudinaryConfigured()
+    ? await cloudinaryUploadMulterFile(file, "delivery-proof", "image")
+    : `${requirePublicUploadBase(req)}/uploads/delivery-proof/${file.filename}`;
+
+  res.status(201).json({ url });
+});
+
 export const uploadProfileImage = asyncHandler(async (req: Request, res: Response) => {
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No image file received");

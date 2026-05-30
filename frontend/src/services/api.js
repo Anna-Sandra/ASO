@@ -294,6 +294,39 @@ export async function apiUploadProfileImage(file, accessToken) {
   return data;
 }
 
+/**
+ * Upload delivery proof photo (multipart field `image`). Requires rider/admin auth.
+ * @param {File} file
+ * @param {string} accessToken
+ * @returns {Promise<{ url: string }>}
+ */
+export async function apiUploadDeliveryProof(file, accessToken) {
+  if (!API_BASE) {
+    throw new Error("REACT_APP_API_URL is not set. Add it in frontend/.env (e.g. http://localhost:4000).");
+  }
+  const fd = new FormData();
+  fd.append("image", file);
+  const url = `${API_BASE}/api/uploads/delivery-proof`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: fd,
+    credentials: "include"
+  });
+  const data = await parseResponse(res);
+  if (!res.ok) {
+    const msg =
+      data && data.error && data.error.message
+        ? data.error.message
+        : `Upload failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
 /** Load storefront JSON; pass accessToken when owner/admin so unlinked listings can sync server-side. */
 export async function fetchBusinessStorefront(slug, { accessToken } = {}) {
   const key = encodeURIComponent(String(slug || "").trim());

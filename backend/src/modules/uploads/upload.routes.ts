@@ -11,7 +11,9 @@ import {
   uploadVendorVerification,
   uploadVendorVerificationMiddleware,
   uploadBookPdf,
-  uploadBookPdfMiddleware
+  uploadBookPdfMiddleware,
+  uploadDeliveryProof,
+  uploadDeliveryProofMiddleware
 } from "./upload.controller";
 
 const router = Router();
@@ -58,6 +60,15 @@ router.post(
   authorize("buyer", "seller", "admin"),
   uploadReportEvidenceMiddleware,
   uploadReportEvidence
+);
+
+router.post(
+  "/delivery-proof",
+  protect,
+  requireActiveAccount,
+  authorize("rider", "admin"),
+  uploadDeliveryProofMiddleware,
+  uploadDeliveryProof
 );
 
 export default router;

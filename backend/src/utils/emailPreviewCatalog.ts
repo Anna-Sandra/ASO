@@ -66,6 +66,25 @@ export const EMAIL_TEMPLATE_PREVIEWS: { id: string; title: string; description: 
 </div>`
   },
   {
+    id: "order_delivered_buyer",
+    title: "Order delivered (buyer)",
+    description: "Sent to the buyer when a courier or vendor marks the order delivered.",
+    sampleHtml: `<div style="font-family:system-ui,sans-serif;max-width:480px">
+  <p>Hi Alex,</p>
+  <p>Your order <strong>#A1B2C3D4</strong> has been marked <strong>delivered</strong>.</p>
+  <p style="padding:12px;background:#f0fdf4;border-radius:8px">Jollof combo × 2</p>
+</div>`
+  },
+  {
+    id: "order_delivered_seller",
+    title: "Order delivered (vendor)",
+    description: "Sent to each seller on the order when delivery is completed.",
+    sampleHtml: `<div style="font-family:system-ui,sans-serif;max-width:480px">
+  <p>Hi Vendor,</p>
+  <p>Order <strong>#A1B2C3D4</strong> for your listing(s) was marked delivered.</p>
+</div>`
+  },
+  {
     id: "report_ack",
     title: "Report acknowledgement",
     description: "Confirms a user report was received.",

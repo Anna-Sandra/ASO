@@ -3,12 +3,13 @@ import type { HydratedDocument } from "mongoose";
 import { Delivery, DELIVERY_STAGES, type DeliveryDoc, type DeliveryStage } from "./delivery.model";
 import { Order, type OrderDoc, type OrderStatus } from "../orders/order.model";
 import { RiderProfile } from "./riderProfile.model";
-import { User } from "../auth/user.model";
+import { User, publicPhoneForPaymentRole } from "../auth/user.model";
 import { HttpError } from "../../utils/httpError";
 import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import type { UserRole } from "../auth/user.model";
 import { emitDeliveryLocation, emitDeliveryUpdate } from "./delivery.broadcast";
 import { notifyBuyerOrderStatus } from "../notifications/notification.service";
+import { sendOrderDeliveredEmails } from "../../utils/orderDeliveredEmail";
 
 const TRACKABLE_ORDER: OrderStatus[] = ["paid", "processing", "sent_for_delivery", "delivered"];
 
@@ -41,6 +42,12 @@ export function serializeDelivery(d: HydratedDocument<DeliveryDoc>) {
     riderLongitude: o.riderLongitude ?? null,
     riderLocationUpdatedAt: o.riderLocationUpdatedAt ?? null,
     estimatedArrivalMinutes: o.estimatedArrivalMinutes ?? null,
+    riderAssignedAt: o.riderAssignedAt ?? null,
+    proofPhotoUrl: rewriteStoredMediaUrl(o.proofPhotoUrl || ""),
+    customerSignatureUrl: rewriteStoredMediaUrl(o.customerSignatureUrl || ""),
+    receivedByName: o.receivedByName || "",
+    deliveryNote: o.deliveryNote || "",
+    deliveredAt: o.deliveredAt ?? null,
     statusHistory: (o.statusHistory || []).map((h) => ({
       stage: h.stage,
       at: h.at,
@@ -68,15 +75,50 @@ export async function assertDeliveryParticipant(
   throw new HttpError(403, "Forbidden");
 }
 
+function applyOrderDropoffToDelivery(d: HydratedDocument<DeliveryDoc>, order: HydratedDocument<OrderDoc> | OrderDoc): boolean {
+  let changed = false;
+  const lat = order.dropoffLatitude;
+  const lng = order.dropoffLongitude;
+  if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
+    if (d.dropoffLatitude == null) {
+      d.dropoffLatitude = lat;
+      changed = true;
+    }
+    if (d.dropoffLongitude == null) {
+      d.dropoffLongitude = lng;
+      changed = true;
+    }
+  }
+  const label = String(order.dropoffLabel || "").trim();
+  if (label && !String(d.dropoffLabel || "").trim()) {
+    d.dropoffLabel = label.slice(0, 500);
+    changed = true;
+  }
+  return changed;
+}
+
 export async function ensureDeliveryForOrder(order: HydratedDocument<OrderDoc>): Promise<HydratedDocument<DeliveryDoc> | null> {
   if (!isPaidLike(order.status)) return null;
 
   let d = await Delivery.findOne({ orderId: order._id });
-  if (d) return d;
+  if (d) {
+    if (applyOrderDropoffToDelivery(d, order)) {
+      await d.save();
+      emitDeliveryUpdate(order._id.toString(), { delivery: serializeDelivery(d), orderStatus: order.status });
+    }
+    return d;
+  }
+
+  const lat = order.dropoffLatitude;
+  const lng = order.dropoffLongitude;
+  const hasCoords = lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng);
 
   d = await Delivery.create({
     orderId: order._id,
     currentStage: "order_placed",
+    dropoffLatitude: hasCoords ? lat : null,
+    dropoffLongitude: hasCoords ? lng : null,
+    dropoffLabel: String(order.dropoffLabel || "").trim().slice(0, 500),
     statusHistory: [{ stage: "order_placed", at: new Date(), note: "Order is paid — delivery tracking started" }]
   });
 
@@ -165,6 +207,7 @@ async function finalizeOrderDelivered(order: HydratedDocument<OrderDoc>) {
   (order as unknown as { deliveredAt?: Date | null }).deliveredAt = new Date();
   await order.save();
   if (order.buyerId) void notifyBuyerOrderStatus(order._id.toString(), order.buyerId, "Delivered");
+  void sendOrderDeliveredEmails(order);
 }
 
 export async function assignRiderToDelivery(params: {
@@ -193,6 +236,7 @@ export async function assignRiderToDelivery(params: {
   if (!rider) throw new HttpError(400, "Rider profile not found for this user.");
 
   d.assignedRiderId = new mongoose.Types.ObjectId(riderUserId);
+  d.riderAssignedAt = new Date();
   pushHistory(d, d.currentStage, new mongoose.Types.ObjectId(params.actorId), `Rider assigned`);
   await persistAndBroadcast(d, order);
   return d;
@@ -259,6 +303,12 @@ export async function advanceDeliveryStage(params: {
   nextStage: DeliveryStage;
   actorId: string;
   actorRole: UserRole;
+  proof?: {
+    proofPhotoUrl?: string;
+    receivedByName?: string;
+    customerSignatureUrl?: string;
+    deliveryNote?: string;
+  };
 }): Promise<HydratedDocument<DeliveryDoc>> {
   if (!DELIVERY_STAGES.includes(params.nextStage)) throw new HttpError(400, "Unknown stage.");
 
@@ -331,7 +381,21 @@ export async function advanceDeliveryStage(params: {
       await order.save();
     }
 
-    if (params.nextStage === "delivered") await finalizeOrderDelivered(order);
+    if (params.nextStage === "delivered") {
+      if (params.actorRole === "rider" && !String(params.proof?.proofPhotoUrl || "").trim()) {
+        throw new HttpError(400, "A delivery photo is required to mark delivered.");
+      }
+      const proofUrl = String(params.proof?.proofPhotoUrl || "").trim();
+      if (proofUrl) d.proofPhotoUrl = proofUrl.slice(0, 2000);
+      const sigUrl = String(params.proof?.customerSignatureUrl || "").trim();
+      if (sigUrl) d.customerSignatureUrl = sigUrl.slice(0, 2000);
+      const recv = String(params.proof?.receivedByName || "").trim();
+      if (recv) d.receivedByName = recv.slice(0, 120);
+      const note = String(params.proof?.deliveryNote || "").trim();
+      if (note) d.deliveryNote = note.slice(0, 500);
+      d.deliveredAt = new Date();
+      await finalizeOrderDelivered(order);
+    }
 
     d.currentStage = params.nextStage;
     const refreshed = await Order.findById(order._id);
@@ -437,5 +501,56 @@ export async function listRiderAssignments(riderUserId: string): Promise<
       orderStatus: (order?.status as string) || "unknown"
     });
   }
+  return out;
+}
+
+/** Active couriers vendors/admins can assign — sorted by fewest active jobs first. */
+export async function listAvailableRiders(): Promise<
+  Array<{
+    id: string;
+    displayName: string;
+    phone: string;
+    vehicleType: string;
+    profileImageUrl: string;
+    activeDeliveries: number;
+  }>
+> {
+  const riders = await User.find({ role: "rider", accountStatus: "active" })
+    .select("displayName phone profileImageUrl")
+    .sort({ displayName: 1, createdAt: -1 })
+    .lean();
+
+  if (!riders.length) return [];
+
+  const userIds = riders.map((u) => u._id);
+  const profiles = await RiderProfile.find({ userId: { $in: userIds } }).lean();
+  const profileByUser = new Map(profiles.map((p) => [p.userId.toString(), p]));
+
+  const activeCounts = await Delivery.aggregate<{ _id: mongoose.Types.ObjectId; count: number }>([
+    {
+      $match: {
+        assignedRiderId: { $in: userIds },
+        currentStage: { $nin: ["delivered", "cancelled"] }
+      }
+    },
+    { $group: { _id: "$assignedRiderId", count: { $sum: 1 } } }
+  ]);
+  const countByRider = new Map(activeCounts.map((r) => [r._id.toString(), r.count]));
+
+  const out = riders
+    .filter((u) => profileByUser.has(u._id.toString()))
+    .map((u) => {
+      const prof = profileByUser.get(u._id.toString())!;
+      return {
+        id: u._id.toString(),
+        displayName: String((u as { displayName?: string }).displayName || "").trim() || "Courier",
+        phone: publicPhoneForPaymentRole("rider", (u as { phone?: string }).phone),
+        vehicleType: prof.vehicleType || "",
+        profileImageUrl: rewriteStoredMediaUrl((u as { profileImageUrl?: string }).profileImageUrl || ""),
+        activeDeliveries: countByRider.get(u._id.toString()) || 0
+      };
+    });
+
+  out.sort((a, b) => a.activeDeliveries - b.activeDeliveries || a.displayName.localeCompare(b.displayName));
   return out;
 }

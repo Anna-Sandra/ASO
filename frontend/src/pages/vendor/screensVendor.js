@@ -2006,11 +2006,24 @@ export function VendorEditProductPage() {
 
 function VendorCourierAssign({ accessToken, orderId, onAssigned }) {
   const { toast } = useNotice();
-  const [riderUserId, setRiderUserId] = useState("");
+  const [riders, setRiders] = useState([]);
+  const [loadingRiders, setLoadingRiders] = useState(false);
+  const [selectedRiderId, setSelectedRiderId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
+
+  const loadRiders = useCallback(() => {
+    if (!accessToken) return;
+    setLoadingRiders(true);
+    setLoadErr("");
+    apiFetch("/api/deliveries/riders/available", { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((d) => setRiders(Array.isArray(d.riders) ? d.riders : []))
+      .catch((ex) => setLoadErr(ex?.message || "Could not load riders"))
+      .finally(() => setLoadingRiders(false));
+  }, [accessToken]);
 
   const assign = async () => {
-    const id = riderUserId.trim();
+    const id = selectedRiderId.trim();
     if (!accessToken || !id) return;
     setBusy(true);
     try {
@@ -2020,7 +2033,7 @@ function VendorCourierAssign({ accessToken, orderId, onAssigned }) {
         json: { riderUserId: id }
       });
       toast("Rider assigned for this order.", { variant: "success" });
-      setRiderUserId("");
+      setSelectedRiderId("");
       onAssigned?.();
     } catch (ex) {
       toast(ex?.message || "Could not assign rider", { variant: "error" });
@@ -2029,12 +2042,14 @@ function VendorCourierAssign({ accessToken, orderId, onAssigned }) {
     }
   };
 
-  /** Single short row (+ optional wrapped line on narrow cells) — keeps order table rows from stretching. */
   return h(
     "details",
     {
       className:
-        "max-w-[min(100%,20rem)] rounded-lg border border-sky-400/25 bg-sky-500/[0.07] [&_summary::-webkit-details-marker]:hidden dark:border-sky-500/30 dark:bg-sky-950/30"
+        "max-w-[min(100%,22rem)] rounded-lg border border-sky-400/25 bg-sky-500/[0.07] [&_summary::-webkit-details-marker]:hidden dark:border-sky-500/30 dark:bg-sky-950/30",
+      onToggle: (e) => {
+        if (e.target.open && !riders.length && !loadingRiders) loadRiders();
+      }
     },
     [
       h(
@@ -2043,31 +2058,69 @@ function VendorCourierAssign({ accessToken, orderId, onAssigned }) {
           className:
             "cursor-pointer list-none rounded-lg px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-sky-800 hover:bg-sky-500/10 dark:text-sky-100 dark:hover:bg-sky-500/10"
         },
-        'assign rider \u2192'
+        "Assign rider →"
       ),
-      h(
-        "div",
-        { className: "flex min-w-0 flex-wrap items-stretch gap-1 border-t border-sky-400/15 px-2 py-1.5 dark:border-white/10" },
-        [
-          h(TextInput, {
-            value: riderUserId,
-            onChange: (e) => setRiderUserId(e.target.value),
-            placeholder: "Rider user ID",
-            title: "User ID from admin → Riders",
-            className: "!min-h-[30px] min-w-[7rem] flex-1 !py-1 !text-xs"
-          }),
-          h(
-            Button,
-            {
-              type: "button",
-              className: "!min-h-[30px] shrink-0 !px-2.5 !py-1 !text-xs",
-              disabled: busy || !riderUserId.trim(),
-              onClick: assign
-            },
-            busy ? "…" : "Assign"
-          )
-        ]
-      )
+      h("div", { className: "space-y-2 border-t border-sky-400/15 px-2 py-2 dark:border-white/10" }, [
+        loadingRiders
+          ? h("p", { key: "load", className: "text-[11px] text-slate-500 dark:text-slate-400" }, "Loading available riders…")
+          : loadErr
+            ? h("p", { key: "err", className: "text-[11px] font-medium text-rose-600 dark:text-rose-300" }, loadErr)
+            : riders.length === 0
+              ? h("p", { key: "empty", className: "text-[11px] text-slate-500 dark:text-slate-400" }, "No couriers available yet. Ask admin to add riders.")
+              : h(
+                  "div",
+                  { key: "list", className: "max-h-40 space-y-1 overflow-y-auto pr-0.5" },
+                  riders.map((r) => {
+                    const sel = selectedRiderId === r.id;
+                    return h(
+                      "button",
+                      {
+                        key: r.id,
+                        type: "button",
+                        onClick: () => setSelectedRiderId(r.id),
+                        className: `flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition ${
+                          sel
+                            ? "border-sky-500 bg-sky-500/15 ring-1 ring-sky-400/40 dark:border-sky-400 dark:bg-sky-950/50"
+                            : "border-slate-200/80 bg-white/70 hover:border-sky-300 dark:border-white/10 dark:bg-night-900/60"
+                        }`
+                      },
+                      [
+                        h(
+                          "span",
+                          {
+                            className: `flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${
+                              sel
+                                ? "border-sky-600 bg-sky-600 text-white"
+                                : "border-slate-300 bg-white dark:border-white/20 dark:bg-night-950"
+                            }`
+                          },
+                          sel ? "✓" : ""
+                        ),
+                        h("span", { className: "min-w-0 flex-1" }, [
+                          h("span", { className: "block truncate text-xs font-semibold text-slate-900 dark:text-white" }, r.displayName || "Courier"),
+                          h(
+                            "span",
+                            { className: "block truncate text-[10px] text-slate-500 dark:text-slate-400" },
+                            [r.vehicleType || "Courier", r.activeDeliveries ? ` · ${r.activeDeliveries} active` : " · Available"].join("")
+                          )
+                        ])
+                      ]
+                    );
+                  })
+                ),
+        h(
+          Button,
+          {
+            key: "go",
+            type: "button",
+            className: "!min-h-[32px] w-full !text-xs",
+            disabled: busy || !selectedRiderId,
+            loading: busy,
+            onClick: assign
+          },
+          "Assign selected rider"
+        )
+      ])
     ]
   );
 }

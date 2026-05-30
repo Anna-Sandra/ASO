@@ -13,6 +13,7 @@ import {
   assignRiderToDelivery,
   getDeliveryBundleForOrder,
   listRiderAssignments,
+  listAvailableRiders,
   patchDeliveryDropoff,
   postRiderLocation,
   setEstimatedArrival,
@@ -27,6 +28,17 @@ import {
 } from "./delivery.schemas";
 
 const router = Router();
+
+router.get(
+  "/riders/available",
+  protect,
+  requireActiveAccount,
+  authorize("seller", "admin"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const riders = await listAvailableRiders();
+    res.json({ riders });
+  })
+);
 
 router.get(
   "/rider/assignments",
@@ -61,12 +73,25 @@ router.patch(
   validateBody(patchDeliveryStageSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const { orderId } = req.params;
-    const { stage } = req.body as { stage: DeliveryStage };
+    const body = req.body as {
+      stage: DeliveryStage;
+      proofPhotoUrl?: string;
+      receivedByName?: string;
+      customerSignatureUrl?: string;
+      deliveryNote?: string;
+    };
+    const { stage } = body;
     const d = await advanceDeliveryStage({
       orderId,
       nextStage: stage,
       actorId: req.user!.id,
-      actorRole: req.user!.role
+      actorRole: req.user!.role,
+      proof: {
+        proofPhotoUrl: body.proofPhotoUrl,
+        receivedByName: body.receivedByName,
+        customerSignatureUrl: body.customerSignatureUrl,
+        deliveryNote: body.deliveryNote
+      }
     });
     const order = await Order.findById(orderId);
     res.json({ delivery: serializeDelivery(d), orderStatus: order?.status });

@@ -29,6 +29,9 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     guestName?: string;
     guestPhone?: string;
     redeemPoints?: number;
+    dropoffLatitude?: number;
+    dropoffLongitude?: number;
+    dropoffLabel?: string;
   };
   const { items } = body;
 
@@ -182,6 +185,12 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
   );
   const processingFeeTotal = roundMoney(total - baseBeforeProcessing);
 
+  const dropoffLabel = String(body.dropoffLabel || "").trim().slice(0, 500);
+  const dropLat = body.dropoffLatitude;
+  const dropLng = body.dropoffLongitude;
+  const hasDropCoords =
+    dropLat != null && dropLng != null && Number.isFinite(Number(dropLat)) && Number.isFinite(Number(dropLng));
+
   const order = await Order.create({
     buyerId: buyerId ?? null,
     ...(guestContact ? { guestContact } : {}),
@@ -194,7 +203,16 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     processingFeeTotal,
     status: "pending_payment",
     pointsRedeemed: redeemPts,
-    firstOrderDiscountApplied: firstOrderApplied
+    firstOrderDiscountApplied: firstOrderApplied,
+    ...(hasDropCoords
+      ? {
+          dropoffLatitude: Number(dropLat),
+          dropoffLongitude: Number(dropLng),
+          dropoffLabel
+        }
+      : dropoffLabel
+        ? { dropoffLabel }
+        : {})
   });
 
   void notifySellersNewOrder(order._id.toString());

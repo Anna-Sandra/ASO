@@ -11,7 +11,13 @@ export const deliveryStageSchema = z.enum([
   "cancelled"
 ]);
 
-export const patchDeliveryStageSchema = z.object({ stage: deliveryStageSchema });
+export const patchDeliveryStageSchema = z.object({
+  stage: deliveryStageSchema,
+  proofPhotoUrl: z.string().min(1).max(2000).optional(),
+  receivedByName: z.string().max(120).optional(),
+  customerSignatureUrl: z.string().max(2000).optional(),
+  deliveryNote: z.string().max(500).optional()
+});
 export const assignRiderSchema = z.object({ riderUserId: z.string().min(1) });
 export const riderLocationSchema = z.object({ latitude: z.number(), longitude: z.number() });
 export const dropoffSchema = z.object({

@@ -5,6 +5,7 @@ import L from "leaflet";
 import {
   ArrowLeft,
   Bike,
+  Camera,
   Check,
   Crosshair,
   Headphones,
@@ -12,13 +13,14 @@ import {
   Minus,
   Phone,
   Plus,
-  Sparkles
+  Sparkles,
+  X
 } from "lucide-react";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import "leaflet/dist/leaflet.css";
-import { apiFetch } from "services/api";
+import { apiFetch, apiUploadDeliveryProof } from "services/api";
 import { openDeliverySocket } from "services/deliverySocket";
 import { formatGhc } from "utils/money";
 
@@ -66,26 +68,23 @@ const LIGHT_TILE = {
   attribution: '&copy; <a href="https://carto.com/">CARTO</a> · OSM'
 };
 
-const STAGE_LABELS = {
-  order_placed: "Order placed",
-  confirmed: "Confirmed",
-  preparing: "Preparing",
-  ready_for_pickup: "Ready for pickup",
-  picked_up: "Picked up",
-  on_the_way: "On the way",
-  delivered: "Delivered",
-  cancelled: "Cancelled"
-};
-
-const STAGE_ORDER = [
-  "order_placed",
-  "confirmed",
-  "preparing",
-  "ready_for_pickup",
-  "picked_up",
-  "on_the_way",
-  "delivered"
+const TIMELINE_STAGES = [
+  { key: "order_placed", label: "Order placed", rank: 0 },
+  { key: "confirmed", label: "Vendor accepted", rank: 1 },
+  { key: "preparing", label: "Preparing", rank: 2 },
+  { key: "ready_for_pickup", label: "Ready for pickup", rank: 3 },
+  { key: "rider_assigned", label: "Rider assigned", rank: 4, virtual: true },
+  { key: "picked_up", label: "Picked up", rank: 5 },
+  { key: "on_the_way", label: "On the way", rank: 6 },
+  { key: "delivered", label: "Delivered", rank: 7 }
 ];
+
+/** @deprecated use TIMELINE_STAGES */
+const STAGE_LABELS = Object.fromEntries(TIMELINE_STAGES.map((s) => [s.key, s.label]));
+STAGE_LABELS.cancelled = "Cancelled";
+
+/** @deprecated use TIMELINE_STAGES */
+const STAGE_ORDER = TIMELINE_STAGES.filter((s) => !s.virtual).map((s) => s.key);
 
 /** Heuristic pickup point when backend has no vendor coordinates (triangle path for the map). */
 function inferVendorApprox(riderLat, riderLng, dropLat, dropLng) {
@@ -107,6 +106,60 @@ function formatClock(at) {
   } catch {
     return "";
   }
+}
+
+function formatDeliveredAt(at) {
+  try {
+    const d = new Date(at);
+    if (!Number.isFinite(d.getTime())) return "";
+    return d.toLocaleString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  } catch {
+    return "";
+  }
+}
+
+function maskPhone(phone) {
+  const raw = String(phone || "").trim();
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 6) return raw;
+  const local = digits.length >= 10 ? digits.slice(-10) : digits;
+  return `${local.slice(0, 3)} XXX ${local.slice(-4)}`;
+}
+
+/** @param {{ currentStage?: string; assignedRiderId?: string | null }} delivery */
+function getTimelineRank(delivery) {
+  const st = delivery?.currentStage || "order_placed";
+  if (st === "cancelled") return -1;
+  const byStage = {
+    order_placed: 0,
+    confirmed: 1,
+    preparing: 2,
+    ready_for_pickup: 3,
+    picked_up: 5,
+    on_the_way: 6,
+    delivered: 7
+  };
+  if (st === "delivered") return 7;
+  if (st === "on_the_way") return 6;
+  if (st === "picked_up") return 5;
+  if (delivery?.assignedRiderId && (st === "ready_for_pickup" || (byStage[st] ?? 0) <= 3)) return 4;
+  return byStage[st] ?? 0;
+}
+
+/** @param {{ history: Array<{ stage: string; at?: string | Date; note?: string }> }} p */
+function timelineTimeFor(delivery, stageKey, history) {
+  if (stageKey === "rider_assigned") {
+    if (delivery?.riderAssignedAt) return formatClock(delivery.riderAssignedAt);
+    const hit = [...(history || [])].find((x) => String(x.note || "").toLowerCase().includes("rider assigned"));
+    return hit?.at ? formatClock(hit.at) : "";
+  }
+  return timeForStage({ history }, stageKey);
 }
 
 /** @param {{ history: Array<{ stage: string; at?: string | Date }> }} p */
@@ -229,6 +282,16 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const socketRef = useRef(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const [lastLivePulse, setLastLivePulse] = useState(0);
+  const [showDeliverProof, setShowDeliverProof] = useState(false);
+  const [proofPhotoFile, setProofPhotoFile] = useState(null);
+  const [proofPhotoPreview, setProofPhotoPreview] = useState("");
+  const [receivedByName, setReceivedByName] = useState("");
+  const [deliveryNote, setDeliveryNote] = useState("");
+  const [signatureTouched, setSignatureTouched] = useState(false);
+  /** @type {React.MutableRefObject<HTMLCanvasElement | null>} */
+  const signatureCanvasRef = useRef(null);
+  const proofInputRef = useRef(null);
+  const drawingRef = useRef(false);
 
   const loadBundle = useCallback(async () => {
     const d = await apiFetch(`/api/deliveries/order/${encodeURIComponent(orderId)}`, {
@@ -380,20 +443,116 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     };
   }, [geoSharing, mode, emitRiderCoords, postRiderCoords]);
 
-  const patchStage = async (stage) => {
+  const patchStage = async (stage, proof) => {
     setBusyStage(stage);
     try {
+      const body = { stage };
+      if (proof) {
+        if (proof.proofPhotoUrl) body.proofPhotoUrl = proof.proofPhotoUrl;
+        if (proof.receivedByName) body.receivedByName = proof.receivedByName;
+        if (proof.customerSignatureUrl) body.customerSignatureUrl = proof.customerSignatureUrl;
+        if (proof.deliveryNote) body.deliveryNote = proof.deliveryNote;
+      }
       const { delivery } = await apiFetch(`/api/deliveries/order/${encodeURIComponent(orderId)}/stage`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${accessToken}` },
-        json: { stage }
+        json: body
       });
       setBundle((prev) => (prev ? { ...prev, delivery } : prev));
+      setShowDeliverProof(false);
+      setProofPhotoFile(null);
+      setProofPhotoPreview("");
+      setReceivedByName("");
+      setDeliveryNote("");
+      setSignatureTouched(false);
     } catch (ex) {
       setGeoErr(typeof ex?.message === "string" ? ex.message : "Could not update stage");
     } finally {
       setBusyStage("");
     }
+  };
+
+  const clearSignature = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    setSignatureTouched(false);
+  };
+
+  const startSignature = (e) => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    drawingRef.current = true;
+    setSignatureTouched(true);
+    const rect = canvas.getBoundingClientRect();
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    const x = (e.clientX ?? e.touches?.[0]?.clientX ?? 0) - rect.left;
+    const y = (e.clientY ?? e.touches?.[0]?.clientY ?? 0) - rect.top;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+
+  const drawSignature = (e) => {
+    if (!drawingRef.current) return;
+    e.preventDefault();
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const x = (e.clientX ?? e.touches?.[0]?.clientX ?? 0) - rect.left;
+    const y = (e.clientY ?? e.touches?.[0]?.clientY ?? 0) - rect.top;
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const endSignature = () => {
+    drawingRef.current = false;
+  };
+
+  const submitDeliverProof = async () => {
+    if (!proofPhotoFile) {
+      setGeoErr("Add a delivery photo before completing.");
+      return;
+    }
+    setBusyStage("delivered");
+    setGeoErr("");
+    try {
+      const { url: proofPhotoUrl } = await apiUploadDeliveryProof(proofPhotoFile, accessToken);
+      let customerSignatureUrl = "";
+      if (signatureTouched && signatureCanvasRef.current) {
+        const blob = await new Promise((resolve) => signatureCanvasRef.current.toBlob(resolve, "image/png"));
+        if (blob) {
+          const sigFile = new File([blob], "signature.png", { type: "image/png" });
+          const sigRes = await apiUploadDeliveryProof(sigFile, accessToken);
+          customerSignatureUrl = sigRes.url || "";
+        }
+      }
+      await patchStage("delivered", {
+        proofPhotoUrl,
+        receivedByName: receivedByName.trim(),
+        customerSignatureUrl,
+        deliveryNote: deliveryNote.trim()
+      });
+    } catch (ex) {
+      setGeoErr(typeof ex?.message === "string" ? ex.message : "Could not complete delivery");
+      setBusyStage("");
+    }
+  };
+
+  const onProofPhotoPick = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setProofPhotoFile(file);
+    setProofPhotoPreview(URL.createObjectURL(file));
+    setGeoErr("");
   };
 
   const delivery = bundle?.delivery;
@@ -455,19 +614,15 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
 
   const orderShort = `#${String(orderId).slice(-8).toUpperCase()}`;
   const eta = delivery?.estimatedArrivalMinutes;
+  const etaLabel =
+    eta != null && Number.isFinite(eta) ? `${Math.round(eta)} min${Math.round(eta) === 1 ? "" : "s"}` : null;
   const etaBand =
     eta != null && Number.isFinite(eta)
       ? `${Math.max(5, eta - Math.min(7, eta - 5))} – ${eta + 8} min`
       : null;
   const statusLabel = delivery ? STAGE_LABELS[delivery.currentStage] || delivery.currentStage : "";
-  const curIdx =
-    typeof delivery?.currentStage === "string"
-      ? STAGE_ORDER.includes(delivery.currentStage)
-        ? STAGE_ORDER.indexOf(delivery.currentStage)
-        : delivery.currentStage === "cancelled"
-          ? -1
-          : 0
-      : 0;
+  const timelineRank = getTimelineRank(delivery);
+  const isDeliveredFinal = delivery?.currentStage === "delivered";
 
   const historySortedChrono = Array.isArray(delivery?.statusHistory)
     ? [...delivery.statusHistory].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
@@ -525,13 +680,13 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
 
   const mapHeightClass = compactMap ? "h-[200px] min-h-[180px] sm:h-[220px]" : "h-[min(52vw,420px)] min-h-[280px] sm:min-h-[320px]";
 
-  const isDeliveredFinal = delivery.currentStage === "delivered";
-
-  const timelineBody = STAGE_ORDER.map((stageKey, idx) => {
-    const active = idx === curIdx && !isDeliveredFinal && delivery.currentStage !== "cancelled";
-    const done = idx < curIdx || (isDeliveredFinal && idx <= curIdx);
+  const timelineBody = TIMELINE_STAGES.map((stageDef, idx) => {
+    const stageKey = stageDef.key;
+    const rank = stageDef.rank;
+    const active = timelineRank === rank && !isDeliveredFinal && delivery.currentStage !== "cancelled";
+    const done = timelineRank > rank || (isDeliveredFinal && rank <= timelineRank);
     const pending = !(done || active);
-    const tclock = done || active ? timeForStage({ history: historySortedChrono }, stageKey) : "";
+    const tclock = done || active ? timelineTimeFor(delivery, stageKey, historySortedChrono) : "";
 
     const dotDone = done && !active;
     const dotActive = active;
@@ -580,7 +735,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                   ? el("span", { className: compactPanels ? "h-1.5 w-1.5 rounded-full bg-white sm:h-2 sm:w-2" : "h-3 w-3 rounded-full bg-white" })
                   : null
             ),
-            idx < STAGE_ORDER.length - 1
+            idx < TIMELINE_STAGES.length - 1
               ? el("div", {
                   key: "ln",
                   className: `absolute left-1/2 ${tlLineTop} ${tlLineH} w-0.5 -translate-x-1/2 ${done ? "bg-emerald-400" : "bg-slate-200"}`
@@ -592,7 +747,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
           "div",
           { key: "txt", className: txtPad },
             [
-            el("p", { className: tlTitleCls }, STAGE_LABELS[stageKey] || stageKey),
+            el("p", { className: tlTitleCls }, stageDef.label),
             el(
               "p",
               { className: tlMetaCls },
@@ -686,12 +841,12 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 )
               ]),
               el("div", { key: "eta", className: compactMap ? "hidden h-8 w-px bg-slate-200 dark:bg-white/10 sm:block" : "hidden h-10 w-px bg-slate-200 dark:bg-white/10 sm:block" }),
-              etaBand
+              etaBand || etaLabel
                 ? el("div", { key: "et", className: "" }, [
                     el(
                       "p",
                       { className: compactMap ? "text-[9px] font-bold uppercase tracking-wider text-slate-400" : "text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400" },
-                      "Est. arrival"
+                      "ETA"
                     ),
                     el(
                       "p",
@@ -700,7 +855,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                           ? "rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-200/70 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900/60"
                           : "rounded-full bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200/70 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900/60"
                       },
-                      etaBand
+                      etaLabel || etaBand
                     )
                   ])
                 : el("div", { key: "et-ph" }, [
@@ -865,7 +1020,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 {
                   className: "font-display text-[11px] font-bold uppercase tracking-wide text-slate-900 dark:text-white"
                 },
-                "Delivery progress"
+                "Delivery timeline"
               ),
               el(
                 "span",
@@ -933,26 +1088,53 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                         el(
                           "p",
                           { className: "truncate font-display text-xs font-bold text-slate-900 dark:text-white" },
-                          rider.displayName || "Courier"
+                          `Rider: ${rider.displayName || "Courier"}`
                         ),
-                        el(
-                          "p",
-                          { className: "mt-0.5 text-[10px] text-slate-500" },
-                          rider.vehicleType ? `${String(rider.vehicleType)} · courier` : "Delivery partner"
-                        ),
+                        rider.vehicleType
+                          ? el(
+                              "p",
+                              { className: "mt-0.5 text-[10px] text-slate-500 dark:text-slate-400" },
+                              `Vehicle: ${String(rider.vehicleType)}`
+                            )
+                          : null,
+                        etaLabel && !isDeliveredFinal
+                          ? el("p", { key: "eta", className: "mt-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300" }, `ETA: ${etaLabel}`)
+                          : null,
                         riderPhoneDigits
+                          ? el(
+                              "p",
+                              {
+                                key: "tel",
+                                className: "mt-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300"
+                              },
+                              `Phone: ${mode === "buyer" ? maskPhone(rider.phone) : rider.phone}`
+                            )
+                          : null,
+                        riderPhoneDigits && mode === "buyer"
                           ? el(
                               "a",
                               {
-                                key: "tel",
+                                key: "tel-link",
                                 href: `tel:${riderPhoneDigits}`,
                                 className:
                                   "mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400"
                               },
                               el(Phone, { className: "h-3 w-3 shrink-0" }),
-                              rider.phone
+                              "Call rider"
                             )
-                          : null
+                          : riderPhoneDigits
+                            ? el(
+                                "a",
+                                {
+                                  key: "tel",
+                                  href: `tel:${riderPhoneDigits}`,
+                                  className:
+                                    "mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400"
+                                },
+                                el(Phone, { className: "h-3 w-3 shrink-0" }),
+                                rider.phone
+                              )
+                            : null
                       ]),
                       riderPhoneDigits
                         ? el(
@@ -970,6 +1152,58 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                     ].filter(Boolean)
                   )
                 ]
+              ),
+
+            isDeliveredFinal &&
+              (delivery.proofPhotoUrl || delivery.receivedByName || delivery.deliveryNote || delivery.customerSignatureUrl) &&
+              el(
+                "div",
+                {
+                  key: "proof-card",
+                  className:
+                    "rounded-lg border border-emerald-200/80 bg-emerald-50/60 p-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/25"
+                },
+                [
+                  el("p", { className: "text-[9px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-200" }, "Proof of delivery"),
+                  delivery.deliveredAt
+                    ? el("p", { key: "at", className: "mt-1 text-[11px] text-slate-700 dark:text-slate-200" }, [
+                        el("span", { className: "font-semibold" }, "Delivered at: "),
+                        formatDeliveredAt(delivery.deliveredAt)
+                      ])
+                    : null,
+                  delivery.proofPhotoUrl
+                    ? el("div", { key: "photo", className: "mt-2" }, [
+                        el("p", { className: "text-[10px] font-semibold text-slate-600 dark:text-slate-300" }, "Proof:"),
+                        el("img", {
+                          src: delivery.proofPhotoUrl,
+                          alt: "Delivery proof",
+                          className: "mt-1 max-h-36 w-full rounded-lg border border-white/80 object-cover shadow-sm dark:border-white/10"
+                        })
+                      ])
+                    : null,
+                  delivery.receivedByName
+                    ? el("p", { key: "recv", className: "mt-2 text-[11px] text-slate-700 dark:text-slate-200" }, [
+                        el("span", { className: "font-semibold" }, "Received by: "),
+                        delivery.receivedByName
+                      ])
+                    : null,
+                  delivery.customerSignatureUrl
+                    ? el("div", { key: "sig", className: "mt-2" }, [
+                        el("p", { className: "text-[10px] font-semibold text-slate-600 dark:text-slate-300" }, "Signature:"),
+                        el("img", {
+                          src: delivery.customerSignatureUrl,
+                          alt: "Customer signature",
+                          className: "mt-1 max-h-20 w-full rounded-lg border border-white/80 bg-white object-contain dark:border-white/10"
+                        })
+                      ])
+                    : null,
+                  delivery.deliveryNote
+                    ? el("p", { key: "note", className: "mt-2 text-[11px] text-slate-700 dark:text-slate-200" }, [
+                        el("span", { className: "font-semibold" }, "Note: "),
+                        delivery.deliveryNote
+                      ])
+                    : null
+                ].filter(Boolean)
               ),
 
             mode === "buyer" &&
@@ -1030,38 +1264,146 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 },
                 [
                   el("p", { className: "text-xs font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200" }, "Rider controls"),
-                  el("div", { className: "mt-3 flex flex-wrap gap-2" }, [
-                    ...riderNextActions().map((a) =>
-                      el(
-                        "button",
-                        {
-                          key: a.stage,
-                          type: "button",
-                          disabled: Boolean(busyStage),
-                          className:
-                            "rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
-                          onClick: () => patchStage(a.stage)
-                        },
-                        busyStage === a.stage ? "Saving…" : a.label
-                      )
-                    ),
-                    el(
-                      "button",
-                      {
-                        type: "button",
-                        className: `rounded-xl border px-4 py-2.5 text-sm font-bold shadow-sm transition ${
-                          geoSharing
-                            ? "border-emerald-600 bg-emerald-600 text-white"
-                            : "border-slate-200 bg-white text-slate-800 dark:border-white/15 dark:bg-night-950 dark:text-slate-100"
-                        }`,
-                        onClick: () => {
-                          setGeoErr("");
-                          setGeoSharing((x) => !x);
-                        }
-                      },
-                      geoSharing ? "Stop GPS share" : "Share my GPS"
-                    )
-                  ]),
+                  !showDeliverProof
+                    ? el("div", { key: "acts", className: "mt-3 flex flex-wrap gap-2" }, [
+                        ...riderNextActions().map((a) =>
+                          el(
+                            "button",
+                            {
+                              key: a.stage,
+                              type: "button",
+                              disabled: Boolean(busyStage),
+                              className:
+                                "rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
+                              onClick: () => (a.stage === "delivered" ? setShowDeliverProof(true) : patchStage(a.stage))
+                            },
+                            busyStage === a.stage ? "Saving…" : a.label
+                          )
+                        ),
+                        el(
+                          "button",
+                          {
+                            type: "button",
+                            className: `rounded-xl border px-4 py-2.5 text-sm font-bold shadow-sm transition ${
+                              geoSharing
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : "border-slate-200 bg-white text-slate-800 dark:border-white/15 dark:bg-night-950 dark:text-slate-100"
+                            }`,
+                            onClick: () => {
+                              setGeoErr("");
+                              setGeoSharing((x) => !x);
+                            }
+                          },
+                          geoSharing ? "Stop GPS share" : "Share my GPS"
+                        )
+                      ])
+                    : el("div", { key: "proof-form", className: "mt-3 space-y-3" }, [
+                        el("p", { className: "text-xs font-semibold text-amber-950 dark:text-amber-100" }, "Proof of delivery (required)"),
+                        el("input", {
+                          key: "file",
+                          ref: proofInputRef,
+                          type: "file",
+                          accept: "image/jpeg,image/png,image/webp",
+                          className: "hidden",
+                          onChange: onProofPhotoPick
+                        }),
+                        el(
+                          "button",
+                          {
+                            key: "pick",
+                            type: "button",
+                            className:
+                              "flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-sky-300 bg-white px-3 py-3 text-sm font-semibold text-sky-700 dark:border-sky-700 dark:bg-night-950 dark:text-sky-200",
+                            onClick: () => proofInputRef.current?.click()
+                          },
+                          [el(Camera, { className: "h-4 w-4" }), proofPhotoFile ? "Change photo" : "Take / upload delivery photo"]
+                        ),
+                        proofPhotoPreview
+                          ? el("img", {
+                              key: "prev",
+                              src: proofPhotoPreview,
+                              alt: "Preview",
+                              className: "max-h-32 w-full rounded-lg object-cover ring-1 ring-slate-200 dark:ring-white/10"
+                            })
+                          : null,
+                        el("label", { key: "recv-l", className: "block text-[11px] font-semibold text-slate-700 dark:text-slate-200" }, [
+                          "Received by (optional)",
+                          el("input", {
+                            type: "text",
+                            value: receivedByName,
+                            onChange: (e) => setReceivedByName(e.target.value),
+                            placeholder: "Customer name",
+                            maxLength: 120,
+                            className:
+                              "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-night-950 dark:text-white"
+                          })
+                        ]),
+                        el("div", { key: "sig-wrap", className: "space-y-1" }, [
+                          el("p", { className: "text-[11px] font-semibold text-slate-700 dark:text-slate-200" }, "Customer signature (optional)"),
+                          el("canvas", {
+                            ref: signatureCanvasRef,
+                            width: 320,
+                            height: 96,
+                            className:
+                              "w-full touch-none rounded-lg border border-slate-200 bg-white dark:border-white/15 dark:bg-night-950",
+                            onMouseDown: startSignature,
+                            onMouseMove: drawSignature,
+                            onMouseUp: endSignature,
+                            onMouseLeave: endSignature,
+                            onTouchStart: startSignature,
+                            onTouchMove: drawSignature,
+                            onTouchEnd: endSignature
+                          }),
+                          el(
+                            "button",
+                            {
+                              type: "button",
+                              className: "text-[10px] font-semibold text-sky-600 dark:text-sky-400",
+                              onClick: clearSignature
+                            },
+                            "Clear signature"
+                          )
+                        ]),
+                        el("label", { key: "note-l", className: "block text-[11px] font-semibold text-slate-700 dark:text-slate-200" }, [
+                          "Delivery note (optional)",
+                          el("textarea", {
+                            value: deliveryNote,
+                            onChange: (e) => setDeliveryNote(e.target.value),
+                            placeholder: "e.g. Left with hostel porter",
+                            maxLength: 500,
+                            rows: 2,
+                            className:
+                              "mt-1 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-night-950 dark:text-white"
+                          })
+                        ]),
+                        el("div", { key: "btns", className: "flex flex-wrap gap-2" }, [
+                          el(
+                            "button",
+                            {
+                              type: "button",
+                              disabled: Boolean(busyStage),
+                              className:
+                                "flex-1 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
+                              onClick: submitDeliverProof
+                            },
+                            busyStage === "delivered" ? "Submitting…" : "Complete delivery"
+                          ),
+                          el(
+                            "button",
+                            {
+                              type: "button",
+                              disabled: Boolean(busyStage),
+                              className:
+                                "rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 dark:border-white/15 dark:bg-night-950 dark:text-slate-200",
+                              onClick: () => {
+                                setShowDeliverProof(false);
+                                setGeoErr("");
+                              }
+                            },
+                            "Cancel"
+                          )
+                        ])
+                      ]),
                   geoErr ? el("p", { className: "mt-2 text-xs font-medium text-rose-700 dark:text-rose-300" }, geoErr) : null
                 ]
               )

@@ -18,7 +18,21 @@ export const checkoutSchema = z.object({
   guestName: z.string().trim().min(2).max(120).optional(),
   guestPhone: z.string().trim().min(8).max(24).optional(),
   /** Loyalty: redeem points (100 pts = GHS 1 off merchandise). Logged-in buyers only. */
-  redeemPoints: z.coerce.number().int().min(0).max(1_000_000).optional().default(0)
+  redeemPoints: z.coerce.number().int().min(0).max(1_000_000).optional().default(0),
+  /** Delivery drop-off for live map tracking (optional but recommended). */
+  dropoffLatitude: z.coerce.number().min(-90).max(90).optional(),
+  dropoffLongitude: z.coerce.number().min(-180).max(180).optional(),
+  dropoffLabel: z.string().trim().max(500).optional()
+}).superRefine((data, ctx) => {
+  const hasLat = data.dropoffLatitude != null;
+  const hasLng = data.dropoffLongitude != null;
+  if (hasLat !== hasLng) {
+    ctx.addIssue({
+      code: "custom",
+      message: "dropoffLatitude and dropoffLongitude must be provided together",
+      path: ["dropoffLatitude"]
+    });
+  }
 });
 
 export const orderStatusUpdateSchema = z.object({

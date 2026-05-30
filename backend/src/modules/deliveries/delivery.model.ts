@@ -42,6 +42,14 @@ export interface DeliveryDoc {
   riderLocationUpdatedAt?: Date | null;
   /** Optional ETA in minutes riders/admins may set */
   estimatedArrivalMinutes?: number | null;
+  /** When a vendor/admin assigned the courier */
+  riderAssignedAt?: Date | null;
+  /** Proof-of-delivery captured when rider marks delivered */
+  proofPhotoUrl?: string | null;
+  customerSignatureUrl?: string | null;
+  receivedByName?: string | null;
+  deliveryNote?: string | null;
+  deliveredAt?: Date | null;
   statusHistory: DeliveryHistoryEntry[];
   createdAt: Date;
   updatedAt: Date;
@@ -69,6 +77,12 @@ const deliverySchema = new Schema<DeliveryDoc>(
     riderLongitude: { type: Number, default: null },
     riderLocationUpdatedAt: { type: Date, default: null },
     estimatedArrivalMinutes: { type: Number, default: null, min: 0, max: 10080 },
+    riderAssignedAt: { type: Date, default: null },
+    proofPhotoUrl: { type: String, default: "", maxlength: 2000 },
+    customerSignatureUrl: { type: String, default: "", maxlength: 2000 },
+    receivedByName: { type: String, default: "", maxlength: 120 },
+    deliveryNote: { type: String, default: "", maxlength: 500 },
+    deliveredAt: { type: Date, default: null },
     statusHistory: { type: [historySchema], default: [] }
   },
   { timestamps: true }

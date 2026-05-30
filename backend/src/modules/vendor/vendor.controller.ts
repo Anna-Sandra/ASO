@@ -19,6 +19,7 @@ import { notifyBuyerOrderStatus, notifyOrderCancelledForCounterparties, notifyOr
 import type { VendorAnalyticsEventType } from "./vendorAnalyticsEvent.model";
 import { VendorAnalyticsEvent } from "./vendorAnalyticsEvent.model";
 import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
+import { sendOrderDeliveredEmails } from "../../utils/orderDeliveredEmail";
 
 const PAID_ORDER_STATUSES = ["paid", "processing", "sent_for_delivery", "delivered"] as const;
 
@@ -119,6 +120,10 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
   await order.save();
 
   await mirrorOrderStatusToDelivery(order);
+
+  if (status === "delivered") {
+    void sendOrderDeliveredEmails(order);
+  }
 
   if (status === "cancelled") {
     void notifyOrderCancelledForCounterparties(orderId, "seller", sid);

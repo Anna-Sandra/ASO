@@ -13,6 +13,8 @@ import {
   Menu,
   MessageSquare,
   Minus,
+  Crosshair,
+  MapPin,
   Navigation,
   Package,
   Plus,
@@ -2543,6 +2545,11 @@ export function CheckoutPage() {
   const [err, setErr] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
+  const [dropoffLabel, setDropoffLabel] = useState("");
+  const [dropoffLat, setDropoffLat] = useState(null);
+  const [dropoffLng, setDropoffLng] = useState(null);
+  const [locatingDropoff, setLocatingDropoff] = useState(false);
+  const [dropoffHint, setDropoffHint] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
   const hasBlockedLine = items.some((p) => isOfflineQuoteCategory(p));
 
@@ -2556,6 +2563,28 @@ export function CheckoutPage() {
         )
       : null;
   const totalStr = formatGhc(breakdown ? breakdown.total : subtotal);
+
+  const useMyDropoffLocation = () => {
+    setDropoffHint("");
+    if (!navigator.geolocation) {
+      setDropoffHint("Location is not available in this browser.");
+      return;
+    }
+    setLocatingDropoff(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setDropoffLat(pos.coords.latitude);
+        setDropoffLng(pos.coords.longitude);
+        setLocatingDropoff(false);
+        setDropoffHint("Location saved — riders can find you on the live map.");
+      },
+      () => {
+        setLocatingDropoff(false);
+        setDropoffHint("Could not get location. Allow GPS or enter your address below.");
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  };
 
   /**
    * Paystack guide flow: backend creates the session; frontend POSTs checkout then `{ email, amount, orderId[, guestSecret] }`.
@@ -2588,6 +2617,15 @@ export function CheckoutPage() {
         return;
       }
     }
+    const dropLabel = String(dropoffLabel || "").trim();
+    if (!dropLabel) {
+      setErr("Enter where we should deliver (hostel, hall, landmark, or address).");
+      return;
+    }
+    if (dropoffLat == null || dropoffLng == null) {
+      setErr('Tap "Use my location" so couriers can find you on the live delivery map.');
+      return;
+    }
     setLoading(true);
     try {
       const checkoutBody = {
@@ -2596,6 +2634,9 @@ export function CheckoutPage() {
           quantity: p.qty,
           customization: supportsCartCustomizationNotes(p) ? String(p.customization || "").trim().slice(0, 280) : ""
         })),
+        dropoffLabel: dropLabel,
+        dropoffLatitude: dropoffLat,
+        dropoffLongitude: dropoffLng,
         ...(!accessToken
           ? {
               guestEmail: String(guestEmail || "").trim(),
@@ -2796,6 +2837,44 @@ export function CheckoutPage() {
           )
         ])
       : null,
+
+    h("div", { key: "dropoff", className: "mt-3 space-y-2 rounded-xl border border-sky-500/25 bg-sky-500/5 p-3 dark:border-sky-400/20 dark:bg-sky-950/20" }, [
+      h("p", { key: "dlab", className: "flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-sky-800 dark:text-sky-200" }, [
+        h(MapPin, { key: "ic", className: "h-3.5 w-3.5", "aria-hidden": true }),
+        "Delivery drop-off"
+      ]),
+      h(Field, { key: "addr", label: "Where should we deliver?" }, h(TextInput, {
+        value: dropoffLabel,
+        onChange: (e) => setDropoffLabel(e.target.value),
+        placeholder: "e.g. East Legon, Pent Hostel, Room 12"
+      })),
+      h(
+        Button,
+        {
+          key: "loc",
+          type: "button",
+          variant: "ghost",
+          className: "!w-full !justify-center !rounded-xl !border !border-sky-400/40 !text-xs !font-semibold",
+          loading: locatingDropoff,
+          onClick: useMyDropoffLocation
+        },
+        [h(Crosshair, { key: "ic", className: "h-4 w-4" }), locatingDropoff ? "Getting location…" : "Use my location"]
+      ),
+      dropoffLat != null && dropoffLng != null
+        ? h(
+            "p",
+            { key: "ok", className: "text-[11px] font-medium text-emerald-700 dark:text-emerald-300" },
+            "GPS pinned — shown on your live delivery map."
+          )
+        : null,
+      dropoffHint
+        ? h("p", { key: "hint", className: "text-[11px] text-amber-800 dark:text-amber-200" }, dropoffHint)
+        : h(
+            "p",
+            { key: "sub", className: "text-[11px] text-slate-500 dark:text-slate-400" },
+            "Required for courier tracking. Your rider sees this pin after payment."
+          )
+    ]),
 
     err ? h(InlineNotice, { key: "err", variant: "error", className: "mt-3", onDismiss: () => setErr("") }, err) : null,
 
