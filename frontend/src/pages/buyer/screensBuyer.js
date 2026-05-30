@@ -2092,6 +2092,7 @@ function CategoryRow({ active, onSelect }) {
     fashion_accessories: Shirt,
     electronics_gadgets: Cpu,
     beauty_personal_care: Sparkles,
+    babies_infants: Baby,
     services: Wrench,
     books_academic: BookOpen,
     groceries_essentials: ShoppingBasket
@@ -2175,6 +2176,7 @@ function StorefrontCategoryChips({ active, onSelect }) {
     fashion_accessories: Shirt,
     electronics_gadgets: Cpu,
     beauty_personal_care: Sparkles,
+    babies_infants: Baby,
     services: Wrench,
     books_academic: BookOpen,
     groceries_essentials: ShoppingBasket
@@ -3128,6 +3130,7 @@ export function SavedProductsPage() {
 }
 
 export function ShopPage() {
+  const [searchParams] = useSearchParams();
   const [cat, setCat] = useState("all");
   const [fil, setFil] = useState("all");
   const [cartOpen, setCartOpen] = useState(false);
@@ -3147,6 +3150,12 @@ export function ShopPage() {
   const { accessToken } = useAuth();
   const { isSaved, toggleSaved } = useSavedProducts();
   const nav = useNavigate();
+
+  useEffect(() => {
+    const raw = (searchParams.get("cat") || "").trim().toLowerCase();
+    if (!raw || raw === "all") return;
+    if (CATEGORIES.some((c) => c.id === raw)) setCat(raw);
+  }, [searchParams]);
 
   const tryAddToCart = (p) => {
     if (isOfflineQuoteCategory(p) || (p.stock ?? 0) <= 0) return;

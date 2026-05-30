@@ -104,7 +104,7 @@ export const updateProductSchema = createBody
   });
 
 export const listProductsQuerySchema = z.object({
-  category: categoryEnum.optional(),
+  category: categoryField.optional(),
   tag: z.string().max(32).optional(),
   /** Marketplace facet under the listing `category`. */
   subcategory: z.string().max(64).optional(),
@@ -127,7 +127,7 @@ export const listProductsQuerySchema = z.object({
 export const smartSearchBodySchema = z
   .object({
     q: z.string().trim().min(1).max(200),
-    category: categoryEnum.optional(),
+    category: categoryField.optional(),
     tag: z.string().max(32).optional(),
     subcategory: z.string().max(64).optional(),
     minPrice: z.coerce.number().min(0).optional(),

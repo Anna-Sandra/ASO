@@ -39,7 +39,7 @@ async function migrateLegacyProductCategories() {
       const normalized = normalizeProductCategory(raw);
       const next = normalized ?? "groceries_essentials";
       if (String(raw) !== next) {
-        await col.updateOne({ _id: (doc as { _id: unknown })._id }, { $set: { category: next } });
+        await col.updateOne({ _id: doc._id }, { $set: { category: next } });
       }
     }
   };
