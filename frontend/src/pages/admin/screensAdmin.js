@@ -1718,6 +1718,25 @@ export function AdminPage() {
     await patchUser(u.id, { sellerVerified: verified }, tab === "sellers" ? loadSellers : loadUsers);
   };
 
+  const onSyncVendorSellerRole = async (row) => {
+    const ok = await confirm(
+      `Apply seller role to the account for ${row.email}? They must use this same email when signing in.`,
+      { title: "Apply seller role?", confirmLabel: "Apply seller role" }
+    );
+    if (!ok) return;
+    try {
+      const d = await apiFetch(`/api/admin/vendor-applications/${row.id}/sync-seller-role`, {
+        method: "POST",
+        ...auth
+      });
+      toast(d?.message || "Seller role applied.", { variant: "success" });
+      await loadVendorApps();
+      await loadUsers();
+    } catch (ex) {
+      await alert(apiErrorMessage(ex, "Could not apply seller role."), { variant: "error" });
+    }
+  };
+
   const onVendorAppDecision = async (row, action) => {
     if (action === "approve") {
       const ok = await confirm(`Approve "${row.shopName}" and grant this user seller access?`, {
@@ -1738,10 +1757,14 @@ export function AdminPage() {
         ...auth,
         json: { action, adminNote: "" }
       });
-      toast(action === "approve" ? "Vendor approved. User should refresh the session or sign in again." : "Application rejected.", {
-        variant: "success"
-      });
+      toast(
+        action === "approve"
+          ? "Vendor approved. Existing shoppers are promoted to seller automatically after the API redeploys; refresh Users to confirm."
+          : "Application rejected.",
+        { variant: "success" }
+      );
       await loadVendorApps();
+      await loadUsers();
       setVendorVerificationApp(null);
     } catch (ex) {
       await alert(apiErrorMessage(ex, "Update failed"), { variant: "error" });
@@ -3458,11 +3481,23 @@ export function AdminPage() {
                           detail("Phone", row.phone ? `${row.phone}${row.altPhone ? ` · Alt ${row.altPhone}` : ""}` : "—"),
                           detail("Verification", row.verificationDocUrl ? "File uploaded" : "None uploaded"),
                           row.reviewedAt ? detail("Reviewed on", fmtDateTime(row.reviewedAt)) : null,
-                          row.adminNote ? detail("Admin note", row.adminNote) : null
+                          row.adminNote ? detail("Admin note", row.adminNote) : null,
+                          row.accountRole ? detail("Account role", row.accountRole) : null
                         ].filter(Boolean)
                       )
                     ]
                   ),
+                  row.sellerRolePending
+                    ? h(
+                        "p",
+                        {
+                          key: "pending-role",
+                          className:
+                            "mt-3 rounded-xl border border-amber-300/60 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-950/30 dark:text-amber-100"
+                        },
+                        "Approved, but this email is still a buyer in Users. Apply seller role so they can open the vendor dashboard (same email as on the form)."
+                      )
+                    : null,
                   h("div", { key: "actions", className: "mt-4 flex flex-wrap gap-2" }, [
                     h(
                       Button,
@@ -3508,6 +3543,17 @@ export function AdminPage() {
                             [h(XCircle, { key: "i", className: "h-4 w-4" }), "Reject"]
                           )
                         ]
+                      : null,
+                    row.sellerRolePending
+                      ? h(
+                          Button,
+                          {
+                            key: "sync",
+                            className: "!min-h-[36px] !bg-amber-600 !px-3 !text-xs hover:!bg-amber-500",
+                            onClick: () => onSyncVendorSellerRole(row)
+                          },
+                          "Apply seller role"
+                        )
                       : null,
                     row.status !== "pending" && isSuperAdmin
                       ? h(

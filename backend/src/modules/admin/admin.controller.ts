@@ -14,7 +14,15 @@ import {
 } from "../../config/env";
 import { createOpaqueToken, sha256 } from "../auth/jwt";
 import { sendEmail } from "../../utils/mailer";
-import { buildVendorActivationEmailHtml, VENDOR_ACTIVATION_TTL_MS } from "../../utils/vendorActivationEmail";
+import {
+  buildVendorActivationEmailHtml,
+  buildVendorApprovedExistingAccountEmailHtml,
+  VENDOR_ACTIVATION_TTL_MS
+} from "../../utils/vendorActivationEmail";
+import {
+  promoteBuyerToSellerFromVendorApplication,
+  reconcileApprovedVendorApplication
+} from "../../utils/promoteVendorFromApplication";
 import { EMAIL_TEMPLATE_PREVIEWS } from "../../utils/emailPreviewCatalog";
 import { roundMoney, splitLineGross } from "../../utils/commission";
 import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type RiderApplicationStatus } from "../auth/user.model";
@@ -152,8 +160,20 @@ function userContactKey(u: { _id: mongoose.Types.ObjectId; email?: string; phone
  * If the DB has duplicate user contacts (e.g. legacy data before a unique index), the admin
  * list would show the same name/email twice. Keep the oldest `createdAt` for each key.
  */
+const USER_ROLE_DEDUPE_PRIORITY: Record<string, number> = {
+  admin: 4,
+  seller: 3,
+  rider: 2,
+  buyer: 1
+};
+
+function userRoleDedupePriority(role: unknown): number {
+  return USER_ROLE_DEDUPE_PRIORITY[normalizeUserRole(role)] ?? 0;
+}
+
+/** Prefer seller/admin over duplicate buyer rows; otherwise keep oldest `createdAt`. */
 function dedupeUserDocsByContactOldestWins<
-  T extends { _id: mongoose.Types.ObjectId; email?: string; phone?: string; createdAt?: Date }
+  T extends { _id: mongoose.Types.ObjectId; email?: string; phone?: string; createdAt?: Date; role?: unknown }
 >(rows: T[]): T[] {
   const byKey = new Map<string, T>();
   for (const u of rows) {
@@ -163,6 +183,13 @@ function dedupeUserDocsByContactOldestWins<
       byKey.set(k, u);
       continue;
     }
+    const pCur = userRoleDedupePriority(cur.role);
+    const pU = userRoleDedupePriority(u.role);
+    if (pU > pCur) {
+      byKey.set(k, u);
+      continue;
+    }
+    if (pU < pCur) continue;
     const tCur = new Date(cur.createdAt || 0).getTime();
     const tU = new Date(u.createdAt || 0).getTime();
     if (tU < tCur) byKey.set(k, u);
@@ -364,7 +391,13 @@ export const adminDashboard = asyncHandler(async (_req: Request, res: Response) 
   });
 });
 
+async function reconcileAllApprovedVendorApplications(): Promise<void> {
+  const approved = await VendorApplication.find({ status: "approved" }).select("_id").lean();
+  await Promise.all(approved.map((a) => reconcileApprovedVendorApplication(a._id)));
+}
+
 export const listAdminUsers = asyncHandler(async (req: Request, res: Response) => {
+  await reconcileAllApprovedVendorApplications();
   const q = adminUsersQuerySchema.parse(req.query);
   const skip = (q.page - 1) * q.limit;
   const filter: Record<string, unknown> = {};
@@ -2051,20 +2084,47 @@ export const listVendorApplications = asyncHandler(async (req: Request, res: Res
     VendorApplication.find(filter).sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
     VendorApplication.countDocuments(filter)
   ]);
+
+  await Promise.all(
+    rows
+      .filter((r) => r.status === "approved")
+      .map((r) => reconcileApprovedVendorApplication(r._id))
+  );
+
   const knownUserIds = rows
     .map((r) => (r.userId != null ? String((r.userId as mongoose.Types.ObjectId).toString()) : null))
     .filter((id): id is string => Boolean(id));
   const userIds = [...new Set(knownUserIds)];
-  const users =
+  const appEmails = [
+    ...new Set(
+      rows
+        .map((r) => (typeof r.email === "string" ? r.email.trim().toLowerCase() : ""))
+        .filter(Boolean)
+    )
+  ];
+  const [usersById, usersByEmail] = await Promise.all([
     userIds.length > 0
-      ? await User.find({ _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } })
-          .select("displayName email")
+      ? User.find({ _id: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } })
+          .select("displayName email role")
           .lean()
-      : [];
-  const byId = new Map(users.map((u) => [u._id.toString(), u]));
+      : Promise.resolve([]),
+    appEmails.length > 0
+      ? User.find({ email: { $in: appEmails } })
+          .select("displayName email role")
+          .lean()
+      : Promise.resolve([])
+  ]);
+  const byId = new Map(usersById.map((u) => [u._id.toString(), u]));
+  const byEmail = new Map(
+    usersByEmail.map((u) => [(u.email || "").trim().toLowerCase(), u] as const)
+  );
   res.json({
     applications: rows.map((r) => {
       const uid = r.userId != null ? String((r.userId as mongoose.Types.ObjectId).toString()) : null;
+      const emailNorm = (r.email || "").trim().toLowerCase();
+      const linked = (emailNorm ? byEmail.get(emailNorm) : undefined) ?? (uid ? byId.get(uid) : undefined);
+      const accountRole = linked ? normalizeUserRole((linked as { role?: unknown }).role) : null;
+      const sellerRolePending = r.status === "approved" && accountRole != null && accountRole !== "seller";
       return {
       id: r._id.toString(),
       userId: uid,
@@ -2084,7 +2144,13 @@ export const listVendorApplications = asyncHandler(async (req: Request, res: Res
       adminNote: r.adminNote,
       createdAt: r.createdAt,
       reviewedAt: r.reviewedAt,
-      accountDisplayName: uid ? byId.get(uid)?.displayName || "" : "(guest — activates via email link)"
+      accountDisplayName: linked
+        ? (linked as { displayName?: string }).displayName || ""
+        : uid
+          ? byId.get(uid)?.displayName || ""
+          : "(guest — activates via email link)",
+      accountRole,
+      sellerRolePending
     };
     }),
     total,
@@ -2137,17 +2203,42 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
     }
   }
 
-  const activationToken = createOpaqueToken();
-  const activationExpiry = new Date(Date.now() + VENDOR_ACTIVATION_TTL_MS);
-
   app.status = "approved";
   app.adminNote = body.adminNote || "";
   app.reviewedAt = new Date();
+  await app.save();
+
+  const appOrigin = env.APP_ORIGIN.replace(/\/$/, "");
+  const promoteResult = await promoteBuyerToSellerFromVendorApplication(app);
+
+  if (promoteResult.kind === "promoted" || promoteResult.kind === "already_seller") {
+    const signInUrl = `${appOrigin}/login`;
+    await sendEmail(
+      app.email,
+      "Your SHOPIQGH vendor application has been approved!",
+      buildVendorApprovedExistingAccountEmailHtml({
+        fullName: app.fullName,
+        shopName: app.shopName,
+        signInUrl
+      }),
+      { category: "vendor_approval" }
+    );
+    await recordAdminAuditEvent({
+      actorId: req.user?.id,
+      action: "application.approve",
+      title: `Vendor approved — ${app.shopName.slice(0, 60)}`,
+      detail: `${app.email} · seller role applied (existing account)`
+    });
+    res.json({ ok: true, status: "approved", activationEmailSent: false, sellerRoleApplied: true });
+    return;
+  }
+
+  const activationToken = createOpaqueToken();
+  const activationExpiry = new Date(Date.now() + VENDOR_ACTIVATION_TTL_MS);
   app.activationTokenHash = sha256(activationToken);
   app.activationExpiry = activationExpiry;
   await app.save();
 
-  const appOrigin = env.APP_ORIGIN.replace(/\/$/, "");
   const activationUrl = `${appOrigin}/activate-account?token=${encodeURIComponent(activationToken)}&type=vendor`;
 
   await sendEmail(
@@ -2167,7 +2258,37 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
     title: `Vendor approved — ${app.shopName.slice(0, 60)}`,
     detail: `${app.email} · activation email sent`
   });
-  res.json({ ok: true, status: "approved", activationEmailSent: true });
+  res.json({ ok: true, status: "approved", activationEmailSent: true, sellerRoleApplied: false });
+});
+
+/** Fixes approved applications whose shopper account was never promoted (legacy activation-only flow). */
+export const syncVendorApplicationSellerRole = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid application id");
+  const app = await VendorApplication.findById(id).lean();
+  if (!app) throw new HttpError(404, "Application not found");
+  if (app.status !== "approved") {
+    throw new HttpError(400, "Only approved applications can be synced to a seller account.");
+  }
+
+  const result = await reconcileApprovedVendorApplication(id);
+  if (!result) throw new HttpError(404, "Application not found");
+
+  if (result.kind === "promoted") {
+    res.json({ ok: true, sellerRoleApplied: true, message: "Seller role applied. Ask them to sign out and sign in again." });
+    return;
+  }
+  if (result.kind === "already_seller") {
+    res.json({ ok: true, sellerRoleApplied: true, message: "This account is already a seller." });
+    return;
+  }
+  if (result.kind === "blocked") {
+    throw new HttpError(400, "This account type cannot become a vendor.");
+  }
+  throw new HttpError(
+    400,
+    "No shopper account matches this application email. Ask them to register with the same email they used on the form, or use the activation link from the approval email."
+  );
 });
 
 export const listCourierApplications = asyncHandler(async (req: Request, res: Response) => {

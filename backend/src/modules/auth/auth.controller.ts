@@ -27,7 +27,7 @@ import {
   initialVendorSubscriptionOnApproval,
   vendorBillingForUserId
 } from "../vendorSubscription/vendorSubscription.service";
-import { buildVendorActivationEmailHtml, VENDOR_ACTIVATION_TTL_MS } from "../../utils/vendorActivationEmail";
+import { promoteBuyerToSellerFromVendorApplication } from "../../utils/promoteVendorFromApplication";
 import { Token } from "./token.model";
 import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type UserRole, type VendorProfileStatus, type RiderApplicationStatus } from "./user.model";
 import {
@@ -893,31 +893,11 @@ export const activateAccount = asyncHandler(async (req: Request, res: Response) 
   }
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-  const settings = await getOrCreateSettings();
-  const subInit = initialVendorSubscriptionOnApproval(settings);
-  const displayName = (user?.displayName || "").trim() || app.fullName.trim();
+  const promoteResult = await promoteBuyerToSellerFromVendorApplication(app, { passwordHash });
 
-  if (user && normalizeUserRole(user.role) === "buyer") {
-    await User.updateOne(
-      { _id: user._id },
-      {
-        $set: {
-          passwordHash,
-          role: "seller",
-          sellerVerified: true,
-          vendorStatus: "approved",
-          businessName: app.shopName,
-          phone: app.phone,
-          displayName,
-          emailVerifiedAt: user.emailVerifiedAt || new Date(),
-          accountStatus: "active",
-          sellerApprovedAt: subInit.sellerApprovedAt,
-          vendorSubscriptionStatus: subInit.vendorSubscriptionStatus
-        }
-      }
-    );
-    app.userId = user._id as mongoose.Types.ObjectId;
-  } else if (!user) {
+  if (promoteResult.kind === "needs_activation") {
+    const settings = await getOrCreateSettings();
+    const subInit = initialVendorSubscriptionOnApproval(settings);
     user = await User.create({
       email: appEmail,
       passwordHash,
@@ -933,11 +913,16 @@ export const activateAccount = asyncHandler(async (req: Request, res: Response) 
       vendorSubscriptionStatus: subInit.vendorSubscriptionStatus
     });
     app.userId = user._id;
+    app.activationTokenHash = null;
+    app.activationExpiry = null;
+    await app.save();
+  } else if (promoteResult.kind === "promoted" || promoteResult.kind === "already_seller") {
+    app.activationTokenHash = null;
+    app.activationExpiry = null;
+    await app.save();
+  } else {
+    throw new HttpError(400, "This account cannot be activated as a vendor.");
   }
-
-  app.activationTokenHash = null;
-  app.activationExpiry = null;
-  await app.save();
 
   res.json({
     ok: true,
