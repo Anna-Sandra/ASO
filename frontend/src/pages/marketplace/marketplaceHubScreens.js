@@ -334,64 +334,92 @@ export function CategoryHubPage({ slug }) {
                 { key: "er", className: "mx-auto mt-10 max-w-md text-center text-sm text-rose-800 dark:text-rose-300" },
                 err
               )
-            : stores.length === 0
-              ? hubProdsBusy
-                ? h(
-                    "p",
-                    { key: "ldp", className: "py-10 text-center text-sm text-slate-500 dark:text-slate-400" },
-                    "Loading marketplace listings…"
-                  )
-                : hubProducts.length > 0
-                  ? h(f, { key: "fallback-prods" }, [
-                      h("div", { key: "rail-h", className: "mx-auto mb-10 mt-10 max-w-3xl rounded-3xl bg-violet-50/95 p-6 text-center dark:bg-violet-950/35" }, [
-                        h(
-                          "p",
-                          {
-                            key: "t",
-                            className:
-                              "text-sm font-bold uppercase tracking-[0.12em] text-violet-800 dark:text-violet-200"
-                          },
-                          `${catLabel} on the marketplace`
-                        ),
-                        h(
-                          "p",
-                          {
-                            key: "sub",
-                            className: "mx-auto mt-2 max-w-lg text-xs leading-relaxed text-slate-600 dark:text-slate-400 sm:text-sm"
-                          },
-                          "There isn’t an approved storefront in this aisle yet — these are live catalogue listings that shoppers can browse from Home. Open Storefront Studio as a Seller to spin up your shop here."
-                        )
-                      ]),
+            : h(f, { key: "hub-body" }, [
+                stores.length > 0
+                  ? h(f, { key: "stores-block" }, [
+                      h(
+                        "p",
+                        {
+                          key: "stores-h",
+                          className: "mt-10 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400"
+                        },
+                        "Storefronts"
+                      ),
                       h(
                         "ul",
                         {
-                          key: "flist",
-                          className:
-                            "mt-8 grid gap-4 sm:grid-cols-2 lg:gap-6"
+                          key: "grid",
+                          className: "mt-4 grid gap-4 sm:grid-cols-2 lg:gap-6"
                         },
-                        hubProducts.map((p) => h("li", { key: p.id }, h(HubListingFallbackCard, { p })))
+                        stores.map((b) => h("li", { key: b.slug || b.id }, h(StoreCard, { b })))
                       )
                     ])
-                  : h(
-                      GlassPanel,
-                      { key: "em", className: "mx-auto mt-10 max-w-lg text-center" },
-                      [
-                        h("p", { className: "font-semibold text-slate-900 dark:text-white" }, "Nothing here yet"),
-                        h(
-                          "p",
-                          { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
-                          "No approved storefronts in this aisle, and nothing live in catalogue with this category yet. From Home, shoppers can browse all approvals once sellers publish listings."
-                        )
-                      ]
+                  : null,
+                hubProdsBusy
+                  ? h(
+                      "p",
+                      { key: "ldp", className: "py-10 text-center text-sm text-slate-500 dark:text-slate-400" },
+                      "Loading marketplace listings…"
                     )
-              : h(
-                  "ul",
-                  {
-                    key: "grid",
-                    className: "mt-10 grid gap-4 sm:grid-cols-2 lg:gap-6"
-                  },
-                  stores.map((b) => h("li", { key: b.slug || b.id }, h(StoreCard, { b })))
-                )
+                  : hubProducts.length > 0
+                    ? h(f, { key: "hub-prods" }, [
+                        h("div", { key: "rail-h", className: "mx-auto mb-6 mt-10 max-w-3xl rounded-3xl bg-violet-50/95 p-6 text-center dark:bg-violet-950/35" }, [
+                          h(
+                            "p",
+                            {
+                              key: "t",
+                              className:
+                                "text-sm font-bold uppercase tracking-[0.12em] text-violet-800 dark:text-violet-200"
+                            },
+                            `${catLabel} listings`
+                          ),
+                          h(
+                            "p",
+                            {
+                              key: "sub",
+                              className: "mx-auto mt-2 max-w-lg text-xs leading-relaxed text-slate-600 dark:text-slate-400 sm:text-sm"
+                            },
+                            stores.length > 0
+                              ? "Live catalogue items in this category — open a storefront above or browse individual listings below."
+                              : "There isn’t an approved storefront in this aisle yet — these are live catalogue listings shoppers can buy from Home."
+                          ),
+                          productCatKey
+                            ? h(
+                                Link,
+                                {
+                                  key: "shop",
+                                  to: `/shop?cat=${encodeURIComponent(productCatKey)}`,
+                                  className:
+                                    "mt-4 inline-flex text-xs font-semibold text-violet-800 underline underline-offset-4 hover:text-violet-950 dark:text-violet-200"
+                                },
+                                "View all in shop →"
+                              )
+                            : null
+                        ]),
+                        h(
+                          "ul",
+                          {
+                            key: "flist",
+                            className: "grid gap-4 sm:grid-cols-2 lg:gap-6"
+                          },
+                          hubProducts.map((p) => h("li", { key: p.id }, h(HubListingFallbackCard, { p })))
+                        )
+                      ])
+                    : stores.length === 0
+                      ? h(
+                          GlassPanel,
+                          { key: "em", className: "mx-auto mt-10 max-w-lg text-center" },
+                          [
+                            h("p", { className: "font-semibold text-slate-900 dark:text-white" }, "Nothing here yet"),
+                            h(
+                              "p",
+                              { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
+                              "No approved storefronts in this aisle, and nothing live in catalogue with this category yet. Sellers must publish active listings with the matching category."
+                            )
+                          ]
+                        )
+                      : null
+              ])
       ])
     ),
     h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })

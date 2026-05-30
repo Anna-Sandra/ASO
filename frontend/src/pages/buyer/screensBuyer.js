@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useNavigate, useParams, useSearchParams } f
 import {
   AlertTriangle,
   ArrowLeft,
+  Baby,
   BookOpen,
   ChevronRight,
   Cpu,
@@ -2160,6 +2161,7 @@ const STOREFRONT_CHIP_LABEL = {
   fashion_accessories: "Fashion",
   electronics_gadgets: "Electronics",
   beauty_personal_care: "Beauty",
+  babies_infants: "Babies",
   services: "Services",
   books_academic: "Books",
   groceries_essentials: "Groceries"

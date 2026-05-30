@@ -4,8 +4,14 @@ import { MAX_PRODUCT_GALLERY_IMAGES } from "../../config/productLimits";
 import { LISTING_KINDS, PRODUCT_CATEGORIES } from "./product.model";
 import { normalizeCategoryAttributes, safeParseCategoryAttributes } from "./categoryAttributes.schema";
 import { isValidMarketplaceSubcategory } from "./productSubcategories";
+import { normalizeProductCategory } from "./productCategories";
 
 const categoryEnum = z.enum(PRODUCT_CATEGORIES);
+
+const categoryField = z.preprocess((v) => {
+  const normalized = normalizeProductCategory(v);
+  return normalized ?? v;
+}, categoryEnum);
 
 const listingKindEnum = z.enum(LISTING_KINDS);
 
@@ -23,7 +29,7 @@ const productAddonSchema = z.object({
 const productCore = {
   name: z.string().min(1).max(200),
   description: z.string().max(10000).optional().default(""),
-  category: categoryEnum,
+  category: categoryField,
   subcategory: z
     .preprocess((v) => (v === "" || v === undefined ? undefined : v), z.union([z.string().trim().max(64), z.null()]).optional()),
   categoryAttributes: z.unknown().optional(),

@@ -415,10 +415,8 @@ async function storeReviewSummaryForBusiness(businessId: mongoose.Types.ObjectId
   return { avgRating: Math.round(Number(r.avgRating) * 10) / 10, count: Number(r.count) };
 }
 
-const buyerCandidateFilter: Record<string, unknown> = {
-  status: "active",
-  $or: [{ category: "services" }, { category: "food_drinks" }, { stock: { $gt: 0 } }]
-};
+/** Buyers see all active listings on a storefront; out-of-stock items stay visible (cart disabled in UI). */
+const buyerStorefrontProductFilter: Record<string, unknown> = { status: "active" };
 
 export const getBusinessStorefront = asyncHandler(async (req: Request, res: Response) => {
   const b = await resolveBusinessByKey(req.params.key);
@@ -452,7 +450,7 @@ export const getBusinessStorefront = asyncHandler(async (req: Request, res: Resp
     });
   }
 
-  const productFilter = isOwner || isAdmin ? { businessId: bid } : { businessId: bid, ...buyerCandidateFilter };
+  const productFilter = isOwner || isAdmin ? { businessId: bid } : { businessId: bid, ...buyerStorefrontProductFilter };
   const productsRaw = await Product.find(productFilter).sort({ updatedAt: -1 }).lean();
   const products = await attachSellerPayments(productsRaw as unknown as Record<string, unknown>[], {
     includePayoutDetails: isAdmin
