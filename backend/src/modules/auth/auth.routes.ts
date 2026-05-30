@@ -5,6 +5,7 @@ import { protect } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import {
+  activateAccount,
   forgotPassword,
   getMe,
   login,
@@ -19,6 +20,7 @@ import {
   verifyLoginOtp
 } from "./auth.controller";
 import {
+  activateAccountSchema,
   forgotPasswordSchema,
   loginSchema,
   profileUpdateSchema,
@@ -57,6 +59,7 @@ router.post("/login", loginLimiter, validateBody(loginSchema), login);
 router.post("/refresh", authLimiter, validateBody(refreshSchema), refresh);
 router.post("/logout", authLimiter, logout);
 
+router.post("/activate-account", authLimiter, validateBody(activateAccountSchema), activateAccount);
 router.post("/forgot-password", authLimiter, validateBody(forgotPasswordSchema), forgotPassword);
 router.post("/reset-password", authLimiter, validateBody(resetPasswordSchema), resetPassword);
 

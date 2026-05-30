@@ -101,6 +101,12 @@ export const profileUpdateSchema = z
     { message: "At least one field is required" }
   );
 
+export const activateAccountSchema = z.object({
+  token: z.string().trim().min(32, "Invalid activation link"),
+  password: passwordSchema,
+  type: z.enum(["vendor"]).optional().default("vendor")
+});
+
 export const deleteAccountSchema = z.object({
   password: z.string().min(1, "Password is required"),
   confirm: z

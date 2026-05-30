@@ -12,7 +12,9 @@ import {
   isEmailTransportConfigured,
   isSuperUserAdminEmail
 } from "../../config/env";
+import { createOpaqueToken, sha256 } from "../auth/jwt";
 import { sendEmail } from "../../utils/mailer";
+import { buildVendorActivationEmailHtml, VENDOR_ACTIVATION_TTL_MS } from "../../utils/vendorActivationEmail";
 import { EMAIL_TEMPLATE_PREVIEWS } from "../../utils/emailPreviewCatalog";
 import { roundMoney, splitLineGross } from "../../utils/commission";
 import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type RiderApplicationStatus } from "../auth/user.model";
@@ -2082,7 +2084,7 @@ export const listVendorApplications = asyncHandler(async (req: Request, res: Res
       adminNote: r.adminNote,
       createdAt: r.createdAt,
       reviewedAt: r.reviewedAt,
-      accountDisplayName: uid ? byId.get(uid)?.displayName || "" : "(guest — linked on approve)"
+      accountDisplayName: uid ? byId.get(uid)?.displayName || "" : "(guest — activates via email link)"
     };
     }),
     total,
@@ -2099,7 +2101,6 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
   if (!app) throw new HttpError(404, "Application not found");
   if (app.status !== "pending") throw new HttpError(400, "Only pending applications can be reviewed.");
 
-  let applicant = app.userId ? await User.findById(app.userId) : null;
   const appEmailNorm = (app.email || "").trim().toLowerCase();
 
   if (body.action === "reject") {
@@ -2120,80 +2121,53 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
     return;
   }
 
-  if (!applicant && appEmailNorm) {
-  applicant = await User.findOne({ email: appEmailNorm });
-}
+  if (appEmailNorm) {
+    const existing = await User.findOne({ email: appEmailNorm }).select("role");
+    if (existing) {
+      const role = normalizeUserRole(existing.role);
+      if (role === "admin") {
+        throw new HttpError(400, "Admin accounts cannot be approved as vendors.");
+      }
+      if (role === "rider") {
+        throw new HttpError(400, "Rider accounts cannot be approved as vendors.");
+      }
+      if (role === "seller") {
+        throw new HttpError(400, "This email already belongs to a vendor account.");
+      }
+    }
+  }
 
-// If no account exists, create one automatically for the guest applicant
-if (!applicant) {
- const tempPassword = require("crypto").randomBytes(16).toString("hex");
-const passwordHash = await bcrypt.hash(tempPassword, BCRYPT_SALT);
+  const activationToken = createOpaqueToken();
+  const activationExpiry = new Date(Date.now() + VENDOR_ACTIVATION_TTL_MS);
 
-  applicant = await User.create({
-    email: appEmailNorm,
-    passwordHash,
-    displayName: app.fullName.trim(),
-    phone: app.phone.trim(),
-    role: "buyer",
-    emailVerifiedAt: new Date(),
-    accountStatus: "active"
-  });
-}
-
-const applicantEmailNorm = ((applicant as { email?: string }).email || "").trim().toLowerCase();
-
-if (!app.userId) {
-  app.userId = applicant._id;
-  await app.save();
-}
-
-const applicantOid = applicant._id as mongoose.Types.ObjectId;
-
-// Allow buyer or guest (newly created) — block only admin and rider
-const applicantRole = normalizeUserRole(applicant.role);
-if (applicantRole === "admin") {
-  throw new HttpError(400, "Admin accounts cannot be approved as vendors.");
-}
-if (applicantRole === "rider") {
-  throw new HttpError(400, "Rider accounts cannot be approved as vendors.");
-}
-if (applicantRole === "seller") {
-  throw new HttpError(400, "This account is already a vendor.");
-}
   app.status = "approved";
   app.adminNote = body.adminNote || "";
   app.reviewedAt = new Date();
+  app.activationTokenHash = sha256(activationToken);
+  app.activationExpiry = activationExpiry;
   await app.save();
 
-  const displayName = (applicant.displayName || "").trim() || app.fullName;
-  const settings = await getOrCreateSettings();
-  const { initialVendorSubscriptionOnApproval } = await import(
-    "../vendorSubscription/vendorSubscription.service"
-  );
-  const subInit = initialVendorSubscriptionOnApproval(settings);
-  await User.updateOne(
-    { _id: applicantOid },
-    {
-      $set: {
-        role: "seller",
-        sellerVerified: true,
-        vendorStatus: "approved",
-        businessName: app.shopName,
-        phone: app.phone,
-        displayName,
-        sellerApprovedAt: subInit.sellerApprovedAt,
-        vendorSubscriptionStatus: subInit.vendorSubscriptionStatus
-      }
-    }
+  const appOrigin = env.APP_ORIGIN.replace(/\/$/, "");
+  const activationUrl = `${appOrigin}/activate-account?token=${encodeURIComponent(activationToken)}&type=vendor`;
+
+  await sendEmail(
+    app.email,
+    "Your SHOPIQGH vendor application has been approved!",
+    buildVendorActivationEmailHtml({
+      fullName: app.fullName,
+      shopName: app.shopName,
+      activationUrl
+    }),
+    { category: "vendor_approval" }
   );
 
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "application.approve",
     title: `Vendor approved — ${app.shopName.slice(0, 60)}`,
-    detail: app.email
+    detail: `${app.email} · activation email sent`
   });
-  res.json({ ok: true, status: "approved" });
+  res.json({ ok: true, status: "approved", activationEmailSent: true });
 });
 
 export const listCourierApplications = asyncHandler(async (req: Request, res: Response) => {
@@ -2237,7 +2211,7 @@ export const listCourierApplications = asyncHandler(async (req: Request, res: Re
         adminNote: r.adminNote,
         createdAt: r.createdAt,
         reviewedAt: r.reviewedAt,
-        accountDisplayName: uid ? byId.get(uid)?.displayName || "" : "(guest — linked on approve)"
+        accountDisplayName: uid ? byId.get(uid)?.displayName || "" : "(guest — activates via email link)"
       };
     }),
     total,

@@ -10,6 +10,7 @@ import {
 } from "context";
 import { SavedProductsProvider } from "context/SavedProductsContext";
 import {
+  ActivateAccountPage,
   ForgotPasswordPage,
   LoginPage,
   LoginOtpPage,
@@ -235,6 +236,7 @@ function AppRoutes() {
     h(Route, { path: "/login-otp", element: h(LoginOtpPage), key: "r-login-otp" }),
     h(Route, { path: "/register", element: h(RegisterPage), key: "r-register" }),
     h(Route, { path: "/verify-email", element: h(VerifyEmailPage), key: "r-verify" }),
+    h(Route, { path: "/activate-account", element: h(ActivateAccountPage), key: "r-activate" }),
     h(Route, { path: "/forgot-password", element: h(ForgotPasswordPage), key: "r-forgot" }),
     h(Route, { path: "/reset-password", element: h(ResetPasswordPage), key: "r-reset" }),
     h(Route, { path: "/about", element: h(AboutUsPage), key: "r-about" }),

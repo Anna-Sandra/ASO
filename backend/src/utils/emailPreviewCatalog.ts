@@ -24,6 +24,16 @@ export const EMAIL_TEMPLATE_PREVIEWS: { id: string; title: string; description: 
 </div>`
   },
   {
+    id: "vendor_approval",
+    title: "Vendor application approved",
+    description: "Sent when an admin approves a vendor application; includes activation link.",
+    sampleHtml: `<div style="font-family:system-ui,sans-serif;max-width:480px">
+  <p>Your shop <strong>Example Shop</strong> has been approved on SHOPIQGH.</p>
+  <p><a href="#" style="background:#7c3aed;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none">Activate My Vendor Account</a></p>
+  <p style="color:#64748b;font-size:13px">Link expires in 7 days.</p>
+</div>`
+  },
+  {
     id: "password_reset",
     title: "Password reset",
     description: "Sent after “Forgot password” with a reset code.",

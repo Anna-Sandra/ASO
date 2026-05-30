@@ -876,3 +876,108 @@ export function ResetPasswordPage() {
     ])
   ]);
 }
+
+export function ActivateAccountPage() {
+  const nav = useNavigate();
+  const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const token = params.get("token") || "";
+  const type = params.get("type") || "vendor";
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [show, setShow] = useState(false);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setErr("");
+    if (!token) {
+      setErr("Activation link is invalid. Open the link from your approval email.");
+      return;
+    }
+    if (password !== confirm) {
+      setErr("Passwords do not match.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await apiFetch("/api/auth/activate-account", {
+        method: "POST",
+        json: { token, password, type: type === "vendor" ? "vendor" : "vendor" }
+      });
+      setDone(true);
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "Activation failed. The link may have expired."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!token) {
+    return h("div", { className: "mx-auto max-w-md px-4 py-16" }, [
+      h(GlassPanel, null, [
+        h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Invalid link"),
+        h("p", { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" }, "Use the activation link from your approval email."),
+        h(Link, { to: "/login", className: "mt-4 inline-block text-sm text-sky-600 hover:underline dark:text-sky-300" }, "Go to sign in")
+      ])
+    ]);
+  }
+
+  if (done) {
+    return h("div", { className: "mx-auto max-w-md px-4 py-16" }, [
+      h(GlassPanel, null, [
+        h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Account activated"),
+        h("p", { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" }, "Your vendor account is ready. Sign in to open your seller dashboard."),
+        h(Link, { to: "/login", className: "mt-6 inline-block" }, h(Button, { className: "w-full" }, "Sign in"))
+      ])
+    ]);
+  }
+
+  return h("div", { className: "mx-auto max-w-md px-4 py-16" }, [
+    h(GlassPanel, null, [
+      h("h1", { className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Activate your account"),
+      h(
+        "p",
+        { className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
+        type === "vendor" ? "Create a password to finish setting up your SHOPIQGH vendor account." : "Create a password to activate your account."
+      ),
+      h("form", { className: "mt-6 space-y-4", onSubmit }, [
+        h(Field, { label: "Password" }, h("div", { className: "relative" }, [
+          h(TextInput, {
+            type: show ? "text" : "password",
+            value: password,
+            onChange: (e) => setPassword(e.target.value),
+            autoComplete: "new-password",
+            required: true,
+            className: "pr-12"
+          }),
+          h(
+            "button",
+            {
+              type: "button",
+              className:
+                "tap-target absolute right-1 top-1/2 -translate-y-1/2 rounded-xl p-2 text-slate-500 hover:bg-white/40 dark:text-slate-400",
+              onClick: () => setShow((s) => !s)
+            },
+            show ? h(EyeOff, { className: "h-5 w-5" }) : h(Eye, { className: "h-5 w-5" })
+          )
+        ])),
+        h(Field, { label: "Confirm password" }, h(TextInput, {
+          type: show ? "text" : "password",
+          value: confirm,
+          onChange: (e) => setConfirm(e.target.value),
+          autoComplete: "new-password",
+          required: true
+        })),
+        h(
+          "p",
+          { className: "text-xs text-slate-500 dark:text-slate-400" },
+          "At least 8 characters with uppercase, lowercase, a number, and a special character."
+        ),
+        err ? h(InlineNotice, { variant: "error", onDismiss: () => setErr("") }, err) : null,
+        h(Button, { type: "submit", className: "w-full", loading }, "Activate account")
+      ])
+    ])
+  ]);
+}

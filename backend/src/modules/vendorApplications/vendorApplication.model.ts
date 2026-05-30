@@ -23,6 +23,9 @@ export interface VendorApplicationDoc {
   status: VendorApplicationStatus;
   adminNote: string;
   reviewedAt?: Date | null;
+  /** SHA-256 hex of activation token sent by email; cleared after account activation. */
+  activationTokenHash?: string | null;
+  activationExpiry?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -48,7 +51,9 @@ const vendorApplicationSchema = new Schema<VendorApplicationDoc>(
       index: true
     },
     adminNote: { type: String, default: "", maxlength: 2000 },
-    reviewedAt: { type: Date, default: null }
+    reviewedAt: { type: Date, default: null },
+    activationTokenHash: { type: String, default: null, index: true, sparse: true },
+    activationExpiry: { type: Date, default: null }
   },
   { timestamps: true }
 );
