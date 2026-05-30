@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { Link } from "react-router-dom";
 import { Heart, ShoppingCart, Star, Store, User, AlarmClock } from "lucide-react";
 import { h } from "utils/h";
-import { refFromId } from "config/catalog";
 import { isFoodCallToOrderCategory, isOfflineQuoteCategory } from "config/catalog";
-import { RefImage } from "components/ui";
+import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
 import { productFeedPriceLabel, productStoreContext, productTileDeliveryHints } from "utils/productStore";
 import { useCart } from "context";
 import { useSavedProducts } from "context/SavedProductsContext";
@@ -36,24 +35,9 @@ export function MenuItemFeedCard({
   showQuickAdd = false,
   showDeliveryHints = false
 }) {
-  // ALL hooks MUST come before any early return — React rules
   const { add } = useCart();
   const { isSaved, toggleSaved } = useSavedProducts();
-  const [imgIdx, setImgIdx] = useState(0);
 
-  const images = Array.isArray(product?.imageUrls) && product.imageUrls.length > 1
-    ? product.imageUrls
-    : null;
-
-  useEffect(() => {
-    if (!images || images.length <= 1) return;
-    const timer = setInterval(() => {
-      setImgIdx(prev => (prev + 1) % images.length);
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [images?.length]);
-
-  // Safe to early return AFTER all hooks
   if (!product?.id) return null;
 
   const store = productStoreContext(product);
@@ -150,33 +134,19 @@ export function MenuItemFeedCard({
         "aria-label": product.name,
         className: "absolute inset-0 z-[1] block focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
       }, [
-        h(RefImage, {
-          key: `pic-${imgIdx}`,
-          src: images ? images[imgIdx] : product.imageUrls?.[0],
-          n: refFromId(product.id),
-          alt: "",
-          className: "h-full w-full object-cover transition-all duration-700 group-hover:scale-105"
+        h(ProductCardRotatingImage, {
+          key: "rot",
+          product,
+          wrapperClassName: "absolute inset-0",
+          imageClassName: "h-full w-full object-cover transition-all duration-700 group-hover:scale-105",
+          dotsClassName:
+            "pointer-events-none absolute bottom-10 left-0 right-0 z-[3] flex justify-center gap-1"
         }),
         h("div", {
           key: "ovl",
           className: "pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-transparent",
           "aria-hidden": true
-        }),
-        images && images.length > 1
-          ? h("div", {
-              key: "dots",
-              className: "pointer-events-none absolute bottom-10 left-0 right-0 z-[3] flex justify-center gap-1"
-            },
-            images.map((_, i) =>
-              h("span", {
-                key: i,
-                className: `rounded-full transition-all duration-300 ${
-                  i === imgIdx ? "w-3 h-1.5 bg-white" : "w-1.5 h-1.5 bg-white/50"
-                }`
-              })
-            )
-          )
-          : null
+        })
       ]),
 
       showQuickAdd && canBuy

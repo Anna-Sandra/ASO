@@ -67,6 +67,7 @@ import { formatGhc } from "utils/money";
 import { TrackOrderModal } from "components/features/TrackOrderModal";
 import { ShoppingAssistantFAB } from "components/features/ShoppingAssistantFAB";
 import { MenuItemFeedCard } from "components/marketplace/MenuItemFeedCard";
+import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
 import { RestaurantContextPanel } from "components/marketplace/RestaurantContextPanel";
 import { productStoreContext } from "utils/productStore";
 import { buyerTotalFromSellerSubtotal, computeCheckoutBreakdown, useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
@@ -3095,21 +3096,17 @@ export function ShopPage() {
                 [
                   h("div", { key: "img", className: "relative" }, [
                     storefrontBadgeStack(p),
-                    h(
-                      Link,
-                      {
-                        key: "pic-l",
-                        to: detailTo,
-                        className: "block overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-                      },
-                      h(RefImage, {
-                        key: "pic",
-                        src: p.imageUrls?.[0],
-                        n: refFromId(p.id),
-                        alt: p.name,
-                        className: "h-28 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-40 md:h-48"
-                      })
-                    )
+                    h(ProductCardRotatingImage, {
+                      key: "rot",
+                      product: p,
+                      linkTo: detailTo,
+                      linkClassName:
+                        "relative block overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500",
+                      imageClassName:
+                        "h-28 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-40 md:h-48",
+                      dotsClassName:
+                        "pointer-events-none absolute bottom-2 left-0 right-0 z-[2] flex justify-center gap-1"
+                    })
                   ]),
                   h("div", { key: "meta", className: "mt-3 flex flex-1 flex-col" }, [
                     h("div", { key: "title-row", className: "flex items-start gap-1.5" }, [
