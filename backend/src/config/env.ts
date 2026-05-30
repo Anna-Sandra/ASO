@@ -46,6 +46,14 @@ const envSchema = z.object({
   SMTP_PORT: z.coerce.number().int().positive().optional().default(587),
   SMTP_USER: z.string().optional().default(""),
   SMTP_PASS: z.string().optional().default(""),
+  /**
+   * Brevo transactional API key (xkeysib-…). HTTPS — works on Render free tier (SMTP 587/465 blocked).
+   * Verify your Gmail as a sender in Brevo → Senders (OTP email). When set, takes priority over SMTP/Gmail.
+   */
+  BREVO_API_KEY: z.string().optional().default(""),
+  /** Optional overrides; default parsed from EMAIL_FROM (e.g. SHOPIQGH <you@gmail.com>). */
+  BREVO_SENDER_EMAIL: z.string().optional().default(""),
+  BREVO_SENDER_NAME: z.string().optional().default(""),
   SMS_PROVIDER: z.enum(["none", "twilio"]).optional().default("none"),
   TWILIO_ACCOUNT_SID: z.string().optional().default(""),
   TWILIO_AUTH_TOKEN: z.string().optional().default(""),
@@ -242,16 +250,23 @@ export function isPaystackCheckoutSplitEnabled(): boolean {
   return false;
 }
 
-/** True when the API can send real email (Gmail app password or any SMTP with credentials). */
+export type EmailTransportMode = "brevo" | "smtp" | "gmail" | "none";
+
+export function getEmailTransportMode(): EmailTransportMode {
+  if ((_env.BREVO_API_KEY || "").trim()) return "brevo";
+  if (_env.SMTP_HOST?.trim() && _env.SMTP_USER && _env.SMTP_PASS) return "smtp";
+  if (_env.EMAIL_USER && _env.EMAIL_PASS && !_env.SMTP_HOST?.trim()) return "gmail";
+  return "none";
+}
+
+/** True when the API can send real email (Brevo API, Gmail app password, or SMTP credentials). */
 export function isEmailTransportConfigured(): boolean {
-  if (_env.SMTP_HOST?.trim() && _env.SMTP_USER && _env.SMTP_PASS) return true;
-  if (_env.EMAIL_USER && _env.EMAIL_PASS && !_env.SMTP_HOST?.trim()) return true;
-  return false;
+  return getEmailTransportMode() !== "none";
 }
 
 export type EmailTransportDiagnostics = {
   configured: boolean;
-  mode: "smtp" | "gmail" | "none";
+  mode: EmailTransportMode;
   /** Variables that are missing or empty for the inferred setup path. */
   missingVariables: string[];
   /** Human-readable next steps. */
@@ -262,6 +277,7 @@ export type EmailTransportDiagnostics = {
  * Explains why mail might not send and which .env keys to set.
  */
 export function getEmailTransportDiagnostics(): EmailTransportDiagnostics {
+  const brevoKey = (_env.BREVO_API_KEY || "").trim();
   const smtpHost = (_env.SMTP_HOST || "").trim();
   const hasSmtpUser = Boolean((_env.SMTP_USER || "").trim());
   const hasSmtpPass = Boolean((_env.SMTP_PASS || "").trim());
@@ -274,17 +290,40 @@ export function getEmailTransportDiagnostics(): EmailTransportDiagnostics {
   const hints: string[] = [];
   const missing: string[] = [];
 
+  const renderSmtpHint =
+    _env.NODE_ENV === "production" && (smtpPathComplete || gmailPathComplete) && !brevoKey
+      ? "On Render free tier, outbound SMTP (ports 587/465) is blocked — set BREVO_API_KEY or upgrade to a paid Render instance."
+      : "";
+
+  if (brevoKey) {
+    const from = (_env.BREVO_SENDER_EMAIL || _env.EMAIL_FROM || "").trim();
+    if (!from) hints.push("Set EMAIL_FROM (e.g. SHOPIQGH <you@gmail.com>) — must match a sender verified in Brevo.");
+    else {
+      hints.push(
+        "In Brevo → Senders, add the same Gmail address and complete the verification OTP (no custom domain required)."
+      );
+    }
+    if (renderSmtpHint) hints.push(renderSmtpHint);
+    return {
+      configured: true,
+      mode: "brevo",
+      missingVariables: [],
+      hints: [...new Set(hints)]
+    };
+  }
+
   if (smtpPathComplete || gmailPathComplete) {
     const from = (_env.EMAIL_FROM || "").trim();
     if (!from) hints.push("Set EMAIL_FROM (e.g. SHOPIQGH <no-reply@yourdomain.com>).");
     else if (/no-reply@SHOPIQGH\.local/i.test(from)) {
       hints.push("EMAIL_FROM still looks like a dev default — use a real domain in production to avoid spam filters.");
     }
+    if (renderSmtpHint) hints.push(renderSmtpHint);
     return {
       configured: isEmailTransportConfigured(),
       mode: smtpPathComplete ? "smtp" : "gmail",
       missingVariables: [],
-      hints
+      hints: [...new Set(hints)]
     };
   }
 
@@ -298,8 +337,12 @@ export function getEmailTransportDiagnostics(): EmailTransportDiagnostics {
     if (!emailUser) missing.push("EMAIL_USER");
     if (!emailPass) missing.push("EMAIL_PASS");
     hints.push(
-      "With SMTP_HOST empty, Gmail is used: set EMAIL_USER and EMAIL_PASS (Google App Password). For custom SMTP, set SMTP_HOST, SMTP_USER, and SMTP_PASS."
+      "With SMTP_HOST empty, Gmail SMTP is used locally. On Render free tier, set BREVO_API_KEY instead. Or use SMTP_HOST + SMTP_USER + SMTP_PASS."
     );
+  }
+
+  if (!brevoKey && _env.NODE_ENV === "production") {
+    hints.push("Production on Render: sign up at brevo.com, verify your Gmail sender, set BREVO_API_KEY.");
   }
 
   const fromMissing = !(_env.EMAIL_FROM || "").trim();

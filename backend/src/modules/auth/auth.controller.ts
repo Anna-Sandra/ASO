@@ -219,12 +219,13 @@ async function issueLoginOtpAndRespond(user: HydratedDocument<UserDoc>, res: Res
   });
 
   const addr = user.email?.trim() || "";
-  await sendEmail(addr, "Your sign-in code", loginOtpEmailHtml(otp));
+  const mail = await sendEmail(addr, "Your sign-in code", loginOtpEmailHtml(otp), { category: "login_otp" });
 
   res.json({
     needsOtp: true,
     email: addr || undefined,
-    loginOtpEmailSent: canSendEmail
+    loginOtpEmailSent: mail.ok,
+    ...(!mail.ok && mail.reason ? { loginOtpEmailError: mail.reason.slice(0, 500) } : {})
   });
 }
 
@@ -511,7 +512,13 @@ export const resendLoginOtp = asyncHandler(async (req: Request, res: Response) =
   });
 
   const addr = user.email?.trim() || lower;
-  await sendEmail(addr, "Your sign-in code", loginOtpEmailHtml(otp));
+  const mail = await sendEmail(addr, "Your sign-in code", loginOtpEmailHtml(otp), { category: "login_otp" });
+  if (!mail.ok) {
+    throw new HttpError(
+      502,
+      `Could not send the sign-in code. ${mail.reason} Check spam, or ask an admin to verify email settings on the server.`
+    );
+  }
   res.json({ message: "A new sign-in code was sent." });
 });
 

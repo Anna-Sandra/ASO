@@ -5,7 +5,13 @@ import { DEFAULT_SITE_NAME } from "../../config/brand";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { rewriteStoredMediaNullable, rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
-import { env, getEmailTransportDiagnostics, isEmailTransportConfigured, isSuperUserAdminEmail } from "../../config/env";
+import {
+  env,
+  getEmailTransportDiagnostics,
+  getEmailTransportMode,
+  isEmailTransportConfigured,
+  isSuperUserAdminEmail
+} from "../../config/env";
 import { sendEmail } from "../../utils/mailer";
 import { EMAIL_TEMPLATE_PREVIEWS } from "../../utils/emailPreviewCatalog";
 import { roundMoney, splitLineGross } from "../../utils/commission";
@@ -898,7 +904,7 @@ export const getAdminPlatformSettings = asyncHandler(async (_req: Request, res: 
     listingRulesLastEditor,
     emailDelivery: {
       from: env.EMAIL_FROM,
-      transport: env.SMTP_HOST ? "smtp" : env.EMAIL_USER ? "gmail" : "none",
+      transport: getEmailTransportMode(),
       configured: isEmailTransportConfigured(),
       diagnostics: getEmailTransportDiagnostics()
     },
@@ -1030,13 +1036,11 @@ export const postAdminSettingsEmailTest = asyncHandler(async (req: Request, res:
 <p style="color:#64748b;font-size:12px;margin-top:1.25em">${escapeHtmlEmail(sentAt)}</p>`;
 
   const safeTo = to.trim().toLowerCase();
-  try {
-    await sendEmail(safeTo, subject.slice(0, 200), html, { category: "admin_outbound" });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Send failed";
+  const mail = await sendEmail(safeTo, subject.slice(0, 200), html, { category: "admin_outbound" });
+  if (!mail.ok) {
     throw new HttpError(
       502,
-      `Mail server rejected or failed the send: ${msg}. Check your SMTP/Gmail credentials and that EMAIL_FROM is allowed by your provider.`
+      `Mail server rejected or failed the send: ${mail.reason}. Check your SMTP/Gmail credentials and that EMAIL_FROM is allowed by your provider.`
     );
   }
   await recordAdminAuditEvent({

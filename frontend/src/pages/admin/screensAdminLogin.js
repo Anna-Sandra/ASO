@@ -65,7 +65,8 @@ export function AdminLoginPage() {
           state: {
             email: data.email || identifier.trim().toLowerCase(),
             from: "/admin",
-            loginOtpEmailSent: data.loginOtpEmailSent !== false
+            loginOtpEmailSent: data.loginOtpEmailSent !== false,
+            loginOtpEmailError: data.loginOtpEmailError || ""
           }
         });
         return;
@@ -195,6 +196,7 @@ export function AdminLoginOtpPage() {
   const { toast } = useNotice();
   const email = String(location.state?.email || "").trim().toLowerCase();
   const loginOtpEmailSent = location.state?.loginOtpEmailSent !== false;
+  const loginOtpEmailError = String(location.state?.loginOtpEmailError || "").trim();
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -202,7 +204,7 @@ export function AdminLoginOtpPage() {
   const [busy, setBusy] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendMsg, setResendMsg] = useState("");
-  const [showResendCard, setShowResendCard] = useState(() => !loginOtpEmailSent);
+  const [showResendCard, setShowResendCard] = useState(() => !loginOtpEmailSent || Boolean(loginOtpEmailError));
 
   useEffect(() => {
     if (!loading && accessToken && user?.role === "admin") {
@@ -298,14 +300,17 @@ export function AdminLoginOtpPage() {
             ? h(InlineNotice, { key: "ok", variant: "success", size: "sm", onDismiss: () => setResendMsg("") }, resendMsg)
             : null,
           h(Button, { key: "go", type: "submit", className: "w-full", loading: busy }, "Continue to dashboard"),
-          !loginOtpEmailSent
+          !loginOtpEmailSent || loginOtpEmailError
             ? h(
-                "p",
+                InlineNotice,
                 {
-                  key: "dev-mail",
-                  className: "text-[11px] text-amber-700 dark:text-amber-200/90"
+                  key: "mail-warn",
+                  variant: "warning",
+                  size: "sm"
                 },
-                "Email is not configured on this server. Check the server log for the sign-in code, or configure SMTP."
+                loginOtpEmailError
+                  ? `We could not send the sign-in email: ${loginOtpEmailError} Use “Need a new code?” below or set BREVO_API_KEY + verified Gmail sender on Render.`
+                  : "Email is not configured. Set BREVO_API_KEY on the API host (Brevo → Senders, verify Gmail)."
               )
             : null,
           showResendCard

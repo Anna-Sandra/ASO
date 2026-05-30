@@ -5280,11 +5280,13 @@ export function AdminPage() {
     }
     if (settingsTab === "email") {
       const transportLabel =
-        emailDelivery?.transport === "smtp"
-          ? "SMTP (custom host)"
-          : emailDelivery?.transport === "gmail"
-            ? "Gmail / App password"
-            : "Not configured (development-only dev OTP may still apply)";
+        emailDelivery?.transport === "brevo"
+          ? "Brevo API (HTTPS — use on Render free tier)"
+          : emailDelivery?.transport === "smtp"
+            ? "SMTP (custom host)"
+            : emailDelivery?.transport === "gmail"
+              ? "Gmail / App password"
+              : "Not configured (development-only dev OTP may still apply)";
       const diag = emailDelivery?.diagnostics;
       const missingVars = Array.isArray(diag?.missingVariables) ? diag.missingVariables : [];
       const diagHints = Array.isArray(diag?.hints) ? diag.hints : [];

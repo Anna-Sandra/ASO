@@ -3,7 +3,7 @@ import { Server } from "socket.io";
 import mongoose from "mongoose";
 import { createApp } from "./app";
 import { connectDb } from "./config/db";
-import { env } from "./config/env";
+import { env, getEmailTransportDiagnostics, isEmailTransportConfigured } from "./config/env";
 import { setupDeliverySockets } from "./modules/deliveries/delivery.socket";
 import { warmupOllamaInBackground } from "./config/ollamaWarmup";
 import { runAutoConfirmDeliveredOrders } from "./modules/orders/orderAutoConfirm.job";
@@ -30,6 +30,10 @@ async function main() {
   server.listen(env.PORT, listenHost, () => {
     // eslint-disable-next-line no-console
     console.log(`API listening on http://${listenHost}:${env.PORT} (PORT from env)`);
+    const emailDiag = getEmailTransportDiagnostics();
+    console.log(
+      `[email] transport=${emailDiag.mode} configured=${isEmailTransportConfigured()}${emailDiag.hints.length ? ` hints=${emailDiag.hints.join(" ")}` : ""}`
+    );
     if (env.OLLAMA_BASE_URL.trim() && !env.GROQ_API_KEY.trim()) {
       warmupOllamaInBackground();
     }

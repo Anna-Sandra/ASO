@@ -113,7 +113,8 @@ export function LoginPage() {
           state: {
             email: data.email || identifier.trim().toLowerCase(),
             from: location.state,
-            loginOtpEmailSent: data.loginOtpEmailSent !== false
+            loginOtpEmailSent: data.loginOtpEmailSent !== false,
+            loginOtpEmailError: data.loginOtpEmailError || ""
           }
         });
         return;
@@ -234,6 +235,7 @@ export function LoginOtpPage() {
   const { toast } = useNotice();
   const email = String(location.state?.email || "").trim().toLowerCase();
   const loginOtpEmailSent = location.state?.loginOtpEmailSent !== false;
+  const loginOtpEmailError = String(location.state?.loginOtpEmailError || "").trim();
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -241,7 +243,7 @@ export function LoginOtpPage() {
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendMsg, setResendMsg] = useState("");
-  const [showResendCard, setShowResendCard] = useState(() => !loginOtpEmailSent);
+  const [showResendCard, setShowResendCard] = useState(() => !loginOtpEmailSent || Boolean(loginOtpEmailError));
 
   useEffect(() => {
     if (!email) nav("/login", { replace: true });
@@ -346,14 +348,17 @@ export function LoginOtpPage() {
                 ? h(InlineNotice, { key: "ok", variant: "success", size: "sm", onDismiss: () => setResendMsg("") }, resendMsg)
                 : null,
               h(Button, { key: "sub", type: "submit", className: "w-full", loading }, "Continue"),
-              !loginOtpEmailSent
+              !loginOtpEmailSent || loginOtpEmailError
                 ? h(
-                    "p",
+                    InlineNotice,
                     {
-                      key: "dev-mail",
-                      className: "text-xs text-amber-700 dark:text-amber-200/90"
+                      key: "mail-warn",
+                      variant: "warning",
+                      size: "sm"
                     },
-                    "Email is not configured on this server, so you will not receive a message. Check the server log for the sign-in code, or ask an admin to set up SMTP."
+                    loginOtpEmailError
+                      ? `We could not send the sign-in email: ${loginOtpEmailError} Check spam, then use “Need a new code?” below. On Render, set BREVO_API_KEY and verify your Gmail in Brevo → Senders.`
+                      : "Email is not configured on this server. Ask an admin to set BREVO_API_KEY on the API host (or SMTP for local dev)."
                   )
                 : null,
               showResendCard
@@ -465,7 +470,8 @@ export function RegisterPage() {
             state: {
               email: data.email || id.toLowerCase(),
               from: location.state,
-              loginOtpEmailSent: data.loginOtpEmailSent !== false
+              loginOtpEmailSent: data.loginOtpEmailSent !== false,
+              loginOtpEmailError: data.loginOtpEmailError || ""
             }
           });
           return;
