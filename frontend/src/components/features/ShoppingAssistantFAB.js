@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Sparkles, X } from "lucide-react";
-import { getApiBase } from "services/api";
+import { getApiBase , apiErrorMessage} from "services/api";
 import { getOrCreateSaveSessionId } from "utils/saveSession";
 import { useAuth } from "context";
 import { h } from "utils/h";

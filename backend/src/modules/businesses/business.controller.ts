@@ -284,7 +284,7 @@ export const listMyBusinesses = asyncHandler(async (req: Request, res: Response)
 
 export const createMyBusiness = asyncHandler(async (req: Request, res: Response) => {
   const parsed = createBusinessSchema.safeParse(req.body);
-  if (!parsed.success) throw new HttpError(400, "Validation error");
+  if (!parsed.success) throw new HttpError(400, "Please check your business details and try again.");
   const body = parsed.data;
   const ownerId = new mongoose.Types.ObjectId(req.user!.id);
   const base = slugBaseFromName(body.name);
@@ -334,7 +334,7 @@ export const getBusinessByKey = asyncHandler(async (req: Request, res: Response)
 
 export const updateMyBusinessByKey = asyncHandler(async (req: Request, res: Response) => {
   const parsed = updateBusinessSchema.safeParse(req.body);
-  if (!parsed.success) throw new HttpError(400, "Validation error");
+  if (!parsed.success) throw new HttpError(400, "Please check your business details and try again.");
   const patch = parsed.data;
   const b = await resolveBusinessByKey(req.params.key);
   if (!b) throw new HttpError(404, "Store not found");
@@ -506,7 +506,7 @@ export const listMenuSections = asyncHandler(async (req: Request, res: Response)
 
 export const createMenuSection = asyncHandler(async (req: Request, res: Response) => {
   const parsed = createMenuSectionSchema.safeParse(req.body);
-  if (!parsed.success) throw new HttpError(400, "Validation error");
+  if (!parsed.success) throw new HttpError(400, "Please check your business details and try again.");
   const b = await resolveBusinessByKey(req.params.key);
   if (!b) throw new HttpError(404, "Store not found");
   assertOwner(req, b);
@@ -526,7 +526,7 @@ export const patchMenuSection = asyncHandler(async (req: Request, res: Response)
   const sid = req.params.sectionId;
   if (!mongoose.isValidObjectId(sid)) throw new HttpError(400, "Invalid section id");
   const parsed = updateMenuSectionSchema.safeParse(req.body);
-  if (!parsed.success) throw new HttpError(400, "Validation error");
+  if (!parsed.success) throw new HttpError(400, "Please check your business details and try again.");
   const b = await resolveBusinessByKey(req.params.key);
   if (!b) throw new HttpError(404, "Store not found");
   assertOwner(req, b);

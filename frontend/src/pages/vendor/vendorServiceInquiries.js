@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { CalendarClock } from "lucide-react";
-import { apiFetch } from "services/api";
+import { apiFetch , apiErrorMessage} from "services/api";
 import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
 import { Button, GlassPanel, InlineNotice, Badge } from "components/ui";
@@ -39,7 +39,7 @@ export function VendorServiceInquiriesPage() {
       });
       setRows(Array.isArray(d.inquiries) ? d.inquiries : []);
     } catch (e) {
-      setErr(e.message || "Could not load requests.");
+      setErr(apiErrorMessage(e, "Could not load requests."));
     } finally {
       setLoading(false);
     }
@@ -60,7 +60,7 @@ export function VendorServiceInquiriesPage() {
       toast(status === "read" ? "Marked as read." : "Archived.", { variant: "success" });
       await load();
     } catch (e) {
-      toast(e.message || "Update failed", { variant: "error" });
+      toast(apiErrorMessage(e, "Update failed"), { variant: "error" });
     }
   };
 

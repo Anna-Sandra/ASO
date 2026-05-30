@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiFetch } from "services/api";
+import { apiFetch , apiErrorMessage} from "services/api";
 import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
 import { Button, Field, GlassPanel, InlineNotice, TextInput } from "components/ui";
@@ -43,7 +43,7 @@ export function VendorStoreMenuPage() {
       toast("Section added.", { variant: "success" });
       await reload();
     } catch (ex) {
-      setErr(ex.message || "Could not create section.");
+      setErr(apiErrorMessage(ex, "Could not create section."));
     } finally {
       setBusy(false);
     }
@@ -60,7 +60,7 @@ export function VendorStoreMenuPage() {
       toast("Removed.", { variant: "success" });
       await reload();
     } catch (ex) {
-      setErr(ex.message || "Delete failed.");
+      setErr(apiErrorMessage(ex, "Delete failed."));
     }
   };
 

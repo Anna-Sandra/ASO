@@ -79,7 +79,7 @@ export function AdminLoginPage() {
       toast("Welcome — admin dashboard", { variant: "success" });
       nav("/admin", { replace: true });
     } catch (ex) {
-      const msg = apiErrorMessage(ex, "We couldn’t sign you in. Check your email and password.");
+      const msg = apiErrorMessage(ex, "We couldn't sign you in. Check your email and password.");
       if (ex.status === 403 && /verify/i.test(msg)) {
         setErr("This account must verify email on the main site first, or contact support.");
       } else {

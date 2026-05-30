@@ -1,5 +1,6 @@
 import { getOrCreateSaveSessionId } from "utils/saveSession";
 import { storageGet, storageRemove, storageSet, StorageKeys } from "utils/storage";
+import { apiErrorMessage as buildApiErrorMessage } from "utils/userFacingError";
 
 /**
  * CRA replaces `process.env.REACT_APP_*` at **build** time — not at runtime in the browser.
@@ -182,11 +183,16 @@ export async function apiFetch(path, opts = {}) {
     }
   }
   if (!res.ok) {
-    const msg =
+    const rawMsg =
       data && data.error && data.error.message
         ? data.error.message
         : `Request failed (${res.status})`;
-    const err = new Error(msg);
+    const err = new Error(
+      buildApiErrorMessage(
+        { message: rawMsg, status: res.status, data },
+        "Something went wrong. Refresh the page and try again."
+      )
+    );
     err.status = res.status;
     err.data = data;
     if (data && data.error && data.error.code) err.code = data.error.code;
@@ -195,8 +201,18 @@ export async function apiFetch(path, opts = {}) {
   return data;
 }
 
+export { apiErrorMessage, sanitizeErrorMessage, userMessage, displayError } from "utils/userFacingError";
+
+function throwUploadError(res, data, fallback = "We could not upload that file. Choose a smaller JPEG or PNG (under 5 MB) and try again.") {
+  const rawMsg =
+    data && data.error && data.error.message ? data.error.message : `Upload failed (${res.status})`;
+  const err = new Error(buildApiErrorMessage({ message: rawMsg, status: res.status, data }, fallback));
+  err.status = res.status;
+  err.data = data;
+  throw err;
+}
+
 /**
- * Upload product image files (multipart). Requires seller auth.
  * @param {File[]} files
  * @param {string} accessToken
  */
@@ -216,16 +232,7 @@ export async function apiUploadProductImages(files, accessToken) {
     credentials: "include"
   });
   const data = await parseResponse(res);
-  if (!res.ok) {
-    const msg =
-      data && data.error && data.error.message
-        ? data.error.message
-        : `Upload failed (${res.status})`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
+  if (!res.ok) throwUploadError(res, data, "We could not upload your product images. Use JPEG, PNG, or WebP under 5 MB each.");
   return data;
 }
 
@@ -249,16 +256,7 @@ export async function apiUploadBookPdf(file, accessToken) {
     credentials: "include"
   });
   const data = await parseResponse(res);
-  if (!res.ok) {
-    const msg =
-      data && data.error && data.error.message
-        ? data.error.message
-        : `Upload failed (${res.status})`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
+  if (!res.ok) throwUploadError(res, data, "We could not upload the PDF. Use a file under 15 MB.");
   return data;
 }
 
@@ -281,16 +279,7 @@ export async function apiUploadProfileImage(file, accessToken) {
     credentials: "include"
   });
   const data = await parseResponse(res);
-  if (!res.ok) {
-    const msg =
-      data && data.error && data.error.message
-        ? data.error.message
-        : `Upload failed (${res.status})`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
+  if (!res.ok) throwUploadError(res, data, "We could not upload your profile photo. Use a JPEG or PNG under 5 MB.");
   return data;
 }
 
@@ -314,16 +303,7 @@ export async function apiUploadDeliveryProof(file, accessToken) {
     credentials: "include"
   });
   const data = await parseResponse(res);
-  if (!res.ok) {
-    const msg =
-      data && data.error && data.error.message
-        ? data.error.message
-        : `Upload failed (${res.status})`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
+  if (!res.ok) throwUploadError(res, data, "We could not upload the delivery photo. Try a clearer photo under 5 MB.");
   return data;
 }
 

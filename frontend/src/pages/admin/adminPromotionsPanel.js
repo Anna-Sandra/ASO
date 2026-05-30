@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Percent, Ticket } from "lucide-react";
-import { apiFetch } from "services/api";
+import { apiFetch , apiErrorMessage} from "services/api";
 import { h } from "utils/h";
 import { Button, GlassPanel, InlineNotice } from "components/ui";
 
@@ -52,7 +52,7 @@ export function AdminPromotionsPanel({ auth, confirm, toast, alert }) {
       setRows(Array.isArray(d.promotions) ? d.promotions : []);
       setTotal(Number(d.total) || 0);
     } catch (ex) {
-      setErr(ex.message || "Could not load promotions.");
+      setErr(apiErrorMessage(ex, "Could not load promotions."));
     }
   }, [auth, status, page]);
 
@@ -75,7 +75,7 @@ export function AdminPromotionsPanel({ auth, confirm, toast, alert }) {
       toast("Promotion approved.", { variant: "success" });
       await load();
     } catch (ex) {
-      await alert(ex.message || "Approve failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Approve failed"), { variant: "error" });
     }
   };
 
@@ -95,7 +95,7 @@ export function AdminPromotionsPanel({ auth, confirm, toast, alert }) {
       toast("Promotion rejected.", { variant: "success" });
       await load();
     } catch (ex) {
-      await alert(ex.message || "Reject failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Reject failed"), { variant: "error" });
     }
   };
 

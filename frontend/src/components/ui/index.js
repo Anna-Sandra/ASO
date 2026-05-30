@@ -11,6 +11,7 @@ import {
   X
 } from "lucide-react";
 import { h } from "utils/h";
+import { sanitizeErrorMessage } from "utils/userFacingError";
 
 const base =
   "tap-target inline-flex items-center justify-center gap-2 rounded-2xl font-medium transition-all duration-200 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base";
@@ -92,6 +93,12 @@ export function InlineNotice({ variant = "error", title, children, onDismiss, cl
           : "bg-rose-200/80 text-rose-900 dark:bg-rose-800/50 dark:text-rose-100";
   const pad = size === "sm" ? "p-2.5 pr-8" : "p-4 pr-10";
   const textCls = size === "sm" ? "text-xs leading-snug" : "text-sm leading-relaxed";
+  const body =
+    variant === "error" || variant === "warning"
+      ? typeof children === "string"
+        ? sanitizeErrorMessage(children, String(children))
+        : children
+      : children;
   return h(
     "div",
     {
@@ -110,7 +117,7 @@ export function InlineNotice({ variant = "error", title, children, onDismiss, cl
         ),
         h("div", { key: "body", className: "min-w-0 flex-1 pt-0.5" }, [
           title ? h("p", { key: "ti", className: "mb-1 text-xs font-bold uppercase tracking-wide opacity-90" }, title) : null,
-          h("div", { key: "msg", className: `${textCls} font-medium` }, children)
+          h("div", { key: "msg", className: `${textCls} font-medium` }, body)
         ].filter(Boolean))
       ]),
       onDismiss
@@ -147,7 +154,11 @@ export function Field({ label, error, children }) {
       : null;
   const controlEl = h("span", { key: `ctl-${uid}`, className: "block" }, children);
   const errEl = error
-    ? h(InlineNotice, { key: `er-${uid}`, variant: "error", size: "sm", className: "mt-1" }, error)
+    ? h(
+        InlineNotice,
+        { key: `er-${uid}`, variant: "error", size: "sm", className: "mt-1" },
+        typeof error === "string" ? sanitizeErrorMessage(error, error) : error
+      )
     : null;
   return h("label", { className: "block space-y-1.5" }, [labelEl, controlEl, errEl].filter(Boolean));
 }

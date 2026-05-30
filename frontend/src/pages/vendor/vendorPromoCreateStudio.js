@@ -10,7 +10,7 @@ import {
   Tag
 } from "lucide-react";
 import { useAuth, useNotice } from "context";
-import { apiFetch, apiUploadProductImages } from "services/api";
+import { apiFetch, apiUploadProductImages , apiErrorMessage} from "services/api";
 import { h } from "utils/h";
 import { Button, Field, InlineNotice, TextArea, TextInput } from "components/ui";
 import { formatGhc } from "utils/money";
@@ -306,7 +306,7 @@ export function VendorPromoCreateStudio({ products, inventoryErr, onCancel, onSu
       toast("Promo submitted — admin will review before it goes live on shop & deals.", { variant: "success" });
       onSuccess?.();
     } catch (e) {
-      setSubmitErr(e.message || "Could not publish promo");
+      setSubmitErr(apiErrorMessage(e, "Could not publish promo"));
     } finally {
       setBusy(false);
     }
@@ -327,7 +327,7 @@ export function VendorPromoCreateStudio({ products, inventoryErr, onCancel, onSu
       if (url) setImageUrl(url);
       else toast("Upload failed — try again.", { variant: "error" });
     } catch (ex) {
-      toast(ex.message || "Upload failed", { variant: "error" });
+      toast(apiErrorMessage(ex, "Upload failed"), { variant: "error" });
     } finally {
       setUploadBusy(false);
     }

@@ -3,6 +3,14 @@ import { createPortal } from "react-dom";
 import { AlertCircle, AlertTriangle, Info, Sparkles, X } from "lucide-react";
 import { h } from "utils/h";
 import { Button } from "components/ui";
+import { sanitizeErrorMessage } from "utils/userFacingError";
+
+function prepareUserMessage(message, variant) {
+  const m = String(message ?? "").trim();
+  if (!m) return "";
+  if (variant === "success") return m;
+  return sanitizeErrorMessage(m, m);
+}
 
 const NoticeContext = createContext({
   alert: async () => {},
@@ -49,7 +57,7 @@ export function NoticeProvider({ children }) {
         kind: "alert",
         variant,
         title,
-        message: String(message ?? ""),
+        message: prepareUserMessage(message, variant),
         okLabel,
         resolve: () => {
           resolve();
@@ -68,7 +76,7 @@ export function NoticeProvider({ children }) {
         kind: "confirm",
         variant: "warning",
         title,
-        message: String(message ?? ""),
+        message: prepareUserMessage(message, "warning"),
         confirmLabel,
         cancelLabel,
         resolve: (ok) => {
@@ -83,7 +91,7 @@ export function NoticeProvider({ children }) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const variant = opts.variant || "info";
     const duration = typeof opts.duration === "number" ? opts.duration : 4200;
-    setToasts((prev) => [...prev, { id, variant, message: String(message ?? "") }]);
+    setToasts((prev) => [...prev, { id, variant, message: prepareUserMessage(message, variant) }]);
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, duration);

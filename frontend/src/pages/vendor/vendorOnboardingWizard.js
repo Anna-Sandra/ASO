@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Building2, CheckCircle2, ChevronRight, Sparkles } from "lucide-react";
-import { apiFetch, apiUploadProductImages } from "services/api";
+import { apiFetch, apiUploadProductImages , apiErrorMessage} from "services/api";
 import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
 import { Button, Field, GlassPanel, InlineNotice, SelectInput, TextArea, TextInput } from "components/ui";
@@ -54,7 +54,7 @@ export function VendorOnboardingPage() {
       toast("Business created!", { variant: "success" });
       setStep(3);
     } catch (ex) {
-      setErr(ex.message || "Could not create business.");
+      setErr(apiErrorMessage(ex, "Could not create business."));
     } finally {
       setLoading(false);
     }
@@ -76,7 +76,7 @@ export function VendorOnboardingPage() {
       });
       toast(field === "logo" ? "Logo saved." : "Banner saved.", { variant: "success" });
     } catch (ex) {
-      setErr(ex.message || "Upload failed.");
+      setErr(apiErrorMessage(ex, "Upload failed."));
     } finally {
       setBrandBusy("");
       e.target.value = "";

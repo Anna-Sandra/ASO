@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Box, PlusCircle, Sparkles, Star } from "lucide-react";
 import { useAuth } from "context";
-import { apiFetch } from "services/api";
+import { apiFetch , apiErrorMessage} from "services/api";
 import { h } from "utils/h";
 import { Button, GlassCard, GlassPanel, InlineNotice } from "components/ui";
 
@@ -79,7 +79,7 @@ export function VendorReviewsPage() {
       })
       .catch((ex) => {
         if (cancelled) return;
-        setErr(ex.message || "Failed to load reviews");
+        setErr(apiErrorMessage(ex, "Failed to load reviews"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ImageIcon, Store, Trash2 } from "lucide-react";
 import { storeStatusLabel } from "utils/storeStatus";
-import { apiFetch, apiUploadProductImages } from "services/api";
+import { apiFetch, apiUploadProductImages , apiErrorMessage} from "services/api";
 import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
 import { Button, Field, GlassPanel, InlineNotice, SelectInput, TextArea, TextInput } from "components/ui";
@@ -43,7 +43,7 @@ export function VendorStoresPage() {
       const d = await apiFetch("/api/businesses/mine", { headers: { Authorization: `Bearer ${accessToken}` } });
       setRows(Array.isArray(d.businesses) ? d.businesses : []);
     } catch (e) {
-      setErr(e.message || "Could not load stores.");
+      setErr(apiErrorMessage(e, "Could not load stores."));
     }
   }, [accessToken]);
 
@@ -71,7 +71,7 @@ export function VendorStoresPage() {
       toast(field === "logo" ? "Logo removed." : "Banner removed.", { variant: "success" });
       await load();
     } catch (ex) {
-      setErr(ex.message || "Could not remove image.");
+      setErr(apiErrorMessage(ex, "Could not remove image."));
     } finally {
       setBrandBusy("");
     }
@@ -90,7 +90,7 @@ export function VendorStoresPage() {
       toast("Store deleted.", { variant: "success" });
       await load();
     } catch (ex) {
-      setErr(ex.message || "Could not delete store.");
+      setErr(apiErrorMessage(ex, "Could not delete store."));
     }
   };
 
@@ -111,7 +111,7 @@ export function VendorStoresPage() {
       toast(field === "logo" ? "Store logo updated." : "Store banner updated.", { variant: "success" });
       await load();
     } catch (ex) {
-      setErr(ex.message || "Could not update branding.");
+      setErr(apiErrorMessage(ex, "Could not update branding."));
     } finally {
       setBrandBusy("");
     }
@@ -146,7 +146,7 @@ export function VendorStoresPage() {
       setDescription("");
       await load();
     } catch (e) {
-      setErr(e.message || "Could not create store.");
+      setErr(apiErrorMessage(e, "Could not create store."));
     } finally {
       setLoading(false);
     }

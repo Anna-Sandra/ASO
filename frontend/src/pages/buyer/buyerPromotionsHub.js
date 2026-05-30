@@ -16,7 +16,7 @@ import {
   TrendingUp,
   Truck
 } from "lucide-react";
-import { apiFetch } from "services/api";
+import { apiFetch , apiErrorMessage} from "services/api";
 import { h, f } from "utils/h";
 import { BuyerLayout, CartDrawer } from "pages/buyer/screensBuyer";
 import { Button, GlassPanel, InlineNotice } from "components/ui";
@@ -375,7 +375,7 @@ export function BuyerDealsPage() {
     setErr("");
     apiFetch("/api/promotions/deals-catalog")
       .then(setData)
-      .catch((e) => setErr(e.message || "Could not load deals"));
+      .catch((e) => setErr(apiErrorMessage(e, "Could not load deals")));
   }, []);
 
   useEffect(() => {
@@ -583,7 +583,7 @@ export function BuyerCouponsPage() {
     setErr("");
     apiFetch("/api/promotions/coupons-catalog")
       .then(setData)
-      .catch((e) => setErr(e.message || "Could not load coupons"));
+      .catch((e) => setErr(apiErrorMessage(e, "Could not load coupons")));
   }, []);
 
   const coupons = data?.coupons || [];

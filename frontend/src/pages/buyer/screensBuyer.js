@@ -45,7 +45,7 @@ import {
 } from "lucide-react";
 import { useAuth, useCart, useNotice, useTheme } from "context";
 import { useSavedProducts } from "context/SavedProductsContext";
-import { apiFetch, apiUploadProfileImage, deleteAuthenticatedAccount } from "services/api";
+import { apiFetch, apiUploadProfileImage, deleteAuthenticatedAccount, apiErrorMessage } from "services/api";
 import { NotificationBell, NotificationsContent } from "pages/notifications/screensNotifications";
 import {
   CATEGORIES,
@@ -257,7 +257,7 @@ function BuyerReviewModal({ open, onClose, productId, orderId, productTitle }) {
       .catch((ex) => {
         if (!cancelled) {
           setReviewStatus(null);
-          setReviewStatusErr(ex.message || "Could not load review eligibility");
+          setReviewStatusErr(apiErrorMessage(ex, "Could not load review eligibility"));
         }
       })
       .finally(() => {
@@ -306,7 +306,7 @@ function BuyerReviewModal({ open, onClose, productId, orderId, productTitle }) {
           setReviewStatus((prev) => ({ ...(prev || {}), canSubmit: false, hasReview: true }));
         }
       }
-      setReviewMsg(ex.message || "Could not submit review");
+      setReviewMsg(apiErrorMessage(ex, "Could not submit review"));
     } finally {
       setSubmitting(false);
     }
@@ -516,7 +516,7 @@ export function ProductDetailPage() {
       })
       .catch((ex) => {
         if (!cancelled) {
-          setErr(ex.message || "Failed to load");
+          setErr(apiErrorMessage(ex, "Failed to load"));
           setProduct(null);
         }
       })
@@ -557,7 +557,7 @@ export function ProductDetailPage() {
       .catch((ex) => {
         if (!cancelled) {
           setReviewStatus(null);
-          setReviewStatusErr(ex.message || "Could not load review eligibility");
+          setReviewStatusErr(apiErrorMessage(ex, "Could not load review eligibility"));
         }
       });
     return () => {
@@ -624,7 +624,7 @@ export function ProductDetailPage() {
         { variant: "success" }
       );
     } catch (ex) {
-      toast(ex.message || "Could not send request.", { variant: "error" });
+      toast(apiErrorMessage(ex, "Could not send request."), { variant: "error" });
     } finally {
       setSvcSubmitting(false);
     }
@@ -673,7 +673,7 @@ export function ProductDetailPage() {
           /* keep error message below */
         }
       }
-      setReviewMsg(ex.message || "Could not submit review");
+      setReviewMsg(apiErrorMessage(ex, "Could not submit review"));
     } finally {
       setSubmitting(false);
     }
@@ -2690,7 +2690,7 @@ export function CheckoutPage() {
           "You don’t have permission to check out with this login. Log out and sign in again, or use a buyer account."
         );
       } else {
-        setErr(ex.message || "Could not start payment.");
+        setErr(apiErrorMessage(ex, "Could not start payment."));
       }
       setLoading(false);
     }
@@ -2916,7 +2916,7 @@ export function SavedProductsPage() {
       })
       .catch((ex) => {
         if (!cancelled) {
-          setErr(ex.message || "Could not load saved items");
+          setErr(apiErrorMessage(ex, "Could not load saved items"));
           setProducts([]);
         }
       })
@@ -3169,7 +3169,7 @@ export function ShopPage() {
         setRecRows(Array.isArray(d.rows) ? d.rows : []);
       })
       .catch((ex) => {
-        if (!cancelled) setRecErr(ex.message || "Could not load recommendations");
+        if (!cancelled) setRecErr(apiErrorMessage(ex, "Could not load recommendations"));
       })
       .finally(() => {
         if (!cancelled) setRecLoading(false);
@@ -3194,7 +3194,7 @@ export function ShopPage() {
       })
       .catch((ex) => {
         if (!cancelled) {
-          setListErr(ex.message || "Could not load products");
+          setListErr(apiErrorMessage(ex, "Could not load products"));
           setProducts([]);
         }
       })
@@ -3458,7 +3458,7 @@ export function ProfilePage() {
       if (data.user) setUser(data.user);
       setSaveOk("Profile photo updated.");
     } catch (ex) {
-      setSaveErr(ex.message || "Upload failed");
+      setSaveErr(apiErrorMessage(ex, "Upload failed"));
     } finally {
       setPhotoLoading(false);
     }
@@ -3478,7 +3478,7 @@ export function ProfilePage() {
       if (data.user) setUser(data.user);
       setSaveOk("Profile photo removed.");
     } catch (ex) {
-      setSaveErr(ex.message || "Could not remove photo");
+      setSaveErr(apiErrorMessage(ex, "Could not remove photo"));
     } finally {
       setPhotoLoading(false);
     }
@@ -3498,7 +3498,7 @@ export function ProfilePage() {
       if (data.user) setUser(data.user);
       setSaveOk("Profile updated.");
     } catch (ex) {
-      setSaveErr(ex.message || "Save failed");
+      setSaveErr(apiErrorMessage(ex, "Save failed"));
     } finally {
       setSaving(false);
     }
@@ -3524,7 +3524,7 @@ export function ProfilePage() {
       await alert("Your account was deleted.", { variant: "success", title: "Done" });
       nav("/register", { replace: true });
     } catch (ex) {
-      setSaveErr(ex.message || "Could not delete account");
+      setSaveErr(apiErrorMessage(ex, "Could not delete account"));
     } finally {
       setDeleting(false);
     }
@@ -3731,7 +3731,7 @@ export function BuyerHelpSupportPage() {
         if (!cancelled) setCfg(d);
       })
       .catch((ex) => {
-        if (!cancelled) setCfgErr(ex.message || "Could not load contact options");
+        if (!cancelled) setCfgErr(apiErrorMessage(ex, "Could not load contact options"));
       });
     return () => {
       cancelled = true;
@@ -3906,7 +3906,7 @@ export function BuyerMessagesPage() {
     setErr("");
     loadThreads()
       .catch((ex) => {
-        if (!cancelled) setErr(ex.message || "Could not load messages");
+        if (!cancelled) setErr(apiErrorMessage(ex, "Could not load messages"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -3962,7 +3962,7 @@ export function BuyerMessagesPage() {
       setReplyByPeer((prev) => ({ ...prev, [pid]: "" }));
       await loadThreads();
     } catch (ex) {
-      setErr(ex.message || "Could not send reply");
+      setErr(apiErrorMessage(ex, "Could not send reply"));
     } finally {
       setSending(null);
     }
@@ -4238,7 +4238,7 @@ export function BuyerOrdersPage() {
       setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, ...updated } : o)));
       toast("Order cancelled.", { variant: "success" });
     } catch (ex) {
-      toast(ex.message || "Could not cancel order", { variant: "error" });
+      toast(apiErrorMessage(ex, "Could not cancel order"), { variant: "error" });
     } finally {
       setCancellingId("");
     }
@@ -4260,7 +4260,7 @@ export function BuyerOrdersPage() {
       setOrders((prev) => prev.filter((o) => o.id !== order.id));
       toast("Order removed.", { variant: "success" });
     } catch (ex) {
-      toast(ex.message || "Could not remove order", { variant: "error" });
+      toast(apiErrorMessage(ex, "Could not remove order"), { variant: "error" });
     }
   };
 
@@ -4274,7 +4274,7 @@ export function BuyerOrdersPage() {
         if (!cancelled) setOrders(d.orders || []);
       })
       .catch((ex) => {
-        if (!cancelled) setErr(ex.message || "Could not load orders");
+        if (!cancelled) setErr(apiErrorMessage(ex, "Could not load orders"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -4739,7 +4739,7 @@ export function PaymentSuccessPage() {
         }
       } catch (ex) {
         if (!cancelled) {
-          setPollErr(ex.message || "Could not verify order");
+          setPollErr(apiErrorMessage(ex, "Could not verify order"));
           setPhase("error");
         }
         return true;

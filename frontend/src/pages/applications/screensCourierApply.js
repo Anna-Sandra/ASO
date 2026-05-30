@@ -6,37 +6,7 @@ import { apiFetch, fetchPublicPlatformConfig, getApiBase } from "services/api";
 import { BuyerLayout, CartDrawer } from "pages/buyer/screensBuyer";
 import { h, f } from "utils/h";
 import { Button, Field, GlassPanel, InlineNotice, TextArea, TextInput } from "components/ui";
-
-function apiErrorMessage(ex, fallback) {
-  const m = ex && typeof ex.message === "string" ? ex.message.trim() : "";
-  if (m && m !== "Validation error") return m;
-  return m || fallback || "Something went wrong.";
-}
-
-function messageFromApiJson(data) {
-  if (!data || typeof data !== "object") return "";
-  const nested = data.error && typeof data.error.message === "string" ? data.error.message.trim() : "";
-  if (nested) return nested;
-  return typeof data.message === "string" ? data.message.trim() : "";
-}
-
-function humanizeCourierApplyError(raw) {
-  const m = String(raw || "").trim();
-  if (!m) return "Could not submit your application. Please try again.";
-  if (/Too small:\s*expected string to have >=\s*15/i.test(m)) {
-    return "Please write at least a short paragraph (15+ characters) in “About your delivery experience” so admins can review your application.";
-  }
-  if (/Too small:\s*expected string to have >=\s*5/i.test(m)) {
-    return "Please enter a complete phone number.";
-  }
-  if (/Too small:\s*expected string to have >=\s*1/i.test(m)) {
-    return "Please fill in all required fields.";
-  }
-  if (/Invalid option:\s*expected one of/i.test(m)) {
-    return "Something in the form did not validate. Refresh and try again.";
-  }
-  return m;
-}
+import { apiErrorMessage, messageFromApiJson, sanitizeErrorMessage } from "utils/userFacingError";
 
 export function CourierApplicationPage() {
   const nav = useNavigate();
@@ -182,7 +152,7 @@ export function CourierApplicationPage() {
       toast("Application submitted! We’ll notify you after review.", { variant: "success" });
       nav("/", { replace: true });
     } catch (ex) {
-      setErr(humanizeCourierApplyError(apiErrorMessage(ex, "Could not submit application.")));
+      setErr(sanitizeErrorMessage(apiErrorMessage(ex, "Could not submit application."), "Could not submit your application. Please try again."));
     } finally {
       setLoading(false);
     }

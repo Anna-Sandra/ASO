@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { useAuth, useNotifications } from "context";
-import { apiFetch } from "services/api";
+import { apiFetch , apiErrorMessage} from "services/api";
 import { h } from "utils/h";
 import { Button, GlassPanel, InlineNotice } from "components/ui";
 
@@ -63,7 +63,7 @@ export function NotificationsContent({ ordersLink = "/orders", backLink = "/", b
       });
       setItems(Array.isArray(d?.notifications) ? d.notifications : []);
     } catch (ex) {
-      setErr(ex.message || "Could not load notifications");
+      setErr(apiErrorMessage(ex, "Could not load notifications"));
       setItems([]);
     }
   }, [accessToken]);
@@ -112,7 +112,7 @@ export function NotificationsContent({ ordersLink = "/orders", backLink = "/", b
       setItems((prev) => prev.map((n) => ({ ...n, read: true })));
       await refresh();
     } catch (ex) {
-      setErr(ex.message || "Could not mark all read");
+      setErr(apiErrorMessage(ex, "Could not mark all read"));
     } finally {
       setMarking(false);
     }

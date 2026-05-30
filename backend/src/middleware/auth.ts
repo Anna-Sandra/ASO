@@ -39,7 +39,7 @@ export function optionalProtect(req: Request, _res: Response, next: NextFunction
 export function authorize(...roles: UserRole[]) {
   return (req: Request, _res: Response, next: NextFunction) => {
     if (!req.user) return next(new HttpError(401, "Unauthorized"));
-    if (!roles.includes(req.user.role)) return next(new HttpError(403, "Forbidden"));
+    if (!roles.includes(req.user.role)) return next(new HttpError(403, "You do not have permission to use this feature."));
     next();
   };
 }

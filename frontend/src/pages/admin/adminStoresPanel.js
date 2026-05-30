@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ExternalLink, Store } from "lucide-react";
-import { apiFetch } from "services/api";
+import { apiFetch , apiErrorMessage} from "services/api";
 import { h } from "utils/h";
 import { storeStatusLabel } from "utils/storeStatus";
 import { Button, GlassPanel, InlineNotice } from "components/ui";
@@ -38,7 +38,7 @@ export function AdminStoresPanel({ auth, confirm, toast, alert }) {
       setRows(Array.isArray(d.businesses) ? d.businesses : []);
       setTotal(Number(d.total) || 0);
     } catch (ex) {
-      setErr(ex.message || "Could not load stores.");
+      setErr(apiErrorMessage(ex, "Could not load stores."));
     }
   }, [auth, status, page, search]);
 
@@ -73,7 +73,7 @@ export function AdminStoresPanel({ auth, confirm, toast, alert }) {
         toast("Store rejected.", { variant: "success" });
         await load();
       } catch (ex) {
-        await alert(ex.message || "Reject failed", { variant: "error" });
+        await alert(apiErrorMessage(ex, "Reject failed"), { variant: "error" });
       }
       return;
     }
@@ -82,7 +82,7 @@ export function AdminStoresPanel({ auth, confirm, toast, alert }) {
       toast("Store approved and is now live.", { variant: "success" });
       await load();
     } catch (ex) {
-      await alert(ex.message || "Approve failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Approve failed"), { variant: "error" });
     }
   };
 

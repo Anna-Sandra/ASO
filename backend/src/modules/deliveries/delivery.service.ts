@@ -72,7 +72,7 @@ export async function assertDeliveryParticipant(
   if (role === "admin" || buyer) return;
   if (role === "seller" && (await sellerTouchesOrder(userId, order))) return;
   if (role === "rider" && delivery?.assignedRiderId && delivery.assignedRiderId.toString() === userId) return;
-  throw new HttpError(403, "Forbidden");
+  throw new HttpError(403, "You do not have permission to view this delivery.");
 }
 
 function applyOrderDropoffToDelivery(d: HydratedDocument<DeliveryDoc>, order: HydratedDocument<OrderDoc> | OrderDoc): boolean {
@@ -229,7 +229,7 @@ export async function assignRiderToDelivery(params: {
     throw new HttpError(403, "Only admins or vendors may assign riders.");
   }
   if (params.actorRole === "seller" && !(await sellerTouchesOrder(params.actorId, order))) {
-    throw new HttpError(403, "Forbidden");
+    throw new HttpError(403, "You do not have permission to view this delivery.");
   }
 
   const rider = await RiderProfile.findOne({ userId: new mongoose.Types.ObjectId(riderUserId) }).lean();
@@ -285,9 +285,11 @@ export async function setEstimatedArrival(params: {
   if (!d) throw new HttpError(404, "Delivery not found");
 
   await assertDeliveryParticipant(params.actorId, params.actorRole, order, d);
-  if (!["seller", "admin", "rider"].includes(params.actorRole)) throw new HttpError(403, "Forbidden");
+  if (!["seller", "admin", "rider"].includes(params.actorRole)) {
+    throw new HttpError(403, "You do not have permission to update the delivery ETA.");
+  }
   if (params.actorRole === "rider" && d.assignedRiderId?.toString() !== params.actorId) {
-    throw new HttpError(403, "Forbidden");
+    throw new HttpError(403, "Only the assigned rider can update the ETA for this order.");
   }
 
   d.estimatedArrivalMinutes = Math.max(0, Math.min(10080, Math.round(params.minutes)));
@@ -324,9 +326,11 @@ export async function advanceDeliveryStage(params: {
   await assertDeliveryParticipant(params.actorId, params.actorRole, order, d);
 
   if (params.nextStage === "cancelled") {
-    if (params.actorRole !== "admin" && params.actorRole !== "seller") throw new HttpError(403, "Forbidden");
+    if (params.actorRole !== "admin" && params.actorRole !== "seller") {
+      throw new HttpError(403, "Only the vendor or an admin can cancel this delivery.");
+    }
     if (params.actorRole === "seller" && !(await sellerTouchesOrder(params.actorId, order))) {
-      throw new HttpError(403, "Forbidden");
+      throw new HttpError(403, "You can only cancel deliveries for your own orders.");
     }
     pushHistory(d, "cancelled", new mongoose.Types.ObjectId(params.actorId), "Cancelled");
     d.currentStage = "cancelled";
@@ -335,8 +339,12 @@ export async function advanceDeliveryStage(params: {
   }
 
   if (sellerStages.includes(params.nextStage) || params.nextStage === "order_placed") {
-    if (!(params.actorRole === "seller" || params.actorRole === "admin")) throw new HttpError(403, "Forbidden");
-    if (params.actorRole === "seller" && !(await sellerTouchesOrder(params.actorId, order))) throw new HttpError(403, "Forbidden");
+    if (!(params.actorRole === "seller" || params.actorRole === "admin")) {
+      throw new HttpError(403, "Only the vendor or an admin can update this delivery stage.");
+    }
+    if (params.actorRole === "seller" && !(await sellerTouchesOrder(params.actorId, order))) {
+      throw new HttpError(403, "You can only update deliveries for your own orders.");
+    }
     if (params.nextStage === "order_placed") throw new HttpError(400, "Cannot revert to placed.");
     if (STAGE_INDEX[d.currentStage] >= STAGE_INDEX.delivered || d.currentStage === "cancelled") {
       throw new HttpError(400, "Already finalized.");

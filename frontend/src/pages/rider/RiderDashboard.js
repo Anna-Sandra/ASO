@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { LogOut, Package } from "lucide-react";
 import { useAuth, useTheme } from "context";
-import { apiFetch } from "services/api";
+import { apiFetch, apiErrorMessage } from "services/api";
 import { DeliveryLive } from "components/features/DeliveryLive";
 import { ThemeToggleButton } from "components/ui";
 import { h } from "utils/h";
@@ -31,7 +31,7 @@ export default function RiderDashboard() {
         });
       })
       .catch((ex) => {
-        if (!cancelled) setErr(ex?.message || "Could not load assignments");
+        if (!cancelled) setErr(apiErrorMessage(ex, "Could not load assignments"));
       });
     return () => {
       cancelled = true;

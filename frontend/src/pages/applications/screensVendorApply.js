@@ -17,42 +17,7 @@ import { CATEGORY_LABELS, PRODUCT_CATEGORY_VALUES } from "config/catalog";
 import { BuyerLayout, CartDrawer } from "pages/buyer/screensBuyer";
 import { h, f } from "utils/h";
 import { Button, Field, GlassPanel, InlineNotice, SelectInput, TextArea, TextInput } from "components/ui";
-
-function apiErrorMessage(ex, fallback) {
-  const m = ex && typeof ex.message === "string" ? ex.message.trim() : "";
-  if (m && m !== "Validation error") return m;
-  return m || fallback || "Something went wrong.";
-}
-
-/** Backend uses `{ error: { message } }`; some paths use `{ message }`. */
-function messageFromApiJson(data) {
-  if (!data || typeof data !== "object") return "";
-  const nested = data.error && typeof data.error.message === "string" ? data.error.message.trim() : "";
-  if (nested) return nested;
-  return typeof data.message === "string" ? data.message.trim() : "";
-}
-
-/** Turn legacy Zod-style phrases into plain language (fallback if API is old). */
-function humanizeVendorApplyError(raw) {
-  const m = String(raw || "").trim();
-  if (!m) return "Could not submit your application. Please try again.";
-  if (/Too small:\s*expected string to have >=\s*10/i.test(m)) {
-    return "Shop description must be at least 10 characters. Tell buyers what you sell and what they can expect from your shop.";
-  }
-  if (/Too small:\s*expected string to have >=\s*5/i.test(m)) {
-    return "Please enter a complete phone number.";
-  }
-  if (/Too small:\s*expected string to have >=\s*1/i.test(m)) {
-    return "Please fill in all required fields.";
-  }
-  if (/expected string,\s*received undefined/i.test(m)) {
-    return "Something was missing from the form. Refresh the page, fill every required field, and try again.";
-  }
-  if (/Invalid option:\s*expected one of/i.test(m)) {
-    return "Please choose a valid option (for example category or on-site / off-site).";
-  }
-  return m;
-}
+import { apiErrorMessage, messageFromApiJson } from "utils/userFacingError";
 
 export function VendorApplicationPage() {
   const nav = useNavigate();
@@ -215,7 +180,7 @@ export function VendorApplicationPage() {
       toast("Application submitted! We will email you after review.", { variant: "success" });
       nav("/", { replace: true });
     } catch (ex) {
-      setErr(humanizeVendorApplyError(apiErrorMessage(ex, "Could not submit application.")));
+      setErr(apiErrorMessage(ex, "Could not submit your application. Please try again."));
     } finally {
       setLoading(false);
     }

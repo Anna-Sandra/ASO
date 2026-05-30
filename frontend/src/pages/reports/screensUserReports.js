@@ -24,7 +24,7 @@ import {
   UserX
 } from "lucide-react";
 import { useAuth, useNotice } from "context";
-import { apiFetch, getApiBase } from "services/api";
+import { apiFetch, getApiBase , apiErrorMessage} from "services/api";
 import { h, f } from "utils/h";
 import { Badge, GlassCard, InlineNotice } from "components/ui";
 import { BuyerLayout, CartDrawer } from "pages/buyer/screensBuyer";
@@ -294,7 +294,7 @@ function ReportPanelInner({ variant }) {
       } catch (ex) {
         if (!cancelled) {
           setContextOrder(null);
-          setContextErr(ex.message || "Could not load order details for this report.");
+          setContextErr(apiErrorMessage(ex, "Could not load order details for this report."));
         }
       }
     })();
@@ -337,7 +337,7 @@ function ReportPanelInner({ variant }) {
           setTotal(d.total || 0);
         }
       } catch (ex) {
-        if (!cancelled) setListErr(ex.message || "Could not load your reports.");
+        if (!cancelled) setListErr(apiErrorMessage(ex, "Could not load your reports."));
       }
     })();
     return () => {
@@ -378,7 +378,7 @@ function ReportPanelInner({ variant }) {
       }
       if (data.url) setEvidenceUrls((prev) => [...prev, data.url].slice(0, 3));
     } catch (ex) {
-      setSubmitErr(ex.message || "Upload failed.");
+      setSubmitErr(apiErrorMessage(ex, "Upload failed."));
     } finally {
       setEvidenceUploading(false);
     }
@@ -418,7 +418,7 @@ function ReportPanelInner({ variant }) {
       setPage(1);
       setListNonce((n) => n + 1);
     } catch (ex) {
-      setSubmitErr(ex.message || "Could not submit report.");
+      setSubmitErr(apiErrorMessage(ex, "Could not submit report."));
     } finally {
       setSubmitting(false);
     }

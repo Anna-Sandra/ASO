@@ -88,7 +88,7 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
 
   const sid = req.user!.id;
   const touchesSeller = order.items.some((it) => it.sellerId.toString() === sid);
-  if (!touchesSeller) throw new HttpError(403, "Forbidden");
+  if (!touchesSeller) throw new HttpError(403, "You can only update orders that include your products.");
 
   if (status === "cancelled") {
     if (!["pending_payment", "paid", "processing", "awaiting_vendor_payment"].includes(order.status)) {
@@ -105,11 +105,17 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
     if (order.status === "pending_payment" || order.status === "awaiting_vendor_payment") {
       throw new HttpError(400, "Order not paid yet — confirm buyer payment first if they paid off-platform");
     }
-    if (order.status === "cancelled" || order.status === "delivered") throw new HttpError(400, "Invalid state");
-    if (status === "processing" && order.status !== "paid") throw new HttpError(400, "Invalid transition");
-    if (status === "sent_for_delivery" && !["paid", "processing"].includes(order.status)) throw new HttpError(400, "Invalid transition");
+    if (order.status === "cancelled" || order.status === "delivered") {
+      throw new HttpError(400, "This order is already completed or cancelled.");
+    }
+    if (status === "processing" && order.status !== "paid") {
+      throw new HttpError(400, "You can only start preparing after the order is paid.");
+    }
+    if (status === "sent_for_delivery" && !["paid", "processing"].includes(order.status)) {
+      throw new HttpError(400, "Mark the order as preparing before sending it for delivery.");
+    }
     if (status === "delivered" && !["paid", "processing", "sent_for_delivery"].includes(order.status)) {
-      throw new HttpError(400, "Invalid transition");
+      throw new HttpError(400, "Complete the earlier delivery steps before marking delivered.");
     }
     order.status = status as typeof order.status;
     if (status === "delivered") {
@@ -151,7 +157,7 @@ export const deleteVendorOrder = asyncHandler(async (req: Request, res: Response
 
   const sid = new mongoose.Types.ObjectId(req.user!.id);
   const touchesSeller = order.items.some((it) => it.sellerId.equals(sid));
-  if (!touchesSeller) throw new HttpError(403, "Forbidden");
+  if (!touchesSeller) throw new HttpError(403, "You can only update orders that include your products.");
 
   if (!["pending_payment", "cancelled"].includes(order.status)) {
     throw new HttpError(
@@ -177,7 +183,7 @@ export const confirmVendorPaymentReceived = asyncHandler(async (req: Request, re
 
   const sid = new mongoose.Types.ObjectId(req.user!.id);
   const touchesSeller = order.items.some((it) => it.sellerId.equals(sid));
-  if (!touchesSeller) throw new HttpError(403, "Forbidden");
+  if (!touchesSeller) throw new HttpError(403, "You can only update orders that include your products.");
 
   const confirmed = order.confirmedSellerIds || [];
   if (!confirmed.some((id) => id.equals(sid))) {

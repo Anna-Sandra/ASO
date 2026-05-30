@@ -47,7 +47,7 @@ import {
   Bike
 } from "lucide-react";
 import { useAuth, useNotice, useTheme } from "context";
-import { apiFetch, getApiBase } from "services/api";
+import { apiFetch, getApiBase, apiErrorMessage } from "services/api";
 import { CATEGORY_LABELS, withAllCategoryFirst } from "config/catalog";
 import { LISTING_STOCK_WHEN_AVAILABLE } from "config/listingStock";
 import { formatGhc } from "utils/money";
@@ -1383,7 +1383,7 @@ export function AdminPage() {
             messages: []
           });
       } catch (ex) {
-        toast(ex.message || "Could not open thread", { variant: "danger" });
+        toast(apiErrorMessage(ex, "Could not open thread"), { variant: "danger" });
       }
     },
     [auth]
@@ -1408,7 +1408,7 @@ export function AdminPage() {
       await loadConversations();
       toast("Message sent", { variant: "success" });
     } catch (ex) {
-      toast(ex.message || "Send failed", { variant: "danger" });
+      toast(apiErrorMessage(ex, "Send failed"), { variant: "danger" });
     } finally {
       setAdminMsgSending(false);
     }
@@ -1502,7 +1502,7 @@ export function AdminPage() {
         else if (tab === "settings") await loadSettings();
         else if (tab === "logs") await loadDashboard();
       } catch (ex) {
-        setErr(ex.message || "Load failed");
+        setErr(apiErrorMessage(ex, "Load failed"));
       } finally {
         setLoading(false);
       }
@@ -1631,7 +1631,7 @@ export function AdminPage() {
         setViewUser(d);
       }
     } catch (ex) {
-      await alert(ex.message || "Update failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Update failed"), { variant: "error" });
     }
   };
 
@@ -1664,7 +1664,7 @@ export function AdminPage() {
       await loadUsers();
       await loadRiders();
     } catch (ex) {
-      await alert(ex.message || "Could not grant admin", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Could not grant admin"), { variant: "error" });
     } finally {
       setAddAdminBusy(false);
     }
@@ -1690,7 +1690,7 @@ export function AdminPage() {
       await loadUsers();
       await loadRiders();
     } catch (ex) {
-      await alert(ex.message || "Could not remove admin", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Could not remove admin"), { variant: "error" });
     }
   };
 
@@ -1744,7 +1744,7 @@ export function AdminPage() {
       await loadVendorApps();
       setVendorVerificationApp(null);
     } catch (ex) {
-      await alert(ex.message || "Update failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Update failed"), { variant: "error" });
     }
   };
 
@@ -1778,7 +1778,7 @@ export function AdminPage() {
       await loadRiders();
       loadNavBadges();
     } catch (ex) {
-      await alert(ex.message || "Update failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Update failed"), { variant: "error" });
     }
   };
 
@@ -1799,7 +1799,7 @@ export function AdminPage() {
       const d = await apiFetch(`/api/admin/users/${u.id}/summary`, auth);
       setViewUser(d);
     } catch (ex) {
-      await alert(ex.message || "Couldn’t load user", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Couldn’t load user"), { variant: "error" });
     }
   };
 
@@ -1822,7 +1822,7 @@ export function AdminPage() {
       await loadListings();
       await loadDashboard();
     } catch (ex) {
-      await alert(ex.message || "Approve failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Approve failed"), { variant: "error" });
     }
   };
 
@@ -1861,7 +1861,7 @@ export function AdminPage() {
       await loadDashboard();
       loadNavBadges();
     } catch (ex) {
-      await alert(ex.message || "Bulk approve failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Bulk approve failed"), { variant: "error" });
     } finally {
       setBulkApproveBusy(false);
     }
@@ -1889,7 +1889,7 @@ export function AdminPage() {
       await loadListings();
       await loadDashboard();
     } catch (ex) {
-      await alert(ex.message || "Reject failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Reject failed"), { variant: "error" });
     }
   };
 
@@ -1928,7 +1928,7 @@ export function AdminPage() {
       setEditProduct(null);
       await loadListings();
     } catch (ex) {
-      await alert(ex.message || "Save failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Save failed"), { variant: "error" });
     }
   };
 
@@ -1942,7 +1942,7 @@ export function AdminPage() {
       toast(p.flagged ? "Listing unflagged" : "Listing flagged", { variant: "success" });
       await loadListings();
     } catch (ex) {
-      await alert(ex.message || "Update failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Update failed"), { variant: "error" });
     }
   };
 
@@ -1959,7 +1959,7 @@ export function AdminPage() {
       await loadListings();
       await loadDashboard();
     } catch (ex) {
-      await alert(ex.message || "Delete failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Delete failed"), { variant: "error" });
     }
   };
 
@@ -1983,7 +1983,7 @@ export function AdminPage() {
     try {
       await runPaystackRefundForOrder(o);
     } catch (ex) {
-      await alert(ex.message || "Refund failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Refund failed"), { variant: "error" });
     }
   };
 
@@ -2003,7 +2003,7 @@ export function AdminPage() {
       loadNavBadges();
       if (tab === "payments") await refreshPaymentsTab();
     } catch (ex) {
-      await alert(ex.message || "Could not update order", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Could not update order"), { variant: "error" });
     }
   };
 
@@ -2021,7 +2021,7 @@ export function AdminPage() {
       await loadReports();
       await loadDashboard();
     } catch (ex) {
-      await alert(ex.message || "Update failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Update failed"), { variant: "error" });
     }
   };
 
@@ -2045,7 +2045,7 @@ export function AdminPage() {
       loadNavBadges();
       return true;
     } catch (ex) {
-      await alert(ex.message || "Delete failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Delete failed"), { variant: "error" });
       return false;
     }
   };
@@ -2161,7 +2161,7 @@ export function AdminPage() {
       await loadRiders();
       await loadDashboard();
     } catch (ex) {
-      await alert(ex.message || "Could not create rider", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Could not create rider"), { variant: "error" });
     } finally {
       setAddRiderBusy(false);
     }
@@ -2212,7 +2212,7 @@ export function AdminPage() {
       toast("Settings saved", { variant: "success" });
       await loadSettings();
     } catch (ex) {
-      await alert(ex.message || "Save failed", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Save failed"), { variant: "error" });
     } finally {
       setSavingSettings(false);
     }
@@ -2261,7 +2261,7 @@ export function AdminPage() {
       toast(d.message || "Message was accepted for delivery.", { variant: "success" });
       await loadEmailLogs();
     } catch (ex) {
-      await alert(ex.message || "Could not send email.", { variant: "error" });
+      await alert(apiErrorMessage(ex, "Could not send email."), { variant: "error" });
     } finally {
       setEmailTestSending(false);
     }

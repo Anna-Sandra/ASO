@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ChevronRight, Clock, MapPin, Package, Share2, Sparkles, Star, Truck } from "lucide-react";
-import { apiFetch, fetchBusinessStorefront, getApiBase } from "services/api";
+import { apiFetch, fetchBusinessStorefront, getApiBase , apiErrorMessage} from "services/api";
 import { useAuth, useNotice } from "context";
 import { BuyerLayout, CartDrawer, ReviewStars } from "pages/buyer/screensBuyer";
 import { formatGhc } from "utils/money";
@@ -791,7 +791,7 @@ export function BusinessStorefrontPage() {
         setErr("");
       } catch (e) {
         setPayload(null);
-        setErr(String(e.message || "").trim() || "Store not available.");
+        setErr(apiErrorMessage(e, "Store not available."));
       } finally {
         if (on) setBusy(false);
       }
@@ -860,7 +860,7 @@ export function BusinessStorefrontPage() {
       .catch((ex) => {
         if (!cancelled) {
           setStoreReviewStatus(null);
-          setStoreReviewStatusErr(ex.message || "Could not load store review eligibility");
+          setStoreReviewStatusErr(apiErrorMessage(ex, "Could not load store review eligibility"));
         }
       });
     return () => {
@@ -907,7 +907,7 @@ export function BusinessStorefrontPage() {
       setStoreReviewMsg("Thanks — your store review was posted.");
       toast("Store review posted", { variant: "success" });
     } catch (ex) {
-      setStoreReviewMsg(ex.message || "Could not submit store review");
+      setStoreReviewMsg(apiErrorMessage(ex, "Could not submit store review"));
     } finally {
       setStoreReviewSubmitting(false);
     }

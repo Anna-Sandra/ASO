@@ -20,7 +20,7 @@ import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import "leaflet/dist/leaflet.css";
-import { apiFetch, apiUploadDeliveryProof } from "services/api";
+import { apiFetch, apiUploadDeliveryProof, apiErrorMessage } from "services/api";
 import { openDeliverySocket } from "services/deliverySocket";
 import { formatGhc } from "utils/money";
 
@@ -308,7 +308,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     setLoading(true);
     loadBundle()
       .catch((ex) => {
-        if (!cancelled) setFetchErr(ex?.message || "Could not load delivery");
+        if (!cancelled) setFetchErr(apiErrorMessage(ex, "We could not load delivery tracking. Try refreshing the page."));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -466,7 +466,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
       setDeliveryNote("");
       setSignatureTouched(false);
     } catch (ex) {
-      setGeoErr(typeof ex?.message === "string" ? ex.message : "Could not update stage");
+      setGeoErr(apiErrorMessage(ex, "Could not update delivery status. Try again."));
     } finally {
       setBusyStage("");
     }
@@ -542,7 +542,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
         deliveryNote: deliveryNote.trim()
       });
     } catch (ex) {
-      setGeoErr(typeof ex?.message === "string" ? ex.message : "Could not complete delivery");
+      setGeoErr(apiErrorMessage(ex, "Could not complete delivery. Check your photo and try again."));
       setBusyStage("");
     }
   };

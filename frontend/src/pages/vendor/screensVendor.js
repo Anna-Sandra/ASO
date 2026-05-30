@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { useAuth, useNotice, useTheme } from "context";
 import { NotificationBell, NotificationsContent } from "pages/notifications/screensNotifications";
-import { apiFetch, apiUploadBookPdf, apiUploadProductImages, apiUploadProfileImage, deleteAuthenticatedAccount } from "services/api";
+import { apiFetch, apiUploadBookPdf, apiUploadProductImages, apiUploadProfileImage, deleteAuthenticatedAccount, apiErrorMessage } from "services/api";
 import { trackVendorAnalyticsEvent, VendorRevenueLineChart } from "components/charts/vendorCharts";
 import { VendorDashboardBody } from "pages/vendor/VendorDashboardBody";
 import {
@@ -326,7 +326,7 @@ function VendorProductPhotos({ accessToken, imageList, setImageList, setErr, lab
       }
       setImageList((prev) => [...prev, ...allUrls]);
     } catch (ex) {
-      setErr(ex.message || "Upload failed");
+      setErr(apiErrorMessage(ex, "Upload failed"));
     }
   };
   const remove = (idx) =>
@@ -501,7 +501,7 @@ function VendorBookPdfRow({ accessToken, pdfUrl, onPdfUrlChange, setErr }) {
       const data = await apiUploadBookPdf(file, accessToken);
       if (data && data.url) onPdfUrlChange(String(data.url));
     } catch (ex) {
-      setErr(ex.message || "PDF upload failed");
+      setErr(apiErrorMessage(ex, "PDF upload failed"));
     }
   };
   return h(Field, { label: "PDF companion (optional)" }, h("div", { className: "space-y-2" }, [
@@ -948,7 +948,7 @@ export function VendorDashboardPage() {
         setMyProducts(p.products || []);
       })
       .catch((ex) => {
-        if (!cancelled) setErr(ex.message || "Failed to load dashboard");
+        if (!cancelled) setErr(apiErrorMessage(ex, "Failed to load dashboard"));
       });
     return () => {
       cancelled = true;
@@ -1057,7 +1057,7 @@ export function VendorProductsPage() {
     setLoading(true);
     apiFetch("/api/products/mine", { headers: { Authorization: `Bearer ${accessToken}` } })
       .then((d) => setRows(d.products || []))
-      .catch((ex) => setErr(ex.message || "Failed to load"))
+      .catch((ex) => setErr(apiErrorMessage(ex, "Failed to load")))
       .finally(() => setLoading(false));
   };
 
@@ -1088,7 +1088,7 @@ export function VendorProductsPage() {
       await apiFetch(`/api/products/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } });
       load();
     } catch (ex) {
-      await alert(ex.message || "Delete failed", { variant: "error", title: "Couldn’t delete" });
+      await alert(apiErrorMessage(ex, "Delete failed"), { variant: "error", title: "Couldn’t delete" });
     }
   };
 
@@ -1458,7 +1458,7 @@ export function VendorAddProductPage() {
       const returnSlug = selectedBusiness?.slug || storePicker.storeSlugParam;
       nav(returnSlug ? `/vendor/stores/${encodeURIComponent(returnSlug)}#store-menu` : "/vendor/products");
     } catch (ex) {
-      setErr(ex.message || "Could not create product");
+      setErr(apiErrorMessage(ex, "Could not create product"));
     } finally {
       setLoading(false);
     }
@@ -1722,7 +1722,7 @@ export function VendorEditProductPage() {
         if (p.menuSectionId) setMenuSectionId(String(p.menuSectionId));
       })
       .catch((ex) => {
-        if (!cancelled) setErr(ex.message || "Failed to load");
+        if (!cancelled) setErr(apiErrorMessage(ex, "Failed to load"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -1804,7 +1804,7 @@ export function VendorEditProductPage() {
       const returnSlug = selectedBusiness?.slug || storePicker.storeSlugParam;
       nav(returnSlug ? `/vendor/stores/${encodeURIComponent(returnSlug)}#store-menu` : "/vendor/products");
     } catch (ex) {
-      setErr(ex.message || "Save failed");
+      setErr(apiErrorMessage(ex, "Save failed"));
     } finally {
       setSaving(false);
     }
@@ -2018,7 +2018,7 @@ function VendorCourierAssign({ accessToken, orderId, onAssigned }) {
     setLoadErr("");
     apiFetch("/api/deliveries/riders/available", { headers: { Authorization: `Bearer ${accessToken}` } })
       .then((d) => setRiders(Array.isArray(d.riders) ? d.riders : []))
-      .catch((ex) => setLoadErr(ex?.message || "Could not load riders"))
+      .catch((ex) => setLoadErr(apiErrorMessage(ex, "Could not load riders")))
       .finally(() => setLoadingRiders(false));
   }, [accessToken]);
 
@@ -2036,7 +2036,7 @@ function VendorCourierAssign({ accessToken, orderId, onAssigned }) {
       setSelectedRiderId("");
       onAssigned?.();
     } catch (ex) {
-      toast(ex?.message || "Could not assign rider", { variant: "error" });
+      toast(apiErrorMessage(ex, "Could not assign rider"), { variant: "error" });
     } finally {
       setBusy(false);
     }
@@ -2138,7 +2138,7 @@ export function VendorOrdersPage() {
     if (!accessToken) return;
     apiFetch("/api/vendor/orders", { headers: { Authorization: `Bearer ${accessToken}` } })
       .then((d) => setOrders(d.orders || []))
-      .catch((ex) => setErr(ex.message || "Failed to load"))
+      .catch((ex) => setErr(apiErrorMessage(ex, "Failed to load")))
       .finally(() => setLoading(false));
   };
 
@@ -2180,7 +2180,7 @@ export function VendorOrdersPage() {
       });
       load();
     } catch (ex) {
-      await alert(ex.message || "Update failed", { variant: "error", title: "Status update" });
+      await alert(apiErrorMessage(ex, "Update failed"), { variant: "error", title: "Status update" });
     }
   };
 
@@ -2193,7 +2193,7 @@ export function VendorOrdersPage() {
       });
       load();
     } catch (ex) {
-      await alert(ex.message || "Could not confirm", { variant: "error", title: "Payment confirmation" });
+      await alert(apiErrorMessage(ex, "Could not confirm"), { variant: "error", title: "Payment confirmation" });
     }
   };
 
@@ -2211,7 +2211,7 @@ export function VendorOrdersPage() {
       });
       load();
     } catch (ex) {
-      await alert(ex.message || "Could not delete", { variant: "error", title: "Delete order" });
+      await alert(apiErrorMessage(ex, "Could not delete"), { variant: "error", title: "Delete order" });
     }
   };
 
@@ -2473,7 +2473,7 @@ export function VendorMessagesPage() {
     setErr("");
     loadThreads()
       .catch((ex) => {
-        if (!cancelled) setErr(ex.message || "Could not load messages");
+        if (!cancelled) setErr(apiErrorMessage(ex, "Could not load messages"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -2534,7 +2534,7 @@ export function VendorMessagesPage() {
       setReplyByPeer((prev) => ({ ...prev, [pid]: "" }));
       await loadThreads();
     } catch (ex) {
-      setErr(ex.message || "Could not send reply");
+      setErr(apiErrorMessage(ex, "Could not send reply"));
     } finally {
       setSending(null);
     }
@@ -2765,7 +2765,7 @@ export function VendorAnalyticsPage() {
     trackVendorAnalyticsEvent(accessToken, { type: "analytics_view" });
     apiFetch("/api/vendor/analytics?days=30", { headers: { Authorization: `Bearer ${accessToken}` } })
       .then(setAnalytics)
-      .catch((ex) => setErr(ex.message || "Failed"));
+      .catch((ex) => setErr(apiErrorMessage(ex, "Failed")));
   }, [accessToken]);
 
   const daily = analytics?.chart?.daily || [];
@@ -2890,7 +2890,7 @@ export function VendorSettingsPage() {
           setOk("Seller subscription active. You can add and edit listings again.");
         }
       } catch (ex) {
-        setSubErr(ex.message || "Could not confirm subscription payment.");
+        setSubErr(apiErrorMessage(ex, "Could not confirm subscription payment."));
       } finally {
         window.history.replaceState({}, "", "/vendor/settings#vendor-seller-subscription");
       }
@@ -2912,7 +2912,7 @@ export function VendorSettingsPage() {
       }
       setSubErr("Payment could not be started.");
     } catch (ex) {
-      setSubErr(ex.message || "Payment could not be started.");
+      setSubErr(apiErrorMessage(ex, "Payment could not be started."));
     } finally {
       setSubBusy(false);
     }
@@ -2931,7 +2931,7 @@ export function VendorSettingsPage() {
       .catch((ex) => {
         if (!cancelled) {
           setGhanaBanks([]);
-          setBanksLoadErr(ex.message || "Could not load Paystack bank list. Check the API and Paystack keys.");
+          setBanksLoadErr(apiErrorMessage(ex, "Could not load Paystack bank list. Check the API and Paystack keys."));
         }
       })
       .finally(() => {
@@ -2966,7 +2966,7 @@ export function VendorSettingsPage() {
       if (data.user) setUser(data.user);
       setOk("Profile photo updated.");
     } catch (ex) {
-      setErr(ex.message || "Upload failed");
+      setErr(apiErrorMessage(ex, "Upload failed"));
     } finally {
       setPhotoLoading(false);
     }
@@ -2986,7 +2986,7 @@ export function VendorSettingsPage() {
       if (data.user) setUser(data.user);
       setOk("Profile photo removed.");
     } catch (ex) {
-      setErr(ex.message || "Could not remove photo");
+      setErr(apiErrorMessage(ex, "Could not remove photo"));
     } finally {
       setPhotoLoading(false);
     }
@@ -3012,7 +3012,7 @@ export function VendorSettingsPage() {
       if (data.user) setUser(data.user);
       setOk("Saved.");
     } catch (ex) {
-      setErr(ex.message || "Save failed");
+      setErr(apiErrorMessage(ex, "Save failed"));
     } finally {
       setSaving(false);
     }
@@ -3073,7 +3073,7 @@ export function VendorSettingsPage() {
         if (me.user) setUser(me.user);
       }
     } catch (ex) {
-      setPayoutErr(ex.message || "Could not link bank. Check details with your bank and try again.");
+      setPayoutErr(apiErrorMessage(ex, "Could not link bank. Check details with your bank and try again."));
     } finally {
       setRegisteringPayout(false);
     }
@@ -3099,7 +3099,7 @@ export function VendorSettingsPage() {
       await alert("Your seller account was deleted.", { variant: "success", title: "Done" });
       nav("/register", { replace: true });
     } catch (ex) {
-      setErr(ex.message || "Delete failed");
+      setErr(apiErrorMessage(ex, "Delete failed"));
     } finally {
       setDeleting(false);
     }

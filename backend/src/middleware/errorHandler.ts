@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import multer from "multer";
 import { HttpError } from "../utils/httpError";
+import { sanitizeServerErrorMessage } from "../utils/userFacingError";
 
 /** Mongo driver / network failures that should not surface as raw `read ECONNRESET` to clients. */
 function isDatabaseConnectivityError(err: unknown): boolean {
@@ -25,10 +26,12 @@ function isDatabaseConnectivityError(err: unknown): boolean {
 }
 
 const DB_UNAVAILABLE_MESSAGE =
-  "Cannot reach the database. If you use MongoDB Atlas, allow your current IP in Network Access and check the cluster is running. For local development, start MongoDB and set MONGODB_URI (e.g. mongodb://127.0.0.1:27017/yourdb).";
+  "We are having trouble connecting right now. Wait a few minutes, refresh the page, and try again. If this continues, contact support.";
 
 export function notFound(req: Request, res: Response) {
-  res.status(404).json({ error: { message: `Route not found: ${req.method} ${req.path}` } });
+  res.status(404).json({
+    error: { message: "That page or action is not available. Check the link or try again from the home page." }
+  });
 }
 
 function statusFromBodyParser(err: unknown): number | null {
@@ -44,7 +47,11 @@ function statusFromBodyParser(err: unknown): number | null {
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   if (err instanceof multer.MulterError) {
     const message =
-      err.code === "LIMIT_FILE_SIZE" ? "Each image must be at most 5 MB" : err.message || "Upload error";
+      err.code === "LIMIT_FILE_SIZE"
+        ? "Each file must be 5 MB or smaller. Choose a smaller image."
+        : err.code === "LIMIT_UNEXPECTED_FILE"
+          ? "That upload field was not recognized. Refresh the page and try again."
+          : "We could not upload that file. Try a different image.";
     res.status(400).json({ error: { message } });
     return;
   }
@@ -58,12 +65,16 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   const message = isHttp
     ? err.message
     : parseStatus !== null
-      ? "Invalid or malformed JSON body"
+      ? "The request was not valid JSON. Check your entries and submit again."
       : isDbDown
         ? DB_UNAVAILABLE_MESSAGE
-        : err instanceof Error
-          ? err.message
-          : "Internal server error";
+        : isBadUploadMessage
+          ? "Only image files (JPEG, PNG, or WebP) are allowed, up to 5 MB each."
+          : process.env.NODE_ENV === "production"
+            ? sanitizeServerErrorMessage(err, status)
+            : err instanceof Error
+              ? err.message
+              : "Something went wrong on our side. Please try again in a moment.";
   const stack = err instanceof Error ? err.stack : undefined;
 
   if (process.env.NODE_ENV !== "production") {

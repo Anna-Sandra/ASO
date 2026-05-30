@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { apiFetch } from "services/api";
+import { apiFetch , apiErrorMessage} from "services/api";
 import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
 import { Flame, Gift, Layers, Plus, Sparkles } from "lucide-react";
@@ -76,7 +76,7 @@ export function VendorPromotionsPage() {
     setErr("");
     apiFetch("/api/vendor/promotions", { headers: { Authorization: `Bearer ${accessToken}` } })
       .then((d) => setRows(Array.isArray(d.promotions) ? d.promotions : []))
-      .catch((e) => setErr(e.message || "Could not load"))
+      .catch((e) => setErr(apiErrorMessage(e, "Could not load")))
       .finally(() => setLoading(false));
   }, [accessToken]);
 
@@ -88,7 +88,7 @@ export function VendorPromotionsPage() {
         const list = Array.isArray(d.products) ? d.products.filter((x) => x.status === "active") : [];
         setProducts(list);
       })
-      .catch((e) => setInventoryErr(e.message || "Could not load listings"));
+      .catch((e) => setInventoryErr(apiErrorMessage(e, "Could not load listings")));
   }, [accessToken]);
 
   useEffect(() => {
@@ -113,7 +113,7 @@ export function VendorPromotionsPage() {
       toast("Deal ended.", { variant: "success" });
       loadPromos();
     } catch (ex) {
-      toast(ex.message || "Could not end deal", { variant: "error" });
+      toast(apiErrorMessage(ex, "Could not end deal"), { variant: "error" });
     }
   };
 

@@ -7,13 +7,9 @@ import { h } from "utils/h";
 import { apiFetch, fetchPublicPlatformConfig } from "services/api";
 import { Button, Field, GlassPanel, InlineNotice, LogoMark, OtpCodeInput, RefImage, TextInput, ThemeToggleButton } from "components/ui";
 
-/** Prefer server message from `apiFetch` errors; avoid empty or generic fallbacks. */
-export function apiErrorMessage(ex, fallback) {
-  const m = ex && typeof ex.message === "string" ? ex.message.trim() : "";
-  if (m && m !== "Validation error") return m;
-  if (ex?.status === 400) return fallback || "Check your input and try again.";
-  return m || fallback || "Something went wrong. Try again.";
-}
+import { apiErrorMessage } from "utils/userFacingError";
+
+export { apiErrorMessage };
 
 /** After login/register as buyer: return to guarded route (e.g. /checkout) or storefront. */
 function postBuyerAuthRedirectPath(state) {
