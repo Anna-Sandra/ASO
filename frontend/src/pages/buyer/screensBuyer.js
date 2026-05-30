@@ -66,6 +66,7 @@ import { SITE_NAME, SUPPORT_LABEL } from "config/brand";
 import { formatGhc } from "utils/money";
 import { TrackOrderModal } from "components/features/TrackOrderModal";
 import { ShoppingAssistantFAB } from "components/features/ShoppingAssistantFAB";
+import { ShopHomePromoCarousel } from "pages/buyer/shopFlashDealsRail";
 import { MenuItemFeedCard } from "components/marketplace/MenuItemFeedCard";
 import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
 import { RestaurantContextPanel } from "components/marketplace/RestaurantContextPanel";
@@ -1044,6 +1045,201 @@ export function ProductDetailPage() {
   ]);
 }
 
+/** ~4 rows on 3-col mobile / ~3 rows on 4-col desktop before "Great value" rail. */
+const BROWSE_ROWS_BEFORE_GREAT_VALUE = 12;
+
+function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavigate }) {
+  const p = product;
+  const detailTo = `/products/${p.id}`;
+  const quoteCard = isOfflineQuoteCategory(p);
+  const foodCard = isFoodCallToOrderCategory(p);
+  const listP = Number(p.price) || 0;
+  const cmpAt = Number(p.compareAtPrice);
+  const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
+  const storeCtx = productStoreContext(p);
+
+  return h(
+    "div",
+    {
+      key: p.id,
+      className:
+        "group flex flex-col overflow-hidden rounded-xl border border-slate-200/95 bg-white p-2 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-night-900/55 sm:p-4"
+    },
+    [
+      h("div", { key: "img", className: "relative" }, [
+        storefrontBadgeStack(p),
+        h(ProductCardRotatingImage, {
+          key: "rot",
+          product: p,
+          linkTo: detailTo,
+          linkClassName:
+            "relative block overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500",
+          imageClassName:
+            "h-28 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-40 md:h-48",
+          dotsClassName: "pointer-events-none absolute bottom-2 left-0 right-0 z-[2] flex justify-center gap-1"
+        })
+      ]),
+      h("div", { key: "meta", className: "mt-3 flex flex-1 flex-col" }, [
+        h("div", { key: "title-row", className: "flex items-start gap-1.5" }, [
+          h(
+            "div",
+            { key: "ttl-b", className: "min-w-0 flex-1" },
+            h(
+              Link,
+              {
+                key: "titles",
+                to: detailTo,
+                className: "block min-w-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+              },
+              h(
+                "h3",
+                {
+                  className:
+                    "line-clamp-2 text-xs font-semibold leading-snug text-slate-900 underline-offset-2 hover:underline dark:text-white sm:text-sm sm:text-[15px]"
+                },
+                p.name
+              )
+            )
+          ),
+          h(
+            "button",
+            {
+              key: "wish",
+              type: "button",
+              className:
+                "tap-target shrink-0 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-rose-500 dark:hover:bg-white/10",
+              "aria-label": isSaved(p.id) ? "Remove from saved" : "Save item",
+              "aria-pressed": isSaved(p.id),
+              onClick: (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleSaved(p.id).catch(() => {});
+              }
+            },
+            h(Heart, { className: `h-5 w-5 ${isSaved(p.id) ? "fill-rose-500 text-rose-500" : ""}` })
+          )
+        ]),
+        h("div", { key: "vendor", className: "mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5" }, [
+          h(Store, { key: "ic", className: "h-3.5 w-3.5 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
+          storeCtx.href
+            ? h(
+                Link,
+                {
+                  key: "store-nm",
+                  to: storeCtx.href,
+                  onClick: (e) => e.stopPropagation(),
+                  className: "text-[11px] font-bold uppercase tracking-wide text-sky-700 hover:underline dark:text-sky-300"
+                },
+                storeCtx.name
+              )
+            : h(
+                "span",
+                {
+                  key: "store-nm",
+                  className: "text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                },
+                storeCtx.name
+              )
+        ]),
+        quoteCard
+          ? h(
+              "p",
+              {
+                key: "svc-pr",
+                className: `mt-3 text-sm font-semibold leading-snug ${foodCard ? "text-violet-900 dark:text-violet-50" : "text-amber-800 dark:text-amber-100"}`
+              },
+              foodCard ? "Call to order" : "See listing for pricing & scope"
+            )
+          : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
+              strikeCmp
+                ? h(
+                    "span",
+                    { key: "strike", className: "text-xs font-semibold text-slate-400 line-through dark:text-slate-500" },
+                    formatGhc(cmpAt)
+                  )
+                : null,
+              h(
+                "span",
+                { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" },
+                formatGhc(listP)
+              ),
+              h(
+                "span",
+                {
+                  key: "stkg",
+                  className:
+                    "w-full shrink-0 text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:w-auto sm:translate-y-px"
+                },
+                `${p.stock ?? 0} in stock`
+              )
+            ])
+      ]),
+      h(
+        Button,
+        {
+          key: "add",
+          variant: "ghost",
+          className:
+            "mt-2 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !text-xs !font-semibold !text-sky-700 hover:!bg-sky-50 sm:mt-4 sm:!text-sm dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
+          type: "button",
+          disabled: !quoteCard && (p.stock ?? 0) <= 0,
+          onClick: () => {
+            if (quoteCard) {
+              onNavigate(detailTo);
+              return;
+            }
+            onAddToCart(p);
+          }
+        },
+        [
+          quoteCard ? null : h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
+          h(
+            "span",
+            { key: "tx" },
+            quoteCard
+              ? foodCard
+                ? "Place Order"
+                : "View listing"
+              : (p.stock ?? 0) <= 0
+                ? "Out of stock"
+                : "Buy"
+          )
+        ].filter(Boolean)
+      )
+    ].filter(Boolean)
+  );
+}
+
+function browseMenuGridClassName() {
+  return "grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5";
+}
+
+function ShopHomeRecommendationRow({ row, className = "mb-7" }) {
+  if (!row) return null;
+  return h("div", { className, key: row.id || row.title }, [
+    h("div", { key: "hdr", className: "mb-2 flex items-center gap-2" }, [
+      h(Sparkles, { key: "ic", className: "h-4 w-4 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
+      h(
+        "h3",
+        {
+          key: "t",
+          className: "font-display text-base font-semibold tracking-tight text-slate-900 dark:text-white sm:text-lg"
+        },
+        row.title
+      )
+    ]),
+    h(
+      "div",
+      {
+        key: "rail",
+        className:
+          "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:gap-3.5 sm:px-0"
+      },
+      (row.products || []).map((p) => h(MenuItemFeedCard, { key: p.id, product: p, compact: true }))
+    )
+  ]);
+}
+
 /** Shop home: algorithm rails from GET /api/products/recommended (personalized when signed in). */
 function ShopHomeRecommendationRails({ rows, loading, err }) {
   if (err)
@@ -1066,31 +1262,7 @@ function ShopHomeRecommendationRails({ rows, loading, err }) {
       className: "mb-8 space-y-7",
       "aria-label": "Recommended for you"
     },
-    rows.map((row) =>
-      h("div", { key: row.id || row.title }, [
-        h("div", { key: "hdr", className: "mb-2 flex items-center gap-2" }, [
-          h(Sparkles, { key: "ic", className: "h-4 w-4 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
-          h(
-            "h3",
-            {
-              key: "t",
-              className:
-                "font-display text-base font-semibold tracking-tight text-slate-900 dark:text-white sm:text-lg"
-            },
-            row.title
-          )
-        ]),
-        h(
-          "div",
-          {
-            key: "rail",
-            className:
-              "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:gap-3.5 sm:px-0"
-          },
-          (row.products || []).map((p) => h(MenuItemFeedCard, { key: p.id, product: p, compact: true }))
-        )
-      ])
-    )
+    rows.map((row) => h(ShopHomeRecommendationRow, { key: row.id || row.title, row }))
   );
 }
 
@@ -2983,6 +3155,32 @@ export function ShopPage() {
     return products.filter((p) => productMatchesFilter(p, fil));
   }, [products, fil]);
 
+  const { topRecRows, greatValueRow } = useMemo(() => {
+    const rows = Array.isArray(recRows) ? recRows : [];
+    let greatValue = null;
+    const top = [];
+    for (const row of rows) {
+      if (row.id === "great_value" || row.title === "Great value") greatValue = row;
+      else top.push(row);
+    }
+    return { topRecRows: top, greatValueRow: greatValue };
+  }, [recRows]);
+
+  const { browseLead, browseRest } = useMemo(() => {
+    const lead = filtered.slice(0, BROWSE_ROWS_BEFORE_GREAT_VALUE);
+    return { browseLead: lead, browseRest: filtered.slice(lead.length) };
+  }, [filtered]);
+
+  const renderBrowseCard = (p) =>
+    h(BrowseMenuItemCard, {
+      key: p.id,
+      product: p,
+      isSaved,
+      toggleSaved,
+      onAddToCart: tryAddToCart,
+      onNavigate: (to) => nav(to)
+    });
+
   return h(f, null, [
     h(
       BuyerLayout,
@@ -3011,8 +3209,8 @@ export function ShopPage() {
         className:
           "pointer-events-none absolute left-0 right-0 top-0 -z-10 h-44 w-full rounded-3xl object-cover opacity-[0.14] blur-2xl dark:opacity-[0.1]"
       }),
-      h("div", { key: "hero-stack", className: "relative z-[2] mb-3 w-full" }, [
-        h("div", { key: "shop-hero-search", className: "mb-3 w-full max-w-xl lg:max-w-2xl" }, [
+      h("div", { key: "hero-stack", className: "relative z-[2] mb-4 w-full space-y-3" }, [
+        h("div", { key: "shop-hero-search", className: "w-full max-w-xl lg:max-w-2xl" }, [
           h("div", { className: "relative" }, [
             h(Search, {
               key: "ic",
@@ -3046,10 +3244,11 @@ export function ShopPage() {
               "Search"
             )
           ])
-        ])
+        ]),
+        h(ShopHomePromoCarousel, { key: "shop-promo" })
       ]),
       h("section", { key: "quick-cats", className: "mb-5", "aria-label": "Categories" }, h(StorefrontCategoryChips, { active: cat, onSelect: setCat })),
-      h(ShopHomeRecommendationRails, { key: "shop-rec", rows: recRows, loading: recLoading, err: recErr }),
+      h(ShopHomeRecommendationRails, { key: "shop-rec", rows: topRecRows, loading: recLoading, err: recErr }),
       listErr
         ? h(InlineNotice, { key: "list-err", variant: "error", className: "mb-4", onDismiss: () => setListErr("") }, listErr)
         : null,
@@ -3074,176 +3273,34 @@ export function ShopPage() {
           ),
           listLoading &&
             h("p", { key: "list-load", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" }, "Loading products…"),
-          h(
-            "div",
-            { key: "product-grid", className: "grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5" },
-            filtered.map((p) => {
-              const detailTo = `/products/${p.id}`;
-              const quoteCard = isOfflineQuoteCategory(p);
-              const foodCard = isFoodCallToOrderCategory(p);
-              const listP = Number(p.price) || 0;
-              const cmpAt = Number(p.compareAtPrice);
-              const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
-              const storeCtx = productStoreContext(p);
-
-              return h(
+          browseLead.length > 0
+            ? h(
                 "div",
-                {
-                  key: p.id,
-                  className:
-                    "group flex flex-col overflow-hidden rounded-xl border border-slate-200/95 bg-white p-2 shadow-sm transition hover:shadow-md dark:border-white/10 dark:bg-night-900/55 sm:p-4"
-                },
-                [
-                  h("div", { key: "img", className: "relative" }, [
-                    storefrontBadgeStack(p),
-                    h(ProductCardRotatingImage, {
-                      key: "rot",
-                      product: p,
-                      linkTo: detailTo,
-                      linkClassName:
-                        "relative block overflow-hidden rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500",
-                      imageClassName:
-                        "h-28 w-full object-cover transition duration-300 group-hover:scale-[1.02] sm:h-40 md:h-48",
-                      dotsClassName:
-                        "pointer-events-none absolute bottom-2 left-0 right-0 z-[2] flex justify-center gap-1"
-                    })
-                  ]),
-                  h("div", { key: "meta", className: "mt-3 flex flex-1 flex-col" }, [
-                    h("div", { key: "title-row", className: "flex items-start gap-1.5" }, [
-                      h(
-                        "div",
-                        { key: "ttl-b", className: "min-w-0 flex-1" },
-                        h(
-                          Link,
-                          {
-                            key: "titles",
-                            to: detailTo,
-                            className: "block min-w-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-                          },
-                          h(
-                            "h3",
-                            {
-                              className: "line-clamp-2 text-xs font-semibold leading-snug text-slate-900 underline-offset-2 hover:underline dark:text-white sm:text-sm sm:text-[15px]"
-                            },
-                            p.name
-                          )
-                        )
-                      ),
-                      h(
-                        "button",
-                        {
-                          key: "wish",
-                          type: "button",
-                          className:
-                            "tap-target shrink-0 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-rose-500 dark:hover:bg-white/10",
-                          "aria-label": isSaved(p.id) ? "Remove from saved" : "Save item",
-                          "aria-pressed": isSaved(p.id),
-                          onClick: (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            toggleSaved(p.id).catch(() => {});
-                          }
-                        },
-                        h(Heart, {
-                          className: `h-5 w-5 ${isSaved(p.id) ? "fill-rose-500 text-rose-500" : ""}`
-                        })
-                      )
-                    ]),
-                    h("div", { key: "vendor", className: "mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5" }, [
-                      h(Store, {
-                        key: "ic",
-                        className: "h-3.5 w-3.5 shrink-0 text-sky-500 dark:text-sky-400",
-                        "aria-hidden": true
-                      }),
-                      storeCtx.href
-                        ? h(
-                            Link,
-                            {
-                              key: "store-nm",
-                              to: storeCtx.href,
-                              onClick: (e) => e.stopPropagation(),
-                              className:
-                                "text-[11px] font-bold uppercase tracking-wide text-sky-700 hover:underline dark:text-sky-300"
-                            },
-                            storeCtx.name
-                          )
-                        : h(
-                            "span",
-                            {
-                              key: "store-nm",
-                              className: "text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
-                            },
-                            storeCtx.name
-                          )
-                    ]),
-                    quoteCard
-                      ? h(
-                          "p",
-                          {
-                            key: "svc-pr",
-                            className:
-                              `mt-3 text-sm font-semibold leading-snug ${foodCard ? "text-violet-900 dark:text-violet-50" : "text-amber-800 dark:text-amber-100"}`
-                          },
-                          foodCard ? "Call to order" : "See listing for pricing & scope"
-                        )
-                      : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
-                          strikeCmp
-                            ? h(
-                                "span",
-                                {
-                                  key: "strike",
-                                  className: "text-xs font-semibold text-slate-400 line-through dark:text-slate-500"
-                                },
-                                formatGhc(cmpAt)
-                              )
-                            : null,
-                          h("span", { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" }, formatGhc(listP)),
-                          h(
-                            "span",
-                            {
-                              key: "stkg",
-                              className: "w-full shrink-0 text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:w-auto sm:translate-y-px"
-                            },
-                            `${p.stock ?? 0} in stock`
-                          )
-                        ])
-                  ]),
-                  h(
-                    Button,
-                    {
-                      key: "add",
-                      variant: "ghost",
-                      className:
-                        "mt-2 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !text-xs !font-semibold !text-sky-700 hover:!bg-sky-50 sm:mt-4 sm:!text-sm dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
-                      type: "button",
-                      disabled: !quoteCard && (p.stock ?? 0) <= 0,
-                      onClick: () => {
-                        if (quoteCard) {
-                          nav(detailTo);
-                          return;
-                        }
-                        tryAddToCart(p);
-                      }
-                    },
-                    [
-                      quoteCard ? null : h(ShoppingCart, { key: "ic", className: "h-4 w-4" }),
-                      h(
-                        "span",
-                        { key: "tx" },
-                        quoteCard
-                          ? foodCard
-                            ? "Place Order"
-                            : "View listing"
-                          : (p.stock ?? 0) <= 0
-                            ? "Out of stock"
-                            : "Buy"
-                      )
-                    ].filter(Boolean)
-                  )
-                ].filter(Boolean)
-              );
-            })
-          ),
+                { key: "product-grid-lead", className: browseMenuGridClassName() },
+                browseLead.map(renderBrowseCard)
+              )
+            : null,
+          greatValueRow
+            ? h(ShopHomeRecommendationRow, {
+                key: "great-value-inline",
+                row: greatValueRow,
+                className: "my-8"
+              })
+            : null,
+          browseRest.length > 0
+            ? h(
+                "div",
+                { key: "product-grid-rest", className: browseMenuGridClassName() },
+                browseRest.map(renderBrowseCard)
+              )
+            : null,
+          !listLoading && filtered.length === 0
+            ? h(
+                "p",
+                { key: "empty", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" },
+                "No menu items match your filters."
+              )
+            : null,
           h(MarketplaceFooter, { key: "site-footer" })
         ]
       )
