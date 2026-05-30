@@ -41,18 +41,6 @@
   html.dark body {
     @apply bg-night-950 text-slate-100 bg-mesh-dark;
   }
-  /* Any nested scroll areas (tables, sidebars, flex children): hide bars; scrolling still works. */
-  *,
-  *::before,
-  *::after {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-  *::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
-  }
 }
 
 @keyframes fadeInBackdrop {
@@ -108,44 +96,10 @@
   }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+    width: 0;
+    height: 0;
   }
-  /* Tailwind overflow utilities: keep overflow behavior, hide scroll track (composes with generated rules). */
-  .overflow-y-auto {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  .overflow-y-auto::-webkit-scrollbar {
-    display: none;
-  }
-  .overflow-x-auto {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  .overflow-x-auto::-webkit-scrollbar {
-    display: none;
-  }
-  .overflow-auto {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  .overflow-auto::-webkit-scrollbar {
-    display: none;
-  }
-  .overflow-y-scroll {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  .overflow-y-scroll::-webkit-scrollbar {
-    display: none;
-  }
-  .overflow-x-scroll {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  .overflow-x-scroll::-webkit-scrollbar {
-    display: none;
-  }
-  /* Shorthand: overflow auto + hidden bars (if you add this class without overflow-* from Tailwind). */
+  /* Shorthand scroll regions (pair with overflow or use alone). */
   .scroll-area {
     overflow: auto;
     -ms-overflow-style: none;
@@ -153,6 +107,8 @@
   }
   .scroll-area::-webkit-scrollbar {
     display: none;
+    width: 0;
+    height: 0;
   }
   .scroll-area-y {
     overflow-y: auto;
@@ -161,6 +117,8 @@
   }
   .scroll-area-y::-webkit-scrollbar {
     display: none;
+    width: 0;
+    height: 0;
   }
   .scroll-area-x {
     overflow-x: auto;
@@ -169,6 +127,8 @@
   }
   .scroll-area-x::-webkit-scrollbar {
     display: none;
+    width: 0;
+    height: 0;
   }
   .glass {
     @apply border border-slate-200/95 bg-white/80 shadow-glass backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/40;
@@ -218,4 +178,34 @@
 .delivery-track-marker-wrap {
   border: none !important;
   background: transparent !important;
+}
+
+/*
+  Invisible scrollbars app-wide (unlayered — wins over Tailwind utilities & arbitrary props).
+  Wheel, touch, trackpad, and keyboard scrolling still work.
+*/
+*,
+*::before,
+*::after {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+*::-webkit-scrollbar,
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-corner {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+html,
+body,
+#root {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }

@@ -232,7 +232,7 @@ export function VendorDashboardBody({ analytics, allOrders, myProducts }) {
               "div",
               {
                 className:
-                  "flex gap-4 overflow-x-auto px-4 py-5 pb-6 sm:px-5 [scrollbar-width:thin]"
+                  "no-scrollbar flex gap-4 overflow-x-auto px-4 py-5 pb-6 sm:px-5"
               },
               topProductCards.map((p) =>
                 h(
