@@ -107,6 +107,15 @@ const envSchema = z.object({
     .transform((v) => (v ?? "").trim().toLowerCase() === "true"),
 
   /**
+   * When true in production, sign-in / verify / reset OTPs are printed to server logs (Render → Logs).
+   * Off by default; turn on only while debugging email delivery, then disable.
+   */
+  LOG_OTP_IN_CONSOLE: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "").trim().toLowerCase() === "true"),
+
+  /**
    * When true, buyers may post a star rating + comment without linking a paid order (still one review per buyer per product).
    * Use only for local demos; keep false in production so reviews stay purchase-verified.
    */

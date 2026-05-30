@@ -11,6 +11,7 @@ import {
 import { env, isEmailTransportConfigured } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { sendEmail } from "../../utils/mailer";
+import { isOtpConsoleLogEnabled, logOtpToConsole } from "../../utils/otpLog";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import { Order } from "../orders/order.model";
@@ -223,6 +224,7 @@ async function issueLoginOtpAndRespond(user: HydratedDocument<UserDoc>, res: Res
   });
 
   const addr = user.email?.trim() || "";
+  logOtpToConsole("login_otp", addr, otp);
   const mail = await sendEmail(addr, "Your sign-in code", loginOtpEmailHtml(otp), { category: "login_otp" });
 
   res.json({
@@ -288,6 +290,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
       expiresAt: new Date(Date.now() + EMAIL_VERIFY_OTP_TTL_MS)
     });
 
+    logOtpToConsole("email_verify", cleanEmail, otp);
     await sendEmail(cleanEmail, "Verify your email", emailVerifyOtpHtml(otp));
   }
 
@@ -465,6 +468,7 @@ export const resendVerificationOtp = asyncHandler(async (req: Request, res: Resp
     expiresAt: new Date(Date.now() + EMAIL_VERIFY_OTP_TTL_MS)
   });
 
+  logOtpToConsole("email_verify", addr, otp);
   await sendEmail(addr, "Your verification code", emailVerifyOtpHtml(otp));
   res.json({
     message: generic,
@@ -516,6 +520,7 @@ export const resendLoginOtp = asyncHandler(async (req: Request, res: Response) =
   });
 
   const addr = user.email?.trim() || lower;
+  logOtpToConsole("login_otp", addr, otp);
   const mail = await sendEmail(addr, "Your sign-in code", loginOtpEmailHtml(otp), { category: "login_otp" });
   if (!mail.ok) {
     throw new HttpError(
@@ -790,16 +795,16 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
   const addr = email.trim().toLowerCase();
   const user = await User.findOne({ email: addr });
   const generic = "If that account exists, a 6-digit OTP was sent.";
-  const devOtpEnabled = env.NODE_ENV !== "production";
+  const devOtpInResponse = env.NODE_ENV !== "production";
 
   if (!user) {
-    if (devOtpEnabled) {
+    if (isOtpConsoleLogEnabled()) {
       // eslint-disable-next-line no-console
-      console.log("[forgot-password:dev] account_not_found", { email: addr });
+      console.log("[shopiqgh:otp] password_reset account_not_found", { email: addr });
     }
     return res.json({
       message: generic,
-      ...(devOtpEnabled ? { devAccountFound: false } : {})
+      ...(devOtpInResponse ? { devAccountFound: false } : {})
     });
   }
 
@@ -812,16 +817,13 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
     expiresAt: new Date(Date.now() + PASSWORD_OTP_TTL_MS)
   });
 
-  if (devOtpEnabled) {
-    // eslint-disable-next-line no-console
-    console.log("[forgot-password:dev] otp_generated", { email: addr, otp });
-  }
+  logOtpToConsole("password_reset", addr, otp);
   const html = `<p>Password reset requested.</p><p><b>OTP:</b> ${otp}</p><p>This code expires in 10 minutes.</p>`;
   await sendEmail(user.email || addr, "Your password reset OTP", html);
 
   res.json({
     message: generic,
-    ...(devOtpEnabled && !canSendEmail ? { devOtp: otp } : {})
+    ...(devOtpInResponse && !canSendEmail ? { devOtp: otp } : {})
   });
 });
 

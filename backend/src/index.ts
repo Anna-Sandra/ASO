@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import { createApp } from "./app";
 import { connectDb } from "./config/db";
 import { env, getEmailTransportDiagnostics, isEmailTransportConfigured } from "./config/env";
+import { isOtpConsoleLogEnabled } from "./utils/otpLog";
 import { setupDeliverySockets } from "./modules/deliveries/delivery.socket";
 import { warmupOllamaInBackground } from "./config/ollamaWarmup";
 import { runAutoConfirmDeliveredOrders } from "./modules/orders/orderAutoConfirm.job";
@@ -34,6 +35,13 @@ async function main() {
     console.log(
       `[email] transport=${emailDiag.mode} configured=${isEmailTransportConfigured()}${emailDiag.hints.length ? ` hints=${emailDiag.hints.join(" ")}` : ""}`
     );
+    if (isOtpConsoleLogEnabled()) {
+      console.log(
+        env.LOG_OTP_IN_CONSOLE
+          ? "[otp] LOG_OTP_IN_CONSOLE=true — OTPs will appear in server logs (e.g. Render Logs). Disable after debugging."
+          : "[otp] Non-production — OTPs are logged to this console automatically."
+      );
+    }
     if (env.OLLAMA_BASE_URL.trim() && !env.GROQ_API_KEY.trim()) {
       warmupOllamaInBackground();
     }
