@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import { env, getEmailTransportDiagnostics, isEmailTransportConfigured } from "../config/env";
 import { EmailLog } from "../modules/emailLog/emailLog.model";
 
@@ -11,21 +12,22 @@ function buildTransporter(): Transporter<any> | null {
 
   const hasSmtp = Boolean(env.SMTP_HOST?.trim() && env.SMTP_USER && env.SMTP_PASS);
   if (hasSmtp) {
-    return nodemailer.createTransport({
-      host: env.SMTP_HOST,
+    const smtpOptions: SMTPTransport.Options = {
+      host: env.SMTP_HOST!.trim(),
       port: env.SMTP_PORT,
-      secure: env.SMTP_PORT,
-      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+      secure: env.SMTP_PORT === 465,
+      auth: { user: env.SMTP_USER!, pass: env.SMTP_PASS! },
       connectionTimeout: 5000,
       greetingTimeout: 5000,
       socketTimeout: 10000
-    });
+    };
+    return nodemailer.createTransport(smtpOptions);
   }
 
   // Gmail via explicit SMTP host — forces IPv4 (Render free tier has no IPv6)
   if (env.EMAIL_USER && env.EMAIL_PASS) {
     const pass = env.EMAIL_PASS.replace(/\s/g, "");
-    return nodemailer.createTransport({
+    const gmailOptions: SMTPTransport.Options = {
       host: "smtp.gmail.com",
       port: 465,
       secure: true,
@@ -34,7 +36,8 @@ function buildTransporter(): Transporter<any> | null {
       connectionTimeout: 5000,
       greetingTimeout: 5000,
       socketTimeout: 10000
-    });
+    };
+    return nodemailer.createTransport(gmailOptions);
   }
 
   return null;
