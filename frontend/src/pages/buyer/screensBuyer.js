@@ -65,6 +65,7 @@ import {
   sellerGroupGross,
   withAllCategoryFirst
 } from "config/catalog";
+import { normalizeProductCategoryId } from "config/productCategories";
 import { SITE_NAME, SUPPORT_LABEL } from "config/brand";
 import { formatGhc } from "utils/money";
 import { TrackOrderModal } from "components/features/TrackOrderModal";
@@ -3245,6 +3246,14 @@ export function ShopPage() {
     return products.filter((p) => productMatchesFilter(p, fil));
   }, [products, fil]);
 
+  const filterRecRowByCategory = (row, categoryId) => {
+    if (!row || categoryId === "all") return row;
+    const products = (row.products || []).filter(
+      (p) => normalizeProductCategoryId(p.category) === categoryId
+    );
+    return products.length ? { ...row, products } : null;
+  };
+
   const { topRecRows, greatValueRow } = useMemo(() => {
     const rows = Array.isArray(recRows) ? recRows : [];
     let greatValue = null;
@@ -3253,8 +3262,12 @@ export function ShopPage() {
       if (row.id === "great_value" || row.title === "Great value") greatValue = row;
       else top.push(row);
     }
-    return { topRecRows: top, greatValueRow: greatValue };
-  }, [recRows]);
+    if (cat === "all") return { topRecRows: top, greatValueRow: greatValue };
+    return {
+      topRecRows: top.map((r) => filterRecRowByCategory(r, cat)).filter(Boolean),
+      greatValueRow: filterRecRowByCategory(greatValue, cat)
+    };
+  }, [recRows, cat]);
 
   const { browseLead, browseRest } = useMemo(() => {
     const lead = filtered.slice(0, BROWSE_ROWS_BEFORE_GREAT_VALUE);
@@ -3354,12 +3367,14 @@ export function ShopPage() {
           h(
             "h2",
             { key: "feat-h2", className: "mb-1 font-display text-xl font-bold text-slate-900 dark:text-white sm:text-2xl" },
-            "Browse menu items"
+            cat === "all" ? "Browse menu items" : CATEGORY_LABELS[cat] || "Browse listings"
           ),
           h(
             "p",
             { key: "feat-sub", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" },
-            "From local restaurants and stores — tap a name for the full menu, or open a dish to order."
+            cat === "all"
+              ? "From local restaurants and stores — tap a name for the full menu, or open a dish to order."
+              : `Active listings in ${CATEGORY_LABELS[cat] || cat} — open an item to view details or add to cart.`
           ),
           listLoading &&
             h("p", { key: "list-load", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" }, "Loading products…"),
@@ -3388,7 +3403,9 @@ export function ShopPage() {
             ? h(
                 "p",
                 { key: "empty", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" },
-                "No menu items match your filters."
+                cat !== "all"
+                  ? `No active listings in ${CATEGORY_LABELS[cat] || cat} yet. Sellers must publish with that category (e.g. baby items under Groceries won’t appear here until recategorized). Try All or another category.`
+                  : "No menu items match your filters."
               )
             : null,
           h(MarketplaceFooter, { key: "site-footer" })

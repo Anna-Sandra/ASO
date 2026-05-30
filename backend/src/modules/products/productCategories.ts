@@ -62,6 +62,45 @@ export function mongoCategoryEquals(canonical: ProductCategory): { category: { $
   return { category: { $in: expandCategoryForMongoFilter(canonical) } };
 }
 
+/** Word-boundary match for baby/infant listings miscategorized under Groceries/Fashion. */
+export const BABY_LISTING_TEXT_RE =
+  /\b(baby|babies|infant|infants|newborn|nursery|stroller|pram|crib|diaper|napp(?:y|ies)|swaddle|teether|bodysuit|onesie)\b/i;
+
+const BABY_MISCAT_PARENT_CATEGORIES: ProductCategory[] = [
+  "groceries_essentials",
+  "fashion_accessories",
+  "beauty_personal_care"
+];
+
+export function listingTextLooksLikeBabies(name: unknown, description?: unknown): boolean {
+  const blob = `${String(name || "")} ${String(description || "")}`;
+  return BABY_LISTING_TEXT_RE.test(blob);
+}
+
+/**
+ * Buyer category browse filter — includes canonical slugs plus obvious miscategorized baby listings.
+ */
+export function mongoCategoryBrowseFilter(canonical: ProductCategory): Record<string, unknown> {
+  const slugIn = expandCategoryForMongoFilter(canonical);
+  if (canonical !== "babies_infants") {
+    return { category: { $in: slugIn } };
+  }
+  const textOr = [
+    { name: BABY_LISTING_TEXT_RE },
+    { description: BABY_LISTING_TEXT_RE },
+    { listingSearchAssist: BABY_LISTING_TEXT_RE }
+  ];
+  return {
+    $or: [
+      { category: { $in: slugIn } },
+      {
+        category: { $in: BABY_MISCAT_PARENT_CATEGORIES },
+        $or: textOr
+      }
+    ]
+  };
+}
+
 export function legacyCategorySlugMapForMigration(): Record<string, string> {
   const map: Record<string, string> = {};
   for (const [from, to] of Object.entries(LEGACY_CATEGORY_SLUG_MAP)) {

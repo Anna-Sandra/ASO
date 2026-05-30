@@ -2,7 +2,11 @@ import mongoose from "mongoose";
 import { ensureBootstrapAdmin } from "./bootstrapAdmin";
 import { env } from "./env";
 import { PRODUCT_CATEGORIES } from "../modules/products/product.model";
-import { legacyCategorySlugMapForMigration, normalizeProductCategory } from "../modules/products/productCategories";
+import {
+  BABY_LISTING_TEXT_RE,
+  legacyCategorySlugMapForMigration,
+  normalizeProductCategory
+} from "../modules/products/productCategories";
 import { PlatformSettings } from "../modules/platform/platformSettings.model";
 import { Order } from "../modules/orders/order.model";
 
@@ -46,6 +50,28 @@ async function migrateLegacyProductCategories() {
 
   await normalizeCollection("products");
   await normalizeCollection("vendorapplications");
+}
+
+/** Vendors sometimes pick “Groceries” for baby SKUs — move obvious listings to Babies & Infants. */
+async function migrateMiscategorizedBabyProducts() {
+  const db = mongoose.connection.db;
+  if (!db) return;
+  const col = db.collection("products");
+  const r = await col.updateMany(
+    {
+      category: { $in: ["groceries_essentials", "fashion_accessories", "beauty_personal_care"] },
+      $or: [
+        { name: BABY_LISTING_TEXT_RE },
+        { description: BABY_LISTING_TEXT_RE },
+        { listingSearchAssist: BABY_LISTING_TEXT_RE }
+      ]
+    },
+    { $set: { category: "babies_infants" } }
+  );
+  if (r.modifiedCount > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[db] Reclassified ${r.modifiedCount} baby/infant listing(s) to babies_infants`);
+  }
 }
 
 /**
@@ -174,6 +200,7 @@ export async function connectDb() {
   await mongoose.connect(env.MONGODB_URI);
   await migrateConversationKindAndIndex();
   await migrateLegacyProductCategories();
+  await migrateMiscategorizedBabyProducts();
   await migrateLegacyManualPaystackRefundFlags();
   await migratePaystackRefundedWithoutProcessedConfirmation();
   await syncPlatformCommissionSevenToFive();

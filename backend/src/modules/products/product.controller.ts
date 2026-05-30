@@ -19,11 +19,16 @@ import {
 import { BuyerProductView } from "./buyerProductView.model";
 import { ProductSave } from "./productSave.model";
 import { assertProductBusinessLink, getSellerDefaultBusinessId } from "../businesses/business.controller";
+import { Business, primaryProductCategoryForBusinessType, type BusinessType } from "../businesses/business.model";
 import { notifySaversPriceDrop } from "../notifications/notification.service";
 import { groqCompletion, groqConfigured } from "../assistant/groqChat";
 import { detectCategoryFromMessage } from "../assistant/assistantFallback";
 import { computeListingSearchAssist, isValidMarketplaceSubcategory } from "./productSubcategories";
-import { mongoCategoryEquals, normalizeProductCategory } from "./productCategories";
+import {
+  listingTextLooksLikeBabies,
+  mongoCategoryBrowseFilter,
+  normalizeProductCategory
+} from "./productCategories";
 
 /** Subcategory facet for buyer search chips + keyword assist; rejects unknown slugs once category is fixed. */
 function normalizeProductSubcategoryForCategory(cat: ProductCategory, raw: unknown): string | null {
@@ -253,7 +258,7 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
     Object.assign(filter, foodMenuStoreFilter(activeIds));
   }
   if (q.category) {
-    Object.assign(filter, mongoCategoryEquals(q.category));
+    Object.assign(filter, mongoCategoryBrowseFilter(q.category));
   }
   if (q.tag) filter.tags = q.tag;
   if (q.subcategory?.trim()) {
@@ -317,7 +322,7 @@ export const smartSearchProducts = asyncHandler(async (req: Request, res: Respon
   /** Only filter by category when the shopper picked a chip — never auto-apply AI/heuristic hints (hurts recall, e.g. shoes miscategorized). */
   const effectiveCategory: ProductCategory | undefined = body.category;
   const { keywords, categoryHint } = await aiExpandShopSearchTerms(body.q);
-  if (effectiveCategory) Object.assign(filter, mongoCategoryEquals(effectiveCategory));
+  if (effectiveCategory) Object.assign(filter, mongoCategoryBrowseFilter(effectiveCategory));
   if (body.tag) filter.tags = body.tag;
   if (body.subcategory?.trim()) filter.subcategory = body.subcategory.trim();
 
@@ -738,7 +743,17 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   const createPayload: Record<string, unknown> = { ...body, status, sellerId };
   createPayload.businessId = businessIdOid;
   createPayload.menuSectionId = menuSectionIdOid;
-  const catRef = categoryStr as ProductCategory;
+  let catRef = (normalizeProductCategory(categoryStr) || categoryStr) as ProductCategory;
+  if (businessIdOid) {
+    const biz = await Business.findById(businessIdOid).select("businessType").lean();
+    if (biz) {
+      catRef = primaryProductCategoryForBusinessType((biz as { businessType: BusinessType }).businessType);
+      createPayload.category = catRef;
+    }
+  } else if (!normalizeProductCategory(categoryStr) && listingTextLooksLikeBabies(body.name, body.description)) {
+    catRef = "babies_infants";
+    createPayload.category = catRef;
+  }
   createPayload.subcategory = normalizeProductSubcategoryForCategory(catRef, subRawPick);
   createPayload.listingSearchAssist = computeListingSearchAssist(catRef, createPayload.subcategory as string | null);
   if (flagged) createPayload.flagged = true;
