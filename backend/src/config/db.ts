@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { ensureBootstrapAdmin } from "./bootstrapAdmin";
 import { env } from "./env";
 import { PRODUCT_CATEGORIES } from "../modules/products/product.model";
+import { legacyCategorySlugMapForMigration, normalizeProductCategory } from "../modules/products/productCategories";
 import { PlatformSettings } from "../modules/platform/platformSettings.model";
 import { Order } from "../modules/orders/order.model";
 
@@ -22,30 +23,7 @@ async function migrateLegacyProductCategories() {
   const db = mongoose.connection.db;
   if (!db) return;
 
-  const slugMap: Record<string, string> = {
-    // v1 shop slugs → current
-    coffee: "food_drinks",
-    beans: "food_drinks",
-    snacks: "food_drinks",
-    gear: "electronics_gadgets",
-    mugs: "groceries_essentials",
-    materials: "fashion_accessories",
-    equipment: "electronics_gadgets",
-    food: "food_drinks",
-    // previous enum (pre campus categories)
-    electronics: "electronics_gadgets",
-    books: "books_academic",
-    clothing: "fashion_accessories",
-    footwears: "fashion_accessories",
-    other: "groceries_essentials",
-    // Older baby / typo slugs → canonical marketplace enum (fixes empty “Babies” chip queries)
-    baby: "babies_infants",
-    babies: "babies_infants",
-    infant: "babies_infants",
-    infants: "babies_infants",
-    baby_infants: "babies_infants",
-    babies_infant: "babies_infants"
-  };
+  const slugMap = legacyCategorySlugMapForMigration();
 
   const allowed = new Set<string>(PRODUCT_CATEGORIES);
 
@@ -55,7 +33,15 @@ async function migrateLegacyProductCategories() {
       if (from === to) continue;
       await col.updateMany({ category: from }, { $set: { category: to } });
     }
-    await col.updateMany({ category: { $nin: [...allowed] } }, { $set: { category: "groceries_essentials" } });
+    const orphans = await col.find({ category: { $nin: [...allowed] } }).project({ category: 1 }).limit(500).toArray();
+    for (const doc of orphans) {
+      const raw = (doc as { category?: unknown }).category;
+      const normalized = normalizeProductCategory(raw);
+      const next = normalized ?? "groceries_essentials";
+      if (String(raw) !== next) {
+        await col.updateOne({ _id: (doc as { _id: unknown })._id }, { $set: { category: next } });
+      }
+    }
   };
 
   await normalizeCollection("products");

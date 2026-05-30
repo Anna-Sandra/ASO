@@ -23,6 +23,7 @@ import { notifySaversPriceDrop } from "../notifications/notification.service";
 import { groqCompletion, groqConfigured } from "../assistant/groqChat";
 import { detectCategoryFromMessage } from "../assistant/assistantFallback";
 import { computeListingSearchAssist, isValidMarketplaceSubcategory } from "./productSubcategories";
+import { mongoCategoryEquals, normalizeProductCategory } from "./productCategories";
 
 /** Subcategory facet for buyer search chips + keyword assist; rejects unknown slugs once category is fixed. */
 function normalizeProductSubcategoryForCategory(cat: ProductCategory, raw: unknown): string | null {
@@ -252,7 +253,7 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
     Object.assign(filter, foodMenuStoreFilter(activeIds));
   }
   if (q.category) {
-    filter.category = q.category;
+    Object.assign(filter, mongoCategoryEquals(q.category));
   }
   if (q.tag) filter.tags = q.tag;
   if (q.subcategory?.trim()) {
@@ -316,7 +317,7 @@ export const smartSearchProducts = asyncHandler(async (req: Request, res: Respon
   /** Only filter by category when the shopper picked a chip — never auto-apply AI/heuristic hints (hurts recall, e.g. shoes miscategorized). */
   const effectiveCategory: ProductCategory | undefined = body.category;
   const { keywords, categoryHint } = await aiExpandShopSearchTerms(body.q);
-  if (effectiveCategory) filter.category = effectiveCategory;
+  if (effectiveCategory) Object.assign(filter, mongoCategoryEquals(effectiveCategory));
   if (body.tag) filter.tags = body.tag;
   if (body.subcategory?.trim()) filter.subcategory = body.subcategory.trim();
 
