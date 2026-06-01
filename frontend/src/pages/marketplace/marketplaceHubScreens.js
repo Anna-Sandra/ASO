@@ -5,18 +5,22 @@ import { apiFetch, fetchBusinessStorefront, getApiBase , apiErrorMessage} from "
 import { useAuth, useNotice } from "context";
 import { BuyerLayout, CartDrawer, ReviewStars } from "pages/buyer/screensBuyer";
 import { formatGhc } from "utils/money";
+import { buyerDisplayPrice } from "utils/checkoutPricing";
+import { useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
 import { h, f } from "utils/h";
 import { storeStatusLabel } from "utils/storeStatus";
 import { Button, GlassPanel, Field, TextArea, InlineNotice } from "components/ui";
 import { CATEGORY_LABELS, isFoodCallToOrderCategory, isOfflineQuoteCategory, productCategoryForBusinessType } from "config/catalog";
 
 function HubListingFallbackCard({ p }) {
+  const pricingOpts = useCheckoutPricingOptions();
   const to = `/products/${encodeURIComponent(p.id)}`;
   const src =
     Array.isArray(p.imageUrls) && typeof p.imageUrls[0] === "string" && String(p.imageUrls[0]).trim()
       ? p.imageUrls[0]
       : "";
   const priceNum = Number(p.price);
+  const displayPrice = buyerDisplayPrice(priceNum, pricingOpts, 1);
   return h(
     Link,
     {
@@ -51,14 +55,14 @@ function HubListingFallbackCard({ p }) {
           },
           String(p.name || "Listing")
         ),
-        Number.isFinite(priceNum)
+        Number.isFinite(priceNum) && displayPrice > 0
           ? h(
               "p",
               {
                 key: "pr",
                 className: "mt-1 font-semibold tabular-nums text-violet-700 dark:text-violet-200"
               },
-              formatGhc(priceNum)
+              formatGhc(displayPrice)
             )
           : null
       ])
@@ -713,6 +717,7 @@ export function buildStoreListingBlocks({ business, orderedSectionIds, grouped, 
 }
 
 export function StorefrontProductCard({ product, business, vendorMode = false }) {
+  const pricingOpts = useCheckoutPricingOptions();
   const href = vendorMode ? `/vendor/products/${product.id}` : `/products/${product.id}`;
   const img = Array.isArray(product.imageUrls) && product.imageUrls[0] ? product.imageUrls[0] : null;
   const cat = product.category;
@@ -724,7 +729,7 @@ export function StorefrontProductCard({ product, business, vendorMode = false })
       ? foodCall
         ? "Call to order"
         : "Quote / request"
-      : formatGhc(Number(product.price || 0));
+      : formatGhc(buyerDisplayPrice(Number(product.price || 0), pricingOpts, 1));
 
   const desc = String(product.description || "").trim();
   const descShort = desc.length > 72 ? `${desc.slice(0, 70)}…` : desc || "Tap to view details on SHOPIQGH.";

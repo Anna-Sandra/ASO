@@ -8,6 +8,8 @@ import { productFeedPriceLabel, productStoreContext, productTileDeliveryHints } 
 import { useCart } from "context";
 import { useSavedProducts } from "context/SavedProductsContext";
 import { formatGhc } from "utils/money";
+import { buyerDisplayPrice } from "utils/checkoutPricing";
+import { useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
 import { usePromoCountdown, isPerpetualPromoEnd, humanCountdownBrief } from "utils/promoCountdown";
 
 function FeedDealCountdownLine({ endsAt }) {
@@ -37,6 +39,7 @@ export function MenuItemFeedCard({
 }) {
   const { add } = useCart();
   const { isSaved, toggleSaved } = useSavedProducts();
+  const pricingOpts = useCheckoutPricingOptions();
 
   if (!product?.id) return null;
 
@@ -44,6 +47,7 @@ export function MenuItemFeedCard({
   const price = productFeedPriceLabel(product);
   const activeDeal = product.activeDeal && typeof product.activeDeal === "object" ? product.activeDeal : null;
   const listP = Number(product.price) || 0;
+  const buyerP = buyerDisplayPrice(listP, pricingOpts, 1);
   const cmpAt = Number(product.compareAtPrice);
   const avg = Number(product.reviewAvg);
   const hasRating = showRating && Number.isFinite(avg) && (Number(product.reviewCount) || 0) > 0;
@@ -243,7 +247,7 @@ export function MenuItemFeedCard({
                 className: compact
                   ? "inline text-[10px] font-bold text-violet-200 drop-shadow-sm sm:text-[11px]"
                   : "inline text-[11px] font-bold text-violet-200 drop-shadow-sm sm:text-xs"
-              }, formatGhc(listP)),
+              }, formatGhc(buyerP)),
               dealPct != null && dealPct > 0 &&
                 h("span", {
                   key: "pct",

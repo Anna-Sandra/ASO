@@ -5,6 +5,7 @@
 
 export const StorageKeys = {
   ACCESS_TOKEN: "SHOPIQGH_access_token",
+  REFRESH_TOKEN: "SHOPIQGH_refresh_token",
   CART: "SHOPIQGH_cart_v1",
   THEME: "SHOPIQGH-theme",
   SAVE_SESSION: "SHOPIQGH_save_session"
@@ -12,6 +13,7 @@ export const StorageKeys = {
 
 const LEGACY_KEYS = {
   [StorageKeys.ACCESS_TOKEN]: ["campusmart_access_token"],
+  [StorageKeys.REFRESH_TOKEN]: ["campusmart_refresh_token"],
   [StorageKeys.CART]: ["campusmart_cart_v1"],
   [StorageKeys.THEME]: ["campus-mart-theme"],
   [StorageKeys.SAVE_SESSION]: ["campusmart_save_session"]

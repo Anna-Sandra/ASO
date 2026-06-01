@@ -36,8 +36,8 @@ async function commitPaystackInitialize(
   if (!emailTrim) throw new HttpError(400, "Email required");
 
   const currency = (order.currency || "GHS").toUpperCase();
-  const totalMajor = roundMoney(Number(order.total));
-  const amountSubunit = Math.round(totalMajor * 100);
+  const totalMajor = Math.ceil(Number(order.total) || 0);
+  const amountSubunit = totalMajor * 100;
   if (!Number.isFinite(amountSubunit) || amountSubunit < 100) {
     throw new HttpError(400, "Order total is too small for online payment");
   }
@@ -165,7 +165,7 @@ export async function finalizePaystackSuccessIfValid(
   amountKobo: number,
   paystackTransactionId?: number | null
 ): Promise<boolean> {
-  const expected = Math.round(roundMoney(Number(order.total)) * 100);
+  const expected = Math.ceil(Number(order.total) || 0) * 100;
   if (!Number.isFinite(amountKobo) || amountKobo !== expected) {
     return false;
   }
@@ -338,9 +338,9 @@ export const initPaystackGuide = asyncHandler(async (req: Request, res: Response
     payEmail = String(order.guestContact?.email || "").trim();
   }
 
-  const expected = roundMoney(Number(order.total));
-  const got = roundMoney(Number(amount));
-  if (Math.abs(expected - got) > 0.01) {
+  const expected = Math.ceil(Number(order.total) || 0);
+  const got = Math.ceil(Number(amount) || 0);
+  if (expected !== got) {
     throw new HttpError(400, "Amount must match the order total");
   }
 

@@ -75,7 +75,8 @@ import { MenuItemFeedCard } from "components/marketplace/MenuItemFeedCard";
 import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
 import { RestaurantContextPanel } from "components/marketplace/RestaurantContextPanel";
 import { productStoreContext } from "utils/productStore";
-import { buyerTotalFromSellerSubtotal, computeCheckoutBreakdown, useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
+import { buyerDisplayPrice } from "utils/checkoutPricing";
+import { computeCheckoutBreakdown, useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
 import { buyerOrderFulfillmentPillClass, formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
 import { h, f } from "utils/h";
 import {
@@ -728,7 +729,7 @@ export function ProductDetailPage() {
   const foodC2O = isFoodCallToOrderCategory(product);
   const offlineListing = svc || foodC2O;
   const listPx = Number(product.price) || 0;
-  const unitPayTotal = !offlineListing && pricingOpts ? buyerTotalFromSellerSubtotal(listPx, pricingOpts) : null;
+  const unitPayTotal = !offlineListing ? buyerDisplayPrice(listPx, pricingOpts, 1) : null;
 
   const pricingPanel = svc
     ? buyerServicePricingPanel()
@@ -1047,10 +1048,12 @@ const BROWSE_ROWS_BEFORE_GREAT_VALUE = 12;
 
 function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavigate }) {
   const p = product;
+  const pricingOpts = useCheckoutPricingOptions();
   const detailTo = `/products/${p.id}`;
   const quoteCard = isOfflineQuoteCategory(p);
   const foodCard = isFoodCallToOrderCategory(p);
   const listP = Number(p.price) || 0;
+  const displayP = quoteCard || foodCard ? listP : buyerDisplayPrice(listP, pricingOpts, 1);
   const cmpAt = Number(p.compareAtPrice);
   const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
   const storeCtx = productStoreContext(p);
@@ -1158,7 +1161,7 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
               h(
                 "span",
                 { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" },
-                formatGhc(listP)
+                formatGhc(displayP)
               ),
             ])
       ]),
@@ -2388,14 +2391,7 @@ export function CartDrawer({ open, onClose }) {
                         ? isFoodCallToOrderCategory(p)
                           ? "Food: call to order — remove to check out other items"
                           : "Services: contact vendor — remove to check out other items"
-                        : formatGhc(
-                            pricingOpts
-                              ? buyerTotalFromSellerSubtotal(
-                                  (Number(p.price) || 0) * (Number(p.qty) || 1),
-                                  pricingOpts
-                                ) ?? (Number(p.price) || 0) * (Number(p.qty) || 1)
-                              : (Number(p.price) || 0) * (Number(p.qty) || 1)
-                          )
+                        : formatGhc(buyerDisplayPrice(Number(p.price) || 0, pricingOpts, Number(p.qty) || 1))
                     ),
                     !blocked && supportsCartCustomizationNotes(p)
                       ? h("div", { key: "cust", className: "mt-2" }, [
@@ -2460,15 +2456,8 @@ export function CartDrawer({ open, onClose }) {
           h("div", { key: "totals", className: "mt-6 space-y-2 border-t border-white/10 pt-4 text-sm" }, [
             h("div", { key: "total", className: "flex justify-between text-lg font-bold text-slate-900 dark:text-white" }, [
               h("span", { key: "l" }, "Total"),
-              h("span", { key: "v" }, formatGhc(breakdown ? breakdown.total : subtotal))
-            ]),
-            breakdown && breakdown.processingFee > 0.005
-              ? h(
-                  "p",
-                  { key: "paynote", className: "text-xs leading-snug text-slate-500 dark:text-slate-400" },
-                  "The exact amount may vary slightly by payment method."
-                )
-              : null
+              h("span", { key: "v" }, formatGhc(breakdown ? breakdown.total : Math.ceil(subtotal)))
+            ])
           ]),
           h(
             Button,
@@ -2775,14 +2764,28 @@ export function CheckoutPage() {
       { key: "lines", className: "mt-3 space-y-1.5 rounded-xl border border-white/15 bg-white/50 p-3 dark:bg-night-900/50" },
       [
         h("p", { key: "lab", className: "text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Your items"),
-        ...items.map((p) =>
-          h("div", { key: p._lineKey || p.id, className: "flex flex-col gap-0.5 rounded-lg border border-white/10 bg-white/30 px-2 py-1.5 text-sm dark:bg-night-900/40" }, [
-            h("span", { className: "min-w-0 text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)]),
-            String(p.customization || "").trim() && supportsCartCustomizationNotes(p)
-              ? h("span", { className: "text-xs text-violet-800 dark:text-violet-200" }, `Preferences: ${String(p.customization).trim()}`)
-              : null
-          ])
-        )
+        ...items.map((p) => {
+          const blocked = isOfflineQuoteCategory(p);
+          const lineTotal = blocked ? 0 : buyerDisplayPrice(Number(p.price) || 0, pricingOpts, Number(p.qty) || 1);
+          return h(
+            "div",
+            {
+              key: p._lineKey || p.id,
+              className: "flex items-start justify-between gap-2 rounded-lg border border-white/10 bg-white/30 px-2 py-1.5 text-sm dark:bg-night-900/40"
+            },
+            [
+              h("div", { key: "meta", className: "min-w-0 flex-1" }, [
+                h("span", { className: "text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)]),
+                String(p.customization || "").trim() && supportsCartCustomizationNotes(p)
+                  ? h("span", { className: "mt-0.5 block text-xs text-violet-800 dark:text-violet-200" }, `Preferences: ${String(p.customization).trim()}`)
+                  : null
+              ]),
+              !blocked
+                ? h("span", { key: "amt", className: "shrink-0 font-semibold tabular-nums text-slate-900 dark:text-white" }, formatGhc(lineTotal))
+                : null
+            ]
+          );
+        })
       ]
     ),
 
@@ -2790,14 +2793,7 @@ export function CheckoutPage() {
       h("div", { className: "flex justify-between text-base font-bold text-slate-900 dark:text-white" }, [
         h("span", null, "Total"),
         h("span", null, totalStr)
-      ]),
-      breakdown && breakdown.processingFee > 0.005
-        ? h(
-            "p",
-            { className: "mt-1 text-[11px] leading-snug text-slate-500 dark:text-slate-400" },
-            "Includes payment fees; exact charge may vary slightly by method."
-          )
-        : null
+      ])
     ]),
 
     !accessToken
@@ -3061,7 +3057,11 @@ export function SavedProductsPage() {
                                     formatGhc(cmpAt)
                                   )
                                 : null,
-                              h("span", { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" }, formatGhc(listP))
+                              h(
+                                "span",
+                                { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" },
+                                formatGhc(buyerDisplayPrice(listP, pricingOpts, 1))
+                              )
                             ]),
                         h(
                           Button,
@@ -3696,8 +3696,6 @@ function BuyerReceiptModal({ order, onClose }) {
         h("div", { className: "flex justify-between gap-3" }, [h("span", null, "Date"), h("span", { className: "text-right" }, order.createdAt ? new Date(order.createdAt).toLocaleString() : "—")]),
         h("div", { className: "flex justify-between gap-3" }, [h("span", null, "Payment method"), h("span", { className: "text-right" }, paymentMethodLabel(order.paymentMethod))]),
         h("div", { className: "flex justify-between gap-3" }, [h("span", null, "Payment reference"), h("span", { className: "max-w-[65%] text-right break-words" }, order.paymentReference || "—")]),
-        payment?.momoPhone && h("div", { className: "flex justify-between gap-3" }, [h("span", null, "MoMo number"), h("span", { className: "font-mono text-right" }, payment.momoPhone)]),
-        payment?.cardLast4 && h("div", { className: "flex justify-between gap-3" }, [h("span", null, "Card"), h("span", { className: "text-right" }, `**** ${payment.cardLast4}`)]),
         h("div", { className: "mt-3 rounded-xl border border-white/10 bg-white/30 p-3 dark:bg-night-900/30" }, [
           h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Items"),
           ...items.map((it, idx) =>

@@ -1,6 +1,5 @@
-/** Display Ghana Cedis (amounts are stored as decimal GHS). */
+/** Display Ghana Cedis — whole numbers only (buyer-facing). */
 export function formatGhc(amount) {
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return "GH₵ 0.00";
-  return `GH₵ ${n.toFixed(2)}`;
+  const n = Math.ceil(Number(amount) || 0);
+  return `GH₵ ${n}`;
 }

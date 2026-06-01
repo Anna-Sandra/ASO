@@ -1,3 +1,5 @@
+import { calculateBuyerTotal } from "utils/checkoutPricing";
+
 export const CATEGORIES = [
   { id: "all", label: "All" },
   { id: "food_drinks", label: "Food & Drinks" },
@@ -221,32 +223,48 @@ export function formatSellerPaymentSnippet(sp) {
 export const DEFAULT_PLATFORM_COMMISSION_PERCENT = 5;
 
 /**
- * Match checkout line math: `gross` is the vendor’s list line (unit × qty). Service fee is a percent of that;
- * `sellerReceives` equals `gross` (fees are on top for the buyer at checkout).
+ * Seller nets list price × qty; buyer pays all fees on top (whole GHS).
+ * @param {{ paystackFeePercent?: number, paystackFeeFixedGhs?: number } | null | undefined} [paystackOpts]
  */
-export function splitLineBuyerPayment(unitPrice, quantity, platformCommissionPercent) {
+export function splitLineBuyerPayment(unitPrice, quantity, platformCommissionPercent, paystackOpts) {
   const raw = Number(platformCommissionPercent);
   const pct = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : DEFAULT_PLATFORM_COMMISSION_PERCENT;
-  const rate = pct / 100;
-  const gross = Math.round(Number(unitPrice) * Number(quantity) * 100) / 100;
-  const platformFee = Math.round(gross * rate * 100) / 100;
-  const sellerReceives = gross;
-  return { gross, platformFee, sellerReceives, platformCommissionPercent: pct };
+  const sellerReceives = Math.ceil((Number(unitPrice) || 0) * (Number(quantity) || 1));
+  const paystackPct = Number(paystackOpts?.paystackFeePercent);
+  const paystackFixed = Number(paystackOpts?.paystackFeeFixedGhs) || 0;
+  const buyerTotal =
+    Number.isFinite(paystackPct) && paystackPct >= 0
+      ? calculateBuyerTotal(sellerReceives, pct, paystackPct, paystackFixed)
+      : sellerReceives;
+  const platformFee = Math.ceil(sellerReceives * (pct / 100));
+  const paystackFee = Math.max(0, buyerTotal - sellerReceives - platformFee);
+  return {
+    gross: sellerReceives,
+    platformFee,
+    paystackFee,
+    buyerTotal,
+    sellerReceives,
+    platformCommissionPercent: pct
+  };
 }
 
 /** @param {{ price: number, qty?: number, platformCommissionPercent?: unknown }[]} items */
-export function aggregateCartSplits(items) {
-  let gross = 0;
+export function aggregateCartSplits(items, paystackOpts) {
+  let sellerReceives = 0;
+  let buyerTotal = 0;
   let platformFee = 0;
   for (const p of items) {
-    const s = splitLineBuyerPayment(p.price, p.qty ?? 1, p.platformCommissionPercent);
-    gross += s.gross;
+    const s = splitLineBuyerPayment(p.price, p.qty ?? 1, p.platformCommissionPercent, paystackOpts);
+    sellerReceives += s.sellerReceives;
+    buyerTotal += s.buyerTotal;
     platformFee += s.platformFee;
   }
-  gross = Math.round(gross * 100) / 100;
-  platformFee = Math.round(platformFee * 100) / 100;
-  const sellerReceives = gross;
-  return { gross, platformFee, sellerReceives };
+  return {
+    gross: Math.ceil(sellerReceives),
+    platformFee: Math.ceil(platformFee),
+    sellerReceives: Math.ceil(sellerReceives),
+    buyerTotal: Math.ceil(buyerTotal)
+  };
 }
 
 /** @param {{ sellerId?: string, sellerPayment?: Record<string, unknown> }[]} items */

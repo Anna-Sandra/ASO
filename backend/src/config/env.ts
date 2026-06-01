@@ -98,7 +98,7 @@ const envSchema = z.object({
    * Tuned to your Paystack Ghana plan; buyer total is solved so (buyerTotal − fee) = listingSubtotal + serviceFee.
    */
   PAYSTACK_CHECKOUT_FEE_PERCENT: z.coerce.number().min(0).max(100).default(1.95),
-  PAYSTACK_CHECKOUT_FEE_FIXED_GHS: z.coerce.number().min(0).default(0.1),
+  PAYSTACK_CHECKOUT_FEE_FIXED_GHS: z.coerce.number().min(0).default(0),
 
   /** When true, new users are verified immediately and login does not require verification. Use only in local/dev. */
   AUTH_SKIP_EMAIL_VERIFICATION: z

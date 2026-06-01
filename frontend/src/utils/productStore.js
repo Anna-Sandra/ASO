@@ -1,5 +1,6 @@
 import { formatGhc } from "utils/money";
 import { isFoodCallToOrderCategory, isOfflineQuoteCategory } from "config/catalog";
+import { buyerDisplayPrice } from "utils/checkoutPricing";
 
 /** Parent storefront for a menu item / listing (restaurant-first when a store exists). */
 export function productStoreContext(product) {
@@ -38,13 +39,13 @@ export function productStoreContext(product) {
   };
 }
 
-export function productFeedPriceLabel(product) {
+/** @param {Record<string, unknown> | null | undefined} [pricingOpts] From {@link useCheckoutPricingOptions}. */
+export function productFeedPriceLabel(product, pricingOpts) {
   if (!product) return "";
   if (isOfflineQuoteCategory(product) || isFoodCallToOrderCategory(product)) {
     return isFoodCallToOrderCategory(product) ? "Call to order" : "Quote";
   }
-  const px = Number(product.price);
-  return Number.isFinite(px) ? formatGhc(px) : "";
+  return formatGhc(buyerDisplayPrice(Number(product.price), pricingOpts, 1));
 }
 
 /** Labels for ETA / delivery fee ribbons on catalog tiles (store + prep time). */

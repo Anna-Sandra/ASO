@@ -10,3 +10,10 @@ export function decodeJwtPayload(token) {
     return null;
   }
 }
+
+/** True when access JWT is missing `exp` or past expiry (optional skew seconds). */
+export function isAccessTokenExpired(token, skewSec = 30) {
+  const p = decodeJwtPayload(token);
+  if (!p?.exp) return false;
+  return Date.now() >= (Number(p.exp) - skewSec) * 1000;
+}

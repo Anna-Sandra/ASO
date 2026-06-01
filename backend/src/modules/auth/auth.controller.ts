@@ -110,10 +110,12 @@ function sixDigitOtp() {
 }
 
 function refreshCookieOptions() {
+  /** Vercel frontend + Render API: cross-site cookies need SameSite=None + Secure. */
+  const crossSite = env.COOKIE_SECURE;
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
-    secure: env.COOKIE_SECURE,
+    sameSite: crossSite ? ("none" as const) : ("lax" as const),
+    secure: crossSite,
     domain: env.COOKIE_DOMAIN || undefined,
     path: "/api/auth"
   };
@@ -147,6 +149,7 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
   const vendorBilling = role === "seller" ? await vendorBillingForUserId(user._id.toString()) : null;
   res.json({
     accessToken,
+    refreshToken,
     user: {
       id: user._id.toString(),
       email: user.email ?? "",
@@ -179,10 +182,12 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
 function sendEnvBootstrapAdminLoginSuccess(res: Response, extra?: Record<string, unknown>) {
   const sub = getBootstrapAdminJwtSub();
   const accessToken = signAccessToken({ sub, role: "admin", al: "super" });
-  res.cookie("refreshToken", signBootstrapRefreshToken(), refreshCookieOptions());
+  const bootstrapRefresh = signBootstrapRefreshToken();
+  res.cookie("refreshToken", bootstrapRefresh, refreshCookieOptions());
   const u = bootstrapAdminSessionUserJson();
   res.json({
     accessToken,
+    refreshToken: bootstrapRefresh,
     user: {
       id: u.id,
       email: u.email,
@@ -742,8 +747,9 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
   if (tryVerifyBootstrapRefreshToken(refreshToken)) {
     const sub = getBootstrapAdminJwtSub();
     const accessToken = signAccessToken({ sub, role: "admin", al: "super" });
-    res.cookie("refreshToken", signBootstrapRefreshToken(), refreshCookieOptions());
-    res.json({ accessToken });
+    const bootstrapRefresh = signBootstrapRefreshToken();
+    res.cookie("refreshToken", bootstrapRefresh, refreshCookieOptions());
+    res.json({ accessToken, refreshToken: bootstrapRefresh });
     return;
   }
 
@@ -770,7 +776,7 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const rotated = await issueRefreshToken(user._id);
 
   res.cookie("refreshToken", rotated.refreshToken, refreshCookieOptions());
-  res.json({ accessToken });
+  res.json({ accessToken, refreshToken: rotated.refreshToken });
 });
 
 export const logout = asyncHandler(async (req: Request, res: Response) => {

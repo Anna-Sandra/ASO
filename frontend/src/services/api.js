@@ -76,20 +76,23 @@ function shouldSkip401Refresh(path) {
 async function refreshAccessToken() {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
+    const storedRefresh = storageGet(StorageKeys.REFRESH_TOKEN);
     const url = `${API_BASE}/api/auth/refresh`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify(storedRefresh ? { refreshToken: storedRefresh } : {}),
       credentials: "include"
     });
     const data = await parseResponse(res);
     if (!res.ok || !data?.accessToken) {
       storageRemove(StorageKeys.ACCESS_TOKEN);
+      storageRemove(StorageKeys.REFRESH_TOKEN);
       emitTokenUpdate(null);
       return null;
     }
     storageSet(StorageKeys.ACCESS_TOKEN, data.accessToken);
+    if (data.refreshToken) storageSet(StorageKeys.REFRESH_TOKEN, data.refreshToken);
     emitTokenUpdate(data.accessToken);
     return data.accessToken;
   })()

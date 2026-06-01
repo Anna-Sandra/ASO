@@ -188,7 +188,7 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     env.PAYSTACK_CHECKOUT_FEE_PERCENT,
     env.PAYSTACK_CHECKOUT_FEE_FIXED_GHS
   );
-  const processingFeeTotal = roundMoney(total - baseBeforeProcessing);
+  const processingFeeTotal = Math.max(0, total - Math.ceil(baseBeforeProcessing));
 
   const dropoffLabel = String(body.dropoffLabel || "").trim().slice(0, 500);
   const dropLat = body.dropoffLatitude;

@@ -24,20 +24,38 @@ export function paystackFeeOnChargeGhs(chargeGhs: number, feePercent: number, fe
 }
 
 /**
- * Buyer pays `buyerTotal`; the PSP keeps roughly `fee(buyerTotal)`. Solve `buyerTotal` so the platform
- * nets `merchantNetGhs` after an **approximate** linear fee (percent + fixed) from env — tuned to your
- * stack, not read from Paystack’s “exact fee before pay” APIs.
+ * Buyer total for a seller list price: platform fee on top, then Paystack gross-up, always whole GHS.
+ * Uses env `PLATFORM_COMMISSION_PERCENT` and Paystack checkout fee env vars.
+ */
+export function calculateBuyerTotal(
+  vendorPrice: number,
+  platformPercent: number = env.PLATFORM_COMMISSION_PERCENT,
+  paystackPercent: number = env.PAYSTACK_CHECKOUT_FEE_PERCENT,
+  paystackFixedGhs: number = env.PAYSTACK_CHECKOUT_FEE_FIXED_GHS
+): number {
+  const list = Math.max(0, Number(vendorPrice) || 0);
+  const plat = Math.min(100, Math.max(0, Number(platformPercent) || 0)) / 100;
+  const afterPlatform = list * (1 + plat);
+  const p = Math.min(99.99, Math.max(0, Number(paystackPercent) || 0)) / 100;
+  const k = Math.max(0, Number(paystackFixedGhs) || 0);
+  const withPaystack = p <= 0 ? afterPlatform + k : (afterPlatform + k) / (1 - p);
+  return Math.ceil(withPaystack);
+}
+
+/**
+ * `merchantNetGhs` = seller subtotal + platform service fee (fees already added on top of list price).
+ * Applies Paystack gross-up only — use after {@link serviceFeeOnVendorGross} is summed into the base.
  */
 export function buyerTotalForMerchantNetGhs(
   merchantNetGhs: number,
   feePercent: number,
   feeFixedGhs: number
 ): number {
+  const base = Math.max(0, Number(merchantNetGhs) || 0);
   const p = Math.min(99.99, Math.max(0, feePercent)) / 100;
   const k = Math.max(0, feeFixedGhs);
-  const base = roundMoney(merchantNetGhs);
-  if (p <= 0) return roundMoney(base + k);
-  return roundMoney((base + k) / (1 - p));
+  const withPaystack = p <= 0 ? base + k : (base + k) / (1 - p);
+  return Math.ceil(withPaystack);
 }
 
 /**
