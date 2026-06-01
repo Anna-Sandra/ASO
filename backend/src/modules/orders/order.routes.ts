@@ -10,6 +10,7 @@ import {
   checkout,
   confirmBuyerReceipt,
   deleteMyOrder,
+  getReorderItems,
   getOrder,
   listBuyerVendorInbox,
   listMyOrders,
@@ -34,6 +35,7 @@ router.post(
   markAdminOrderPaid
 );
 router.get("/", protect, requireActiveAccount, authorize(...shopRoles), listMyOrders);
+router.get("/:id/reorder-items", protect, requireActiveAccount, authorize("buyer", "admin"), getReorderItems);
 router.get("/buyer/vendor-messages", protect, requireActiveAccount, authorize("buyer", "admin"), listBuyerVendorInbox);
 router.get("/seller/buyer-messages", protect, requireActiveAccount, authorize("seller", "admin"), listSellerBuyerInbox);
 router.post(

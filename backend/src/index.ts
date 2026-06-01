@@ -8,6 +8,7 @@ import { isOtpConsoleLogEnabled } from "./utils/otpLog";
 import { setupDeliverySockets } from "./modules/deliveries/delivery.socket";
 import { warmupOllamaInBackground } from "./config/ollamaWarmup";
 import { runAutoConfirmDeliveredOrders } from "./modules/orders/orderAutoConfirm.job";
+import { runAbandonedCartReminders } from "./modules/orders/orderAbandonedReminder.job";
 import { getUploadStorageDiagnostics } from "./utils/uploadStorage";
 
 async function main() {
@@ -66,6 +67,19 @@ async function main() {
     if (mongoose.connection.readyState !== 1) return;
     void runAutoConfirmDeliveredOrders().catch(() => {});
   }, 45_000);
+
+  const ABANDONED_CART_MS = 30 * 60 * 1000;
+  setInterval(() => {
+    if (mongoose.connection.readyState !== 1) return;
+    void runAbandonedCartReminders().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn("[jobs] abandoned cart reminders:", err);
+    });
+  }, ABANDONED_CART_MS);
+  setTimeout(() => {
+    if (mongoose.connection.readyState !== 1) return;
+    void runAbandonedCartReminders().catch(() => {});
+  }, 90_000);
 
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {

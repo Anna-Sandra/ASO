@@ -248,7 +248,11 @@ async function loadAssistantPrompt(
         : `- Listings below match their search — introduce naturally ("Here are some options…") and show relevant lines first.\n- NEVER show food when they asked for fashion (or vice versa).\n`
       : "";
 
-  const system = `You are the ${siteName} shopping assistant — a Ghana marketplace platform. ${userNote}${personalizeBlock}
+  const system = `You are the ${siteName} shopping assistant — a Ghana marketplace platform (Accra, Kumasi, campuses, and nationwide). ${userNote}${personalizeBlock}
+
+LANGUAGE:
+- Shoppers may write in English, Ghana Pidgin, or simple Twi (especially for food). Understand intent; reply in friendly English with optional brief local warmth (e.g. "Ei!" or "Chale") — do not pretend to be fluent Twi if listings are in English
+- MoMo and Paystack checkout are normal for Ghana buyers — mention them when explaining payment
 
 ${assistantConversationalToneRules()}
 

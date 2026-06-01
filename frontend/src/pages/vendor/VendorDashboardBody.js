@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Eye, Percent, Repeat, ShoppingBag, TrendingUp, Wallet } from "lucide-react";
+import { Eye, Percent, Repeat, Search, ShoppingBag, TrendingUp, Wallet } from "lucide-react";
 import { h } from "utils/h";
 import { formatGhc } from "utils/money";
 import { formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
@@ -219,6 +219,27 @@ export function VendorDashboardBody({ analytics, allOrders, myProducts }) {
             )
       ])
     ]),
+    (analytics?.topSearchTerms || []).length > 0
+      ? h(GlassPanel, { key: "search-terms", className: "!overflow-hidden !p-0" }, [
+          panelHead(
+            "How buyers find you",
+            "Top shop searches where your listings appeared (last 30 days)."
+          ),
+          h(
+            "ul",
+            { className: "divide-y divide-white/10 px-4 py-2 sm:px-5" },
+            (analytics.topSearchTerms || []).slice(0, 8).map((row) =>
+              h("li", { key: row.query, className: "flex items-center justify-between gap-3 py-3" }, [
+                h("span", { className: "inline-flex min-w-0 items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-100" }, [
+                  h(Search, { className: "h-4 w-4 shrink-0 text-sky-500", "aria-hidden": true }),
+                  h("span", { className: "truncate" }, `"${row.query}"`)
+                ]),
+                h("span", { className: "shrink-0 text-xs font-semibold tabular-nums text-slate-500 dark:text-slate-400" }, `${row.count}×`)
+              ])
+            )
+          )
+        ])
+      : null,
     h("div", { key: "row-bot", className: "grid grid-cols-1 gap-6 lg:grid-cols-3" }, [
       h(GlassPanel, { key: "top-prod", className: "lg:col-span-2 !overflow-hidden !p-0" }, [
         panelHead(

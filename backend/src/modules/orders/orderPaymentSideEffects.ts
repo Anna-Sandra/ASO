@@ -3,6 +3,7 @@ import { Order } from "./order.model";
 import { User } from "../auth/user.model";
 import { runVendorPayoutsForOrder } from "../payments/paystackPayouts";
 import { fireNotification } from "../notifications/notification.service";
+import { runReferralSettlementForPaidOrder } from "./referralSettlement";
 
 const PAID_LIKE = ["paid", "processing", "sent_for_delivery", "delivered"];
 
@@ -44,6 +45,8 @@ export async function runLoyaltySettlementForPaidOrder(orderId: mongoose.Types.O
           : "Thanks for your purchase.",
     orderId
   });
+
+  void runReferralSettlementForPaidOrder(orderId);
 }
 
 /** After buyer confirms receipt (or auto-confirm): legacy Paystack transfers if split disabled. */

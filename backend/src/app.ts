@@ -26,7 +26,8 @@ import { listAdminRiders } from "./modules/deliveries/riderAdmin.controller";
 import reportRoutes from "./modules/reports/report.routes";
 import paymentsRoutes from "./modules/payments/payments.routes";
 import productRoutes from "./modules/products/product.routes";
-import { recommendProducts } from "./modules/products/product.controller";
+import { getRecentlyViewedProducts, recommendProducts } from "./modules/products/product.controller";
+import cartRoutes from "./modules/cart/cart.routes";
 import { recommendedProductsQuerySchema } from "./modules/products/product.schemas";
 import uploadRoutes from "./modules/uploads/upload.routes";
 import { getUploadStorageDiagnostics } from "./utils/uploadStorage";
@@ -207,7 +208,15 @@ export function createApp() {
     validateQuery(recommendedProductsQuerySchema),
     recommendProducts
   );
+  app.get(
+    "/api/products/recently-viewed",
+    protect,
+    requireActiveAccount,
+    authorize("buyer"),
+    getRecentlyViewedProducts
+  );
   app.use("/api/products", productRoutes);
+  app.use("/api/cart", cartRoutes);
   app.use("/api/conversations", conversationRoutes);
   /**
    * Registers before `/api/admin` router so POST always hits — avoids 404 when a stale compiled admin router lacks this route.

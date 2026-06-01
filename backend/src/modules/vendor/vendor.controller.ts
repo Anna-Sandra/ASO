@@ -18,6 +18,7 @@ import {
 import { notifyBuyerOrderStatus, notifyOrderCancelledForCounterparties, notifyOrderPaid } from "../notifications/notification.service";
 import type { VendorAnalyticsEventType } from "./vendorAnalyticsEvent.model";
 import { VendorAnalyticsEvent } from "./vendorAnalyticsEvent.model";
+import { topSearchTermsForSeller } from "../products/shopSearchImpression.service";
 import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
 import { sendOrderDeliveredEmails } from "../../utils/orderDeliveredEmail";
 
@@ -346,12 +347,15 @@ export const vendorAnalytics = asyncHandler(async (req: Request, res: Response) 
     b.eventCounts[t] = (b.eventCounts[t] || 0) + row.c;
   }
 
+  const topSearchTerms = await topSearchTermsForSeller(sid, startUtc, 10);
+
   res.json({
     productCount,
     orderCount,
     revenue: Math.round(revenue * 100) / 100,
     topProducts,
     reviewCount,
+    topSearchTerms,
     /** Percent of each order line (buyer price × qty) retained by the marketplace; your revenue above is after this fee. */
     platformCommissionPercent: commissionPct,
     chart: {

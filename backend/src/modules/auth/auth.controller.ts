@@ -39,6 +39,7 @@ import {
   tryVerifyBootstrapRefreshToken
 } from "./jwt";
 import { issueCsrfToken } from "../../middleware/csrf";
+import { generateReferralCode, REFERRAL_REWARD_POINTS_EACH } from "../../utils/referral";
 
 type LeanUser = {
   _id: mongoose.Types.ObjectId;
@@ -241,12 +242,60 @@ async function issueLoginOtpAndRespond(user: HydratedDocument<UserDoc>, res: Res
   });
 }
 
+async function uniqueReferralCodeForNewUser(): Promise<string> {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const code = generateReferralCode();
+    const taken = await User.exists({ referralCode: code });
+    if (!taken) return code;
+  }
+  return `${generateReferralCode()}${generateReferralCode().slice(0, 2)}`;
+}
+
+async function ensureUserReferralCode(userId: mongoose.Types.ObjectId): Promise<string> {
+  const existing = await User.findById(userId).select("referralCode").lean();
+  const cur = String((existing as { referralCode?: string })?.referralCode || "").trim();
+  if (cur) return cur;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const code = generateReferralCode();
+    const updated = await User.findOneAndUpdate(
+      { _id: userId, $or: [{ referralCode: null }, { referralCode: "" }, { referralCode: { $exists: false } }] },
+      { $set: { referralCode: code } },
+      { new: true }
+    )
+      .select("referralCode")
+      .lean();
+    if (updated?.referralCode) return String(updated.referralCode);
+    const again = await User.findById(userId).select("referralCode").lean();
+    if (again?.referralCode) return String(again.referralCode);
+  }
+  throw new HttpError(500, "Could not generate your invite code. Try again later.");
+}
+
+export const getReferralInfo = asyncHandler(async (req: Request, res: Response) => {
+  const role = normalizeUserRole(req.user?.role);
+  if (role !== "buyer" && role !== "admin") {
+    throw new HttpError(403, "Invite rewards are for shopper accounts.");
+  }
+  const uid = new mongoose.Types.ObjectId(req.user!.id);
+  const code = await ensureUserReferralCode(uid);
+  const inviteSignups = await User.countDocuments({ referredByUserId: uid });
+  const shop = env.APP_ORIGIN.replace(/\/$/, "");
+  res.json({
+    code,
+    shareUrl: `${shop}/register?ref=${encodeURIComponent(code)}`,
+    inviteSignups,
+    rewardPointsEach: REFERRAL_REWARD_POINTS_EACH,
+    rewardGhsEach: REFERRAL_REWARD_POINTS_EACH / 100
+  });
+});
+
 export const register = asyncHandler(async (req: Request, res: Response) => {
-  const { email, password, displayName, username } = req.body as {
+  const { email, password, displayName, username, referralCode: refCodeIn } = req.body as {
     email: string;
     password: string;
     displayName?: string;
     username?: string;
+    referralCode?: string;
   };
   const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail) throw new HttpError(400, "A valid email address is required.");
@@ -272,12 +321,28 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
   const shouldEmailVerify = !env.AUTH_SKIP_EMAIL_VERIFICATION;
   const verifiedNow = shouldEmailVerify ? null : new Date();
+
+  let referredByUserId: mongoose.Types.ObjectId | undefined;
+  const refNorm = String(refCodeIn || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 12);
+  if (refNorm.length >= 4) {
+    const referrer = await User.findOne({ referralCode: refNorm }).select("_id email").lean();
+    if (referrer && String(referrer.email || "").toLowerCase() !== cleanEmail) {
+      referredByUserId = referrer._id as mongoose.Types.ObjectId;
+    }
+  }
+
   const user = await User.create({
     email: cleanEmail,
     passwordHash,
     role: "buyer",
     vendorStatus: "none",
     emailVerifiedAt: verifiedNow,
+    referralCode: await uniqueReferralCodeForNewUser(),
+    ...(referredByUserId ? { referredByUserId } : {}),
     ...(cleanDisplayName ? { displayName: cleanDisplayName } : {})
   });
 

@@ -21,12 +21,13 @@ import { ProductSave } from "./productSave.model";
 import { assertProductBusinessLink, getSellerDefaultBusinessId } from "../businesses/business.controller";
 import { Business, primaryProductCategoryForBusinessType, type BusinessType } from "../businesses/business.model";
 import { notifySaversPriceDrop } from "../notifications/notification.service";
-import { groqCompletion, groqConfigured } from "../assistant/groqChat";
 import {
   detectCategoryFromMessage,
   expandShopSearchQuery,
   shouldSupplementCategoryBrowse
 } from "./shopSearchExpand";
+import { logShopSearchImpressions } from "./shopSearchImpression.service";
+import { expandShopSearchWithAi } from "./shopSearchAi";
 import { computeListingSearchAssist, isValidMarketplaceSubcategory } from "./productSubcategories";
 import {
   listingTextLooksLikeBabies,
@@ -122,63 +123,6 @@ function escapeRegex(s: string): string {
 }
 
 const SMART_SEARCH_ROWS_CAP = 300;
-
-/** Strip trailing ``` fences models sometimes emit. */
-function stripJsonMarkdownFences(s: string): string {
-  let t = s.trim();
-  if (!t.startsWith("`")) return t;
-  t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
-  return t;
-}
-
-/** Synonym expansion — used when Groq is off or returns junk. */
-function heuristicSearchKeywords(q: string): string[] {
-  return expandShopSearchQuery(q).keywords;
-}
-
-async function aiExpandShopSearchTerms(q: string): Promise<{ keywords: string[]; categoryHint: ProductCategory | null }> {
-  const expansion = expandShopSearchQuery(q);
-  const fallbackKw = expansion.keywords.length ? expansion.keywords : heuristicSearchKeywords(q);
-  const heuristicCat = expansion.categoryHint ?? detectCategoryFromMessage(q);
-  if (!groqConfigured()) {
-    return { keywords: fallbackKw, categoryHint: heuristicCat };
-  }
-  const allowedCats = PRODUCT_CATEGORIES.join(", ");
-  const system = `You help shoppers search a Ghana e-commerce marketplace (SHOPIQGH).
-
-Respond with ONLY valid JSON — no markdown, no explanation. Keys:
-- "keywords": array of 1–6 short phrases or words for catalogue search (include common synonyms and variants; omit filler words like "cheap", "best", "want", "looking for", "please").
-- "category_hint": one of exactly [${allowedCats}] or null if unclear.
-
-Prefer category_hint null when unsure.`;
-
-  try {
-    const text = await groqCompletion(system, [{ role: "user", content: q.trim().slice(0, 250) }]);
-    if (!text) return { keywords: fallbackKw, categoryHint: heuristicCat };
-    const trimmed = stripJsonMarkdownFences(text);
-    const parsed = JSON.parse(trimmed) as { keywords?: unknown; category_hint?: unknown };
-    const rawKw = Array.isArray(parsed.keywords) ? parsed.keywords : [];
-    const keywords = [
-      ...new Set(
-        rawKw
-          .map((x) => String(x ?? "").trim().toLowerCase().replace(/\s+/g, " "))
-          .filter((s) => s.length >= 2 && s.length <= 64)
-      )
-    ].slice(0, 8);
-    let categoryHint: ProductCategory | null = null;
-    if (typeof parsed.category_hint === "string") {
-      const c = parsed.category_hint.trim();
-      if ((PRODUCT_CATEGORIES as readonly string[]).includes(c)) categoryHint = c as ProductCategory;
-    }
-    const merged = [...new Set([...keywords, ...fallbackKw])].slice(0, 20);
-    return {
-      keywords: merged.length ? merged : fallbackKw,
-      categoryHint: categoryHint ?? heuristicCat
-    };
-  } catch {
-    return { keywords: fallbackKw, categoryHint: heuristicCat };
-  }
-}
 
 async function fetchShopProductRows(opts: {
   filter: Record<string, unknown>;
@@ -293,23 +237,25 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   let rows: Record<string, unknown>[];
   const searchStr = q.q?.trim();
   if (searchStr) {
-    const expansion = expandShopSearchQuery(searchStr);
-    const searchBlob = (expansion.keywords.length ? expansion.keywords.join(" ") : searchStr).slice(0, 400);
+    const aiExp = await expandShopSearchWithAi(searchStr);
+    const expansion = expandShopSearchQuery(aiExp.normalizedQuery);
+    const categoryHint = q.category ? null : aiExp.categoryHint ?? expansion.categoryHint;
+    const searchBlob = (aiExp.keywords.length ? aiExp.keywords.join(" ") : expansion.keywords.join(" ") || searchStr).slice(
+      0,
+      400
+    );
     rows = await fetchShopProductRows({ filter, searchStr: searchBlob });
     if (!rows.length && searchBlob !== searchStr) {
       rows = await fetchShopProductRows({ filter, searchStr });
     }
-    if (
-      expansion.categoryHint &&
-      !q.category &&
-      shouldSupplementCategoryBrowse(expansion, rows.length)
-    ) {
-      rows = await supplementCategoryBrowse(filter, expansion.categoryHint, rows, 500);
+    if (categoryHint && !q.category && shouldSupplementCategoryBrowse({ ...expansion, categoryHint }, rows.length)) {
+      rows = await supplementCategoryBrowse(filter, categoryHint, rows, 500);
     }
   } else {
     rows = (await Product.find(filter).sort({ updatedAt: -1 }).lean()) as unknown as Record<string, unknown>[];
   }
   const enriched = await enrichPublicProducts(rows as unknown as Record<string, unknown>[]);
+  if (searchStr) logShopSearchImpressions(searchStr, enriched);
   res.json({ products: enriched });
 });
 
@@ -325,8 +271,10 @@ export const smartSearchProducts = asyncHandler(async (req: Request, res: Respon
 
   /** Only filter by category when the shopper picked a chip — never auto-apply AI/heuristic hints (hurts recall, e.g. shoes miscategorized). */
   const effectiveCategory: ProductCategory | undefined = body.category;
-  const expansion = expandShopSearchQuery(body.q);
-  const { keywords, categoryHint } = await aiExpandShopSearchTerms(body.q);
+  const aiExp = await expandShopSearchWithAi(body.q);
+  const expansion = expandShopSearchQuery(aiExp.normalizedQuery);
+  const keywords = aiExp.keywords;
+  const categoryHint = aiExp.categoryHint ?? expansion.categoryHint;
   if (effectiveCategory) Object.assign(filter, mongoCategoryBrowseFilter(effectiveCategory));
   if (body.tag) filter.tags = body.tag;
   if (body.subcategory?.trim()) filter.subcategory = body.subcategory.trim();
@@ -351,6 +299,7 @@ export const smartSearchProducts = asyncHandler(async (req: Request, res: Respon
   }
 
   const enriched = await enrichPublicProducts(rows as unknown as Record<string, unknown>[]);
+  logShopSearchImpressions(body.q, enriched);
   res.json({
     products: enriched,
     smart: {
@@ -358,7 +307,9 @@ export const smartSearchProducts = asyncHandler(async (req: Request, res: Respon
       expandedQuery: searchBlob,
       categoryApplied: effectiveCategory ?? null,
       /** Softer UX hint — not applied as a Mongo filter unless the user taps that category chip. */
-      categorySuggestion: !effectiveCategory ? categoryHint : null
+      categorySuggestion: !effectiveCategory ? categoryHint : null,
+      usedAi: aiExp.usedGroq,
+      normalizedQuery: aiExp.normalizedQuery !== body.q.trim() ? aiExp.normalizedQuery : undefined
     }
   });
 });
@@ -452,8 +403,9 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
   const uid =
     req.user?.role === "buyer" && req.user?.id && mongoose.isValidObjectId(req.user.id) ? req.user.id : "";
   if (uid && mongoose.isValidObjectId(uid)) {
+    const buyerOid = new mongoose.Types.ObjectId(uid);
     const orders = await Order.find({
-      buyerId: new mongoose.Types.ObjectId(uid),
+      buyerId: buyerOid,
       status: { $in: ["paid", "processing", "sent_for_delivery", "delivered"] }
     })
       .sort({ updatedAt: -1 })
@@ -471,6 +423,20 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
               : "";
         if (pid) pids.add(pid);
       }
+    }
+    const recentViews = await BuyerProductView.find({ buyerId: buyerOid })
+      .sort({ viewedAt: -1 })
+      .limit(16)
+      .select("productId")
+      .lean();
+    for (const v of recentViews) {
+      const pid =
+        v.productId instanceof mongoose.Types.ObjectId
+          ? v.productId.toString()
+          : typeof v.productId === "string"
+            ? v.productId
+            : "";
+      if (pid) pids.add(pid);
     }
     if (pids.size) {
       personalized = true;
@@ -643,6 +609,48 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
       products: similarEnriched
     }
   });
+});
+
+/** Signed-in buyer: recently viewed listings (newest first). */
+export const getRecentlyViewedProducts = asyncHandler(async (req: Request, res: Response) => {
+  if (req.user?.role !== "buyer" || !req.user?.id || !mongoose.isValidObjectId(req.user.id)) {
+    res.json({ products: [] });
+    return;
+  }
+  const buyerId = new mongoose.Types.ObjectId(req.user.id);
+  const views = await BuyerProductView.find({ buyerId })
+    .sort({ viewedAt: -1 })
+    .limit(14)
+    .select("productId")
+    .lean();
+  const orderedIds = views
+    .map((v) =>
+      v.productId instanceof mongoose.Types.ObjectId
+        ? v.productId.toString()
+        : typeof v.productId === "string" && mongoose.isValidObjectId(v.productId)
+          ? v.productId
+          : ""
+    )
+    .filter(Boolean);
+  if (!orderedIds.length) {
+    res.json({ products: [] });
+    return;
+  }
+
+  const activeIds = await activeStoreBusinessIds();
+  const oidList = orderedIds.map((id) => new mongoose.Types.ObjectId(id));
+  const found = await Product.find({
+    _id: { $in: oidList },
+    status: "active",
+    ...buyerCandidateFilter,
+    ...foodMenuStoreFilter(activeIds)
+  }).lean();
+  const byId = new Map(found.map((p) => [(p._id as mongoose.Types.ObjectId).toString(), p]));
+  const ordered = orderedIds
+    .map((id) => byId.get(id))
+    .filter((p): p is NonNullable<typeof p> => Boolean(p)) as unknown as Record<string, unknown>[];
+  const enriched = await enrichPublicProducts(ordered);
+  res.json({ products: enriched });
 });
 
 /** Buyer-only: record a product listing view for recommendations (no body). */

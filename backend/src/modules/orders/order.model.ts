@@ -118,6 +118,8 @@ export interface OrderDoc {
   pointsSettlementDone?: boolean;
   /** First-time buyer 15% merchandise discount applied to this order. */
   firstOrderDiscountApplied?: boolean;
+  /** One-time email when checkout started but Paystack not completed (≥2h). */
+  abandonedCheckoutReminderSentAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -241,7 +243,8 @@ const orderSchema = new Schema<OrderDoc>(
     buyerConfirmedReceiptAt: { type: Date, default: null },
     pointsRedeemed: { type: Number, default: 0, min: 0 },
     pointsSettlementDone: { type: Boolean, default: false },
-    firstOrderDiscountApplied: { type: Boolean, default: false }
+    firstOrderDiscountApplied: { type: Boolean, default: false },
+    abandonedCheckoutReminderSentAt: { type: Date, default: null }
   },
   { timestamps: true }
 );

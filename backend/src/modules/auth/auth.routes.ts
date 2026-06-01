@@ -10,6 +10,7 @@ import {
   csrfToken,
   forgotPassword,
   getMe,
+  getReferralInfo,
   login,
   logout,
   refresh,
@@ -67,6 +68,7 @@ router.post("/forgot-password", authLimiter, validateBody(forgotPasswordSchema),
 router.post("/reset-password", authLimiter, validateBody(resetPasswordSchema), resetPassword);
 
 router.get("/me", protect, requireActiveAccount, getMe);
+router.get("/referral", protect, requireActiveAccount, getReferralInfo);
 router.patch("/profile", protect, requireActiveAccount, validateBody(profileUpdateSchema), updateProfile);
 /** Account deletion is registered on the root app in `app.ts` (POST /api/auth/delete-account, etc.). */
 

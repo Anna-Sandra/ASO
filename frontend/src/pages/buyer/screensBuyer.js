@@ -6,7 +6,9 @@ import {
   Baby,
   BookOpen,
   ChevronRight,
+  Copy,
   Cpu,
+  Gift,
   Flag,
   Heart,
   LayoutGrid,
@@ -74,7 +76,11 @@ import { ShopHomePromoCarousel } from "pages/buyer/shopFlashDealsRail";
 import { MenuItemFeedCard } from "components/marketplace/MenuItemFeedCard";
 import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
 import { RestaurantContextPanel } from "components/marketplace/RestaurantContextPanel";
-import { productStoreContext } from "utils/productStore";
+import {
+  productSocialProofLines,
+  productStockUrgencyLabel,
+  productStoreContext
+} from "utils/productStore";
 import { buyerDisplayPrice } from "utils/checkoutPricing";
 import { computeCheckoutBreakdown, useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
 import { buyerOrderFulfillmentPillClass, formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
@@ -869,7 +875,28 @@ export function ProductDetailPage() {
                 h(ReviewStars, { key: "st", value: avgRating }),
                 h("span", { className: "font-semibold text-slate-700 dark:text-slate-200" }, String(avgRating)),
                 h("span", { className: "text-slate-500" }, `(${reviews.length} review${reviews.length === 1 ? "" : "s"})`)
-              ])
+              ]),
+              (() => {
+                const stockUrg = productStockUrgencyLabel(product);
+                const socialLines = productSocialProofLines(product);
+                if (!stockUrg && !socialLines.length) return null;
+                return h(
+                  "div",
+                  { key: "social-proof", className: "mt-2 space-y-1" },
+                  [
+                    stockUrg
+                      ? h(
+                          "p",
+                          { className: "text-sm font-semibold text-rose-600 dark:text-rose-300" },
+                          stockUrg
+                        )
+                      : null,
+                    socialLines.length
+                      ? h("p", { className: "text-sm text-slate-600 dark:text-slate-400" }, socialLines.map((ln) => ln.text).join(" · "))
+                      : null
+                  ].filter(Boolean)
+                );
+              })()
           ]),
           h(RestaurantContextPanel, { key: "store-ctx", product }),
           pricingPanel,
@@ -1047,6 +1074,8 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
   const cmpAt = Number(p.compareAtPrice);
   const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
   const storeCtx = productStoreContext(p);
+  const stockUrgency = productStockUrgencyLabel(p);
+  const socialLines = productSocialProofLines(p);
 
   return h(
     "div",
@@ -1057,6 +1086,17 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
     },
     [
       h("div", { key: "img", className: "relative" }, [
+        stockUrgency
+          ? h(
+              "span",
+              {
+                key: "urg",
+                className:
+                  "absolute left-2 top-2 z-[4] rounded-md bg-rose-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow"
+              },
+              stockUrgency
+            )
+          : null,
         storefrontBadgeStack(p),
         h(ProductCardRotatingImage, {
           key: "rot",
@@ -1131,6 +1171,16 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
                 storeCtx.name
               )
         ]),
+        socialLines.length
+          ? h(
+              "p",
+              {
+                key: "social",
+                className: "mt-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400"
+              },
+              socialLines.map((ln) => ln.text).join(" · ")
+            )
+          : null,
         quoteCard
           ? h(
               "p",
@@ -1559,8 +1609,12 @@ function BuyerStorefrontAside({
       }),
       row("recent", LayoutGrid, "Recently viewed", {
         onClick: () => {
-          const el = document.getElementById("buyer-shop-grid");
+          const el = document.getElementById("buyer-recently-viewed");
           if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          else {
+            const grid = document.getElementById("buyer-shop-grid");
+            if (grid) grid.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
         }
       }),
       linkRow("help", Headphones, "Help & support", "/support"),
@@ -2588,6 +2642,7 @@ export function CheckoutPage() {
   const nav = useNavigate();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [redeemPts, setRedeemPts] = useState(0);
   const [guestEmail, setGuestEmail] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
   const [dropoffLabel, setDropoffLabel] = useState("");
@@ -2608,6 +2663,9 @@ export function CheckoutPage() {
         )
       : null;
   const totalStr = formatGhc(breakdown ? breakdown.total : subtotal);
+  const pointsBal = Math.max(0, Math.floor(Number(user?.rewardPoints) || 0));
+  const maxRedeemPts = accessToken ? Math.min(pointsBal, Math.max(0, Math.floor(subtotal * 100))) : 0;
+  const redeemGhs = redeemPts > 0 ? redeemPts / 100 : 0;
 
   const useMyDropoffLocation = () => {
     setDropoffHint("");
@@ -2682,6 +2740,7 @@ export function CheckoutPage() {
         dropoffLabel: dropLabel,
         dropoffLatitude: dropoffLat,
         dropoffLongitude: dropoffLng,
+        ...(accessToken && redeemPts > 0 ? { redeemPoints: redeemPts } : {}),
         ...(!accessToken
           ? {
               guestEmail: String(guestEmail || "").trim(),
@@ -2856,11 +2915,65 @@ export function CheckoutPage() {
       ]
     ),
 
+    accessToken && (pointsBal > 0 || user?.firstOrderDiscountEligible)
+      ? h("div", { key: "loyalty", className: "mt-3 space-y-2 rounded-xl border border-violet-400/25 bg-violet-500/5 p-3 dark:border-violet-400/20 dark:bg-violet-950/25" }, [
+          user?.firstOrderDiscountEligible
+            ? h(
+                "p",
+                { key: "first", className: "text-xs font-semibold text-violet-900 dark:text-violet-100" },
+                "First order this week: 15% off merchandise is applied at payment."
+              )
+            : null,
+          pointsBal > 0
+            ? [
+                h("p", { key: "bal", className: "text-xs text-slate-600 dark:text-slate-300" }, [
+                  "Reward balance: ",
+                  h("strong", { className: "text-slate-900 dark:text-white" }, `${pointsBal} pts`),
+                  " (100 pts = GHS 1 off)"
+                ]),
+                h("div", { key: "redeem-row", className: "flex flex-wrap items-end gap-2" }, [
+                  h(Field, { key: "rp", label: "Redeem points", className: "min-w-[8rem] flex-1" }, h(TextInput, {
+                    type: "number",
+                    min: 0,
+                    max: maxRedeemPts,
+                    value: String(redeemPts),
+                    onChange: (e) => {
+                      const n = Math.max(0, Math.min(maxRedeemPts, Math.floor(Number(e.target.value) || 0)));
+                      setRedeemPts(n);
+                    }
+                  })),
+                  h(
+                    Button,
+                    {
+                      key: "max",
+                      type: "button",
+                      variant: "ghost",
+                      className: "!text-xs",
+                      onClick: () => setRedeemPts(maxRedeemPts)
+                    },
+                    "Use max"
+                  )
+                ]),
+                redeemPts > 0
+                  ? h(
+                      "p",
+                      { key: "off", className: "text-[11px] font-medium text-emerald-700 dark:text-emerald-300" },
+                      `−${formatGhc(redeemGhs)} applied on the server when you pay.`
+                    )
+                  : null
+              ]
+            : null
+        ])
+      : null,
+
     h("div", { key: "total-row", className: "mt-3 border-t border-slate-200/80 pt-2.5 dark:border-white/10" }, [
       h("div", { className: "flex justify-between text-base font-bold text-slate-900 dark:text-white" }, [
         h("span", null, "Total"),
         h("span", null, totalStr)
-      ])
+      ]),
+      redeemPts > 0
+        ? h("p", { key: "redeem-note", className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, `Points discount (${redeemPts} pts) is calculated on Paystack amount.`)
+        : null
     ]),
 
     !accessToken
@@ -3190,6 +3303,8 @@ export function ShopPage() {
   const [recRows, setRecRows] = useState([]);
   const [recLoading, setRecLoading] = useState(false);
   const [recErr, setRecErr] = useState("");
+  const [recentProducts, setRecentProducts] = useState([]);
+  const [recentLoading, setRecentLoading] = useState(false);
   const { add } = useCart();
   const { accessToken } = useAuth();
   const { isSaved, toggleSaved } = useSavedProducts();
@@ -3228,6 +3343,28 @@ export function ShopPage() {
       })
       .finally(() => {
         if (!cancelled) setRecLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setRecentProducts([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setRecentLoading(true);
+    apiFetch("/api/products/recently-viewed", { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((d) => {
+        if (!cancelled) setRecentProducts(Array.isArray(d.products) ? d.products : []);
+      })
+      .catch(() => {
+        if (!cancelled) setRecentProducts([]);
+      })
+      .finally(() => {
+        if (!cancelled) setRecentLoading(false);
       });
     return () => {
       cancelled = true;
@@ -3394,6 +3531,25 @@ export function ShopPage() {
         h(ShopHomePromoCarousel, { key: "shop-promo" })
       ]),
       h("section", { key: "quick-cats", className: "mb-5", "aria-label": "Categories" }, h(StorefrontCategoryChips, { active: cat, onSelect: setCat })),
+      accessToken && (recentLoading || recentProducts.length > 0)
+        ? h(
+            "section",
+            {
+              key: "recent-rail",
+              id: "buyer-recently-viewed",
+              className: "mb-8 scroll-mt-28 sm:scroll-mt-32",
+              "aria-label": "Recently viewed"
+            },
+            [
+              recentLoading && !recentProducts.length
+                ? h("p", { key: "rv-load", className: "mb-3 text-sm text-slate-500 dark:text-slate-400" }, "Loading recently viewed…")
+                : h(ShopHomeRecommendationRow, {
+                    key: "rv-row",
+                    row: { id: "recently_viewed", title: "Recently viewed", products: recentProducts }
+                  })
+            ]
+          )
+        : null,
       h(ShopHomeRecommendationRails, { key: "shop-rec", rows: topRecRows, loading: recLoading, err: recErr }),
       listErr
         ? h(InlineNotice, { key: "list-err", variant: "error", className: "mb-4", onDismiss: () => setListErr("") }, listErr)
@@ -3474,7 +3630,7 @@ export function ShopPage() {
 export function ProfilePage() {
   const [cartOpen, setCartOpen] = useState(false);
   const nav = useNavigate();
-  const { confirm, alert } = useNotice();
+  const { confirm, alert, toast } = useNotice();
   const { user, accessToken, setUser, logout } = useAuth();
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -3486,9 +3642,11 @@ export function ProfilePage() {
   const [deleting, setDeleting] = useState(false);
   const [photoLoading, setPhotoLoading] = useState(false);
   const photoFileRef = useRef(null);
+  const [referral, setReferral] = useState(null);
 
   useEffect(() => {
     if (!accessToken) {
+      setReferral(null);
       setDisplayName("");
       setEmail("");
       return;
@@ -3508,6 +3666,32 @@ export function ProfilePage() {
       cancelled = true;
     };
   }, [accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) return undefined;
+    let cancelled = false;
+    apiFetch("/api/auth/referral", { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((d) => {
+        if (!cancelled) setReferral(d);
+      })
+      .catch(() => {
+        if (!cancelled) setReferral(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  const copyReferralLink = async () => {
+    const url = referral?.shareUrl || "";
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("Invite link copied", { variant: "success" });
+    } catch {
+      window.prompt("Copy your invite link:", url);
+    }
+  };
 
   const onPickProfilePhoto = async (e) => {
     const f = e.target.files?.[0];
@@ -3689,6 +3873,41 @@ export function ProfilePage() {
             h("p", { key: "guest-note", className: "text-sm text-amber-400" }, "You are browsing as a guest. Log in to persist profile changes.")
         ])
       ]),
+      referral && accessToken
+        ? h(GlassPanel, { key: "referral", className: "mb-6 !border-violet-400/25 !bg-violet-500/5" }, [
+            h("div", { className: "flex items-start gap-3" }, [
+              h(
+                "div",
+                {
+                  className:
+                    "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-600/20 text-violet-700 dark:text-violet-200"
+                },
+                h(Gift, { className: "h-5 w-5", "aria-hidden": true })
+              ),
+              h("div", { className: "min-w-0 flex-1" }, [
+                h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Invite friends"),
+                h(
+                  "p",
+                  { className: "mt-1 text-sm text-slate-600 dark:text-slate-300" },
+                  `Share your link — you both get ${referral.rewardPointsEach || 1000} points (≈ GHS ${referral.rewardGhsEach ?? 10}) when they complete their first order.`
+                ),
+                h("p", { className: "mt-2 font-mono text-sm font-bold text-violet-800 dark:text-violet-200" }, referral.code),
+                h("p", { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, `${referral.inviteSignups ?? 0} friend${referral.inviteSignups === 1 ? "" : "s"} signed up with your code`)
+              ])
+            ]),
+            h(
+              Button,
+              {
+                key: "copy-ref",
+                type: "button",
+                variant: "primary",
+                className: "mt-4 w-full gap-2 sm:w-auto",
+                onClick: copyReferralLink
+              },
+              [h(Copy, { className: "h-4 w-4" }), "Copy invite link"]
+            )
+          ])
+        : null,
       h(GlassPanel, { key: "delete", className: "!border-rose-500/30 !bg-rose-500/[0.05]" }, [
         h("h2", { className: "text-lg font-semibold text-rose-700 dark:text-rose-300" }, "Delete account"),
         h(
@@ -4348,6 +4567,8 @@ export function BuyerOrdersPage() {
   const [cartOpen, setCartOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const { accessToken } = useAuth();
+  const { add } = useCart();
+  const nav = useNavigate();
   const { toast, confirm } = useNotice();
   const [orders, setOrders] = useState([]);
   const [err, setErr] = useState("");
@@ -4355,9 +4576,34 @@ export function BuyerOrdersPage() {
   const [reviewModal, setReviewModal] = useState(null);
   const [receiptOrder, setReceiptOrder] = useState(null);
   const [cancellingId, setCancellingId] = useState("");
+  const [reorderingId, setReorderingId] = useState("");
   const [trackModalOpen, setTrackModalOpen] = useState(false);
   const [trackPresetOrderId, setTrackPresetOrderId] = useState(null);
   const closeReviewModal = useCallback(() => setReviewModal(null), []);
+
+  const reorderOrder = async (order) => {
+    if (!accessToken || !order?.id) return;
+    setReorderingId(order.id);
+    try {
+      const data = await apiFetch(`/api/orders/${order.id}/reorder-items`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      if (!lines.length) {
+        toast("No items from this order are available to buy right now.", { variant: "warn" });
+        return;
+      }
+      for (const row of lines) {
+        if (row.product) add(row.product, row.quantity || 1, row.customization || "");
+      }
+      toast(`Added ${lines.length} item${lines.length === 1 ? "" : "s"} to your cart.`, { variant: "success" });
+      setCartOpen(true);
+    } catch (ex) {
+      toast(apiErrorMessage(ex, "Could not reorder."), { variant: "error" });
+    } finally {
+      setReorderingId("");
+    }
+  };
 
   const cancelOrder = async (order) => {
     if (!accessToken || !order?.id) return;
@@ -4658,16 +4904,20 @@ export function BuyerOrdersPage() {
                       },
                       "Report an issue"
                     ),
-                    h(
-                      Link,
-                      {
-                        key: "reo",
-                        to: "/",
-                        className:
-                          "inline-flex min-h-[32px] items-center justify-center rounded-lg bg-purple-700 px-2.5 text-[11px] font-semibold text-white shadow shadow-purple-900/25 transition hover:bg-purple-800 dark:bg-purple-600 dark:hover:bg-purple-500"
-                      },
-                      "Reorder"
-                    )
+                    ["paid", "processing", "sent_for_delivery", "delivered", "cancelled"].includes(o.status)
+                      ? h(
+                          "button",
+                          {
+                            key: "reo",
+                            type: "button",
+                            disabled: reorderingId === o.id,
+                            onClick: () => reorderOrder(o),
+                            className:
+                              "inline-flex min-h-[32px] items-center justify-center rounded-lg bg-purple-700 px-2.5 text-[11px] font-semibold text-white shadow shadow-purple-900/25 transition hover:bg-purple-800 disabled:opacity-60 dark:bg-purple-600 dark:hover:bg-purple-500"
+                          },
+                          reorderingId === o.id ? "Adding…" : "Reorder"
+                        )
+                      : null
                   ].filter(Boolean)
                 ),
                 lines.length > 0 &&
@@ -4812,7 +5062,14 @@ export function PaymentSuccessPage() {
     if (phase !== "confirmed" && phase !== "waiting_vendor") return;
     cartClearedRef.current = true;
     clearCart();
-  }, [phase, clearCart]);
+    if (accessToken) {
+      apiFetch("/api/cart/snapshot", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { items: [] }
+      }).catch(() => {});
+    }
+  }, [phase, clearCart, accessToken]);
 
   useEffect(() => {
     if (!orderId) {

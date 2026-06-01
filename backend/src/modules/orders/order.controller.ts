@@ -8,6 +8,7 @@ import { buyerTotalForMerchantNetGhs, roundMoney, serviceFeeOnVendorGross } from
 import type { OrderDoc } from "./order.model";
 import { Order } from "./order.model";
 import { Product, type ProductDoc } from "../products/product.model";
+import { enrichPublicProducts, foodMenuStoreFilter, activeStoreBusinessIds } from "../products/product.publicSerialize";
 import { User, normalizeUserRole } from "../auth/user.model";
 import { withContacts, type WithContactsOpts } from "./orderSerialize";
 
@@ -608,4 +609,53 @@ export const markManualPayment = asyncHandler(async (req: Request, res: Response
     includeBuyerPaymentDetails: true
   });
   res.json({ order: serialized });
+});
+
+/** Buyer re-order: active in-stock lines from a past order (for one-tap cart refill). */
+export const getReorderItems = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  const order = await Order.findById(id).lean();
+  if (!order) throw new HttpError(404, "Order not found");
+
+  const uid = req.user?.id;
+  if (!uid || !order.buyerId || order.buyerId.toString() !== uid) {
+    throw new HttpError(403, "Only the buyer on this order can reorder");
+  }
+  if (!["paid", "processing", "sent_for_delivery", "delivered", "cancelled"].includes(order.status)) {
+    throw new HttpError(400, "This order is not eligible for reorder yet");
+  }
+
+  const lineQty = new Map<string, number>();
+  for (const it of order.items) {
+    const pid = it.productId.toString();
+    lineQty.set(pid, (lineQty.get(pid) || 0) + Math.max(1, Math.floor(Number(it.quantity) || 1)));
+  }
+  const pids = [...lineQty.keys()].map((pid) => new mongoose.Types.ObjectId(pid));
+  if (!pids.length) {
+    res.json({ lines: [] });
+    return;
+  }
+
+  const activeIds = await activeStoreBusinessIds();
+  const found = await Product.find({
+    _id: { $in: pids },
+    status: "active",
+    $or: [{ category: "services" }, { stock: { $gt: 0 } }],
+    ...foodMenuStoreFilter(activeIds)
+  }).lean();
+
+  const enriched = await enrichPublicProducts(found as unknown as Record<string, unknown>[]);
+  const lines = enriched
+    .map((p) => {
+      const pid = String((p as { id?: string }).id || "");
+      const qty = lineQty.get(pid) || 1;
+      const note =
+        order.items.find((it) => it.productId.toString() === pid && String(it.buyerNote || "").trim())?.buyerNote ||
+        "";
+      return { product: p, quantity: qty, customization: String(note || "").trim().slice(0, 280) };
+    })
+    .filter((row) => row.product?.id);
+
+  res.json({ lines });
 });

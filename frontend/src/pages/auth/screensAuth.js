@@ -409,6 +409,11 @@ export function RegisterPage() {
     const fromUrl = new URLSearchParams(window.location.search).get("email");
     return fromUrl ? String(fromUrl).trim().toLowerCase() : "";
   });
+  const [referralCode, setReferralCode] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const fromUrl = new URLSearchParams(window.location.search).get("ref");
+    return fromUrl ? String(fromUrl).trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12) : "";
+  });
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [err, setErr] = useState("");
@@ -453,7 +458,8 @@ export function RegisterPage() {
         identifier: id,
         password,
         displayName: trimmedName,
-        username: trimmedName
+        username: trimmedName,
+        ...(referralCode.length >= 4 ? { referralCode } : {})
       });
       if (regData?.requiresEmailVerification) {
         nav("/verify-email", {
@@ -554,6 +560,13 @@ export function RegisterPage() {
         h(GlassPanel, { key: "panel", className: "mx-auto w-full max-w-md" }, [
           h("h1", { key: "t1", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Join us"),
           h("p", { key: "sub", className: "mt-1 text-sm text-slate-600 dark:text-slate-400" }, "Create a shopper account. You can apply to sell after you sign in."),
+          referralCode.length >= 4
+            ? h(
+                InlineNotice,
+                { key: "ref", variant: "info", className: "mt-4", title: "Invite applied" },
+                `You're joining with code ${referralCode}. Complete your first order to unlock referral rewards.`
+              )
+            : null,
           platformCfg?.maintenanceMode
             ? h(InlineNotice, { key: "maint", variant: "warning", title: "Maintenance" }, platformCfg.maintenanceMessage?.trim() || "This marketplace is temporarily not accepting new registrations.")
             : null,

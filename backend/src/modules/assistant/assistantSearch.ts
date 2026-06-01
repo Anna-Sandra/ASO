@@ -15,6 +15,7 @@ import {
   expandShopSearchQuery,
   shouldSupplementCategoryBrowse
 } from "../products/shopSearchExpand";
+import { normalizeGhanaShopperQuery } from "../products/ghanaShopLanguage";
 
 export { detectCategoryFromMessage };
 
@@ -33,7 +34,8 @@ export type AssistantSearchIntent = {
 
 /** Structured intent from a shopper message (regex + heuristics). */
 export function extractSearchIntent(message: string): AssistantSearchIntent {
-  const m = message.toLowerCase();
+  const normalized = normalizeGhanaShopperQuery(message);
+  const m = normalized.toLowerCase();
 
   const isFood = /food|eat|hungry|fufu|jollof|kenkey|banku|waakye|rice|soup|drink|snack|breakfast|lunch|dinner|restaurant|menu/.test(m);
   const isFashion =
@@ -50,8 +52,8 @@ export function extractSearchIntent(message: string): AssistantSearchIntent {
     );
   const isGrocery = /rice|oil|tomato|pepper|onion|grocery|provision/.test(m);
 
-  const shopExpansion = expandShopSearchQuery(message);
-  let category: ProductCategory | null = detectCategoryFromMessage(message) ?? shopExpansion.categoryHint;
+  const shopExpansion = expandShopSearchQuery(normalized);
+  let category: ProductCategory | null = detectCategoryFromMessage(normalized) ?? shopExpansion.categoryHint;
   if (!category) {
     if (isFood) category = "food_drinks";
     else if (isFashion) category = "fashion_accessories";

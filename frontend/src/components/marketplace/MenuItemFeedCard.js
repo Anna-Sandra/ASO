@@ -4,7 +4,13 @@ import { Heart, ShoppingCart, Star, Store, User, AlarmClock } from "lucide-react
 import { h } from "utils/h";
 import { isFoodCallToOrderCategory, isOfflineQuoteCategory } from "config/catalog";
 import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
-import { productFeedPriceLabel, productStoreContext, productTileDeliveryHints } from "utils/productStore";
+import {
+  productFeedPriceLabel,
+  productSocialProofLines,
+  productStockUrgencyLabel,
+  productStoreContext,
+  productTileDeliveryHints
+} from "utils/productStore";
 import { useCart } from "context";
 import { useSavedProducts } from "context/SavedProductsContext";
 import { formatGhc } from "utils/money";
@@ -74,6 +80,8 @@ export function MenuItemFeedCard({
   const VendorIcon = store.sellerOnly ? User : Store;
   const canBuy = !quote && (Number(product.stock) || 0) > 0;
   const hints = showDeliveryHints ? productTileDeliveryHints(product) : [];
+  const stockUrgency = productStockUrgencyLabel(product);
+  const socialLines = productSocialProofLines(product);
 
   const tile =
     layout === "grid"
@@ -108,17 +116,26 @@ export function MenuItemFeedCard({
         `group relative ${tile}${tileLayout} overflow-hidden rounded-lg bg-slate-300/50 ring-1 ring-slate-200/80 transition duration-200 hover:z-[1] hover:scale-[1.02] hover:shadow-md hover:shadow-slate-900/15 ${ringHover} dark:bg-night-800 dark:ring-white/10 dark:hover:shadow-black/40 ${className}`.trim()
     },
     [
-      hints.length
+      hints.length || stockUrgency
         ? h("div", {
             key: "hints",
             className: "pointer-events-none absolute left-1.5 top-1.5 z-[3] flex max-w-[calc(100%-3rem)] flex-col gap-0.5"
           },
-          hints.map((hint) =>
-            h("span", {
-              key: hint.key,
-              className: "inline-flex w-fit max-w-full truncate rounded-md bg-black/55 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white backdrop-blur-sm sm:text-[9px]"
-            }, hint.label)
-          )
+          [
+            stockUrgency
+              ? h("span", {
+                  key: "stock",
+                  className:
+                    "inline-flex w-fit max-w-full truncate rounded-md bg-rose-600/90 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white backdrop-blur-sm sm:text-[9px]"
+                }, stockUrgency)
+              : null,
+            ...hints.map((hint) =>
+              h("span", {
+                key: hint.key,
+                className: "inline-flex w-fit max-w-full truncate rounded-md bg-black/55 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white backdrop-blur-sm sm:text-[9px]"
+              }, hint.label)
+            )
+          ].filter(Boolean)
         )
         : null,
 
@@ -194,6 +211,17 @@ export function MenuItemFeedCard({
               h(Star, { key: "s", className: "h-3 w-3 fill-amber-400 text-amber-400", "aria-hidden": true }),
               h("span", { key: "n" }, `${avg.toFixed(1)}`)
             ])
+          : null,
+
+        socialLines.length
+          ? h(
+              "p",
+              {
+                key: "social",
+                className: "pointer-events-none mt-0.5 line-clamp-1 text-[9px] font-medium text-white/80 sm:text-[10px]"
+              },
+              socialLines.map((ln) => ln.text).join(" · ")
+            )
           : null,
 
         h("div", {

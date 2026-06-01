@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { h } from "utils/h";
 import { storageGetJSON, storageSetJSON, StorageKeys } from "utils/storage";
+import { useAuth } from "./AuthContext";
+import { apiFetch } from "services/api";
 
 const CartContext = createContext({
   items: [],
@@ -53,10 +55,29 @@ function load() {
 
 export function CartProvider({ children }) {
   const [items, setItems] = useState(load);
+  const { accessToken, user } = useAuth();
 
   useEffect(() => {
     storageSetJSON(KEY, items);
   }, [items]);
+
+  /** Server snapshot for abandoned-cart reminder emails (signed-in buyers). */
+  useEffect(() => {
+    if (!accessToken || user?.role !== "buyer") return undefined;
+    const payload = {
+      items: items
+        .filter((p) => p?.id)
+        .map((p) => ({ productId: p.id, quantity: Math.max(1, Math.min(99, Number(p.qty) || 1)) }))
+    };
+    const t = window.setTimeout(() => {
+      apiFetch("/api/cart/snapshot", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: payload
+      }).catch(() => {});
+    }, 2500);
+    return () => window.clearTimeout(t);
+  }, [items, accessToken, user?.role]);
 
   const add = useCallback((product, qty = 1, customization = "") => {
     if (!product || NO_CART_CATEGORIES.has(product.category)) return;

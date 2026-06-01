@@ -16,7 +16,8 @@ export const registerSchema = z
     email: z.string().optional(),
     password: passwordSchema,
     displayName: z.string().optional(),
-    username: z.string().optional()
+    username: z.string().optional(),
+    referralCode: z.string().optional()
   })
   .transform((raw) => {
     const identifier = typeof raw.identifier === "string" ? raw.identifier.trim() : "";
@@ -27,11 +28,14 @@ export const registerSchema = z
 
     const email = (emailIn || (identifier.includes("@") ? identifier : "")).toLowerCase();
 
+    const refRaw = typeof raw.referralCode === "string" ? raw.referralCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+
     return {
       email: email || undefined,
       password: raw.password,
       role: "buyer" as const,
-      ...(displayName ? { displayName } : {})
+      ...(displayName ? { displayName } : {}),
+      ...(refRaw.length >= 4 ? { referralCode: refRaw.slice(0, 12) } : {})
     };
   })
   .superRefine((out, ctx) => {

@@ -65,3 +65,35 @@ export function productTileDeliveryHints(product) {
   }
   return out;
 }
+
+/** Low-stock ribbon text from API `stockHint` / `stock`. */
+export function productStockUrgencyLabel(product) {
+  if (!product || product.category === "services") return null;
+  const st = Math.max(0, Math.floor(Number(product.stock) || 0));
+  if (st <= 0) return null;
+  const hint = product.stockHint;
+  if (hint === "critical" || st <= 2) return `Only ${st} left`;
+  if (hint === "low" || st <= 10) return `${st} left in stock`;
+  return null;
+}
+
+/** Real social proof from backend (`recentViewers`, `soldLast7Days`). */
+export function productSocialProofLines(product) {
+  if (!product) return [];
+  const lines = [];
+  const rv = Math.floor(Number(product.recentViewers) || 0);
+  if (rv >= 3) lines.push({ key: "views", text: `${rv} viewed recently` });
+  const sold = Math.floor(Number(product.soldLast7Days) || 0);
+  if (sold >= 1) {
+    lines.push({
+      key: "sold",
+      text: sold === 1 ? "1 sold this week" : `${sold} sold this week`
+    });
+  }
+  const rc = Math.floor(Number(product.reviewCount) || 0);
+  const avg = Number(product.reviewAvg);
+  if (rc >= 3 && Number.isFinite(avg)) {
+    lines.push({ key: "rating", text: `★ ${avg.toFixed(1)} (${rc})` });
+  }
+  return lines;
+}

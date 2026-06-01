@@ -70,6 +70,12 @@ export interface UserDoc {
   vendorSubscriptionPendingReference?: string;
   /** SHOPIQGH reward points (earn ~1 pt / GHS spent; redeem 100 pts = GHS 1 at checkout). */
   rewardPoints?: number;
+  /** Shareable invite code (buyers). */
+  referralCode?: string;
+  /** Set when this user registered with someone else's code. */
+  referredByUserId?: mongoose.Types.ObjectId | null;
+  /** When invitee received first-order referral bonus. */
+  referralBonusGrantedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -117,7 +123,10 @@ const userSchema = new Schema<UserDoc>(
     vendorSubscriptionPaidAt: { type: Date, default: null },
     vendorSubscriptionExpiresAt: { type: Date, default: null },
     vendorSubscriptionPendingReference: { type: String, default: "", trim: true, maxlength: 120 },
-    rewardPoints: { type: Number, default: 0, min: 0 }
+    rewardPoints: { type: Number, default: 0, min: 0 },
+    referralCode: { type: String, trim: true, uppercase: true, maxlength: 12, unique: true, sparse: true },
+    referredByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true, sparse: true },
+    referralBonusGrantedAt: { type: Date, default: null }
   },
   { timestamps: true }
 );

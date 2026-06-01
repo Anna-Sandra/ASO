@@ -3,6 +3,8 @@ import { User } from "../auth/user.model";
 import { Business } from "../businesses/business.model";
 import { buildSellerPublicPhoneMap } from "../../utils/sellerContactPhone";
 import { Review } from "../reviews/review.model";
+import { BuyerProductView } from "./buyerProductView.model";
+import { Order } from "../orders/order.model";
 import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
@@ -302,6 +304,53 @@ async function attachReviewStats<T extends Record<string, unknown>>(products: T[
   });
 }
 
+const PAID_ORDER_STATUSES = ["paid", "processing", "sent_for_delivery", "delivered"] as const;
+
+/** Real metrics for discovery tiles — recent views (24h) and units sold (7d). */
+async function attachSocialProofStats<T extends Record<string, unknown>>(products: T[]) {
+  if (!products.length) return products;
+  const ids = [
+    ...new Set(
+      products
+        .map((p) => {
+          const raw = (p as { id?: unknown }).id;
+          return typeof raw === "string" && mongoose.isValidObjectId(raw) ? raw.trim() : "";
+        })
+        .filter(Boolean)
+    )
+  ] as string[];
+  if (!ids.length) return products;
+
+  const sinceViews = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const sinceSold = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const oidList = ids.map((id) => new mongoose.Types.ObjectId(id));
+
+  type ViewAgg = { _id: mongoose.Types.ObjectId; c: number };
+  const viewAgg: ViewAgg[] = await BuyerProductView.aggregate<ViewAgg>([
+    { $match: { productId: { $in: oidList }, viewedAt: { $gte: sinceViews } } },
+    { $group: { _id: "$productId", c: { $sum: 1 } } }
+  ]);
+  const viewersByPid = new Map(viewAgg.map((r) => [r._id.toString(), Number(r.c) || 0]));
+
+  type SoldAgg = { _id: mongoose.Types.ObjectId; qty: number };
+  const soldAgg: SoldAgg[] = await Order.aggregate<SoldAgg>([
+    { $match: { status: { $in: [...PAID_ORDER_STATUSES] }, createdAt: { $gte: sinceSold } } },
+    { $unwind: "$items" },
+    { $match: { "items.productId": { $in: oidList } } },
+    { $group: { _id: "$items.productId", qty: { $sum: "$items.quantity" } } }
+  ]);
+  const soldByPid = new Map(soldAgg.map((r) => [r._id.toString(), Math.max(0, Math.floor(Number(r.qty) || 0))]));
+
+  return products.map((p) => {
+    const rawId = (p as { id?: unknown }).id;
+    const id = typeof rawId === "string" ? rawId.trim() : "";
+    if (!id) return p;
+    const recentViewers = viewersByPid.get(id) ?? 0;
+    const soldLast7Days = soldByPid.get(id) ?? 0;
+    return { ...p, recentViewers, soldLast7Days };
+  });
+}
+
 export async function enrichPublicProducts(
   products: Record<string, unknown>[],
   opts?: AttachSellerPaymentsOpts
@@ -309,7 +358,8 @@ export async function enrichPublicProducts(
   const withSeller = await attachSellerPayments(products, opts);
   const withStore = await attachStoreToProducts(withSeller);
   const withReviews = await attachReviewStats(withStore);
-  return await attachDealPricingToPublicProducts(withReviews);
+  const withSocial = await attachSocialProofStats(withReviews);
+  return await attachDealPricingToPublicProducts(withSocial);
 }
 
 /** Live storefront ids — food linked only to these stores counts as “on a menu”. */
