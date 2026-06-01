@@ -4,6 +4,7 @@ import { HttpError } from "../../utils/httpError";
 import { User, normalizeUserRole, type VendorProfileStatus } from "../auth/user.model";
 import { VendorApplication } from "./vendorApplication.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
+import { emailVendorApplicationReceived } from "../../utils/vendorApplicationActivation";
 
 function resolveVendorStatus(u: { role?: unknown; vendorStatus?: VendorProfileStatus }): VendorProfileStatus {
   const role = normalizeUserRole(u.role);
@@ -110,9 +111,21 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
 
   if (user) {
     await User.updateOne({ _id: user._id }, { $set: { vendorStatus: "pending" } });
+  } else {
+    void emailVendorApplicationReceived({
+      email,
+      fullName: body.fullName.trim(),
+      shopName: body.shopName.trim()
+    }).catch((err) => {
+      console.warn("[vendor-application] confirmation email failed:", err instanceof Error ? err.message : err);
+    });
   }
 
-  res.status(201).json({ message: "Application submitted. We will email you when it is reviewed." });
+  res.status(201).json({
+    message: user
+      ? "Application submitted. We will email you when it is reviewed."
+      : "Application submitted. Check your email for next steps and we will notify you when it is reviewed."
+  });
 });
 
 export const getMyVendorApplicationStatus = asyncHandler(async (req: Request, res: Response) => {

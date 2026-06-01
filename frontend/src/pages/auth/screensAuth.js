@@ -404,7 +404,11 @@ export function RegisterPage() {
   const { register, login, setUser } = useAuth();
   const { toast } = useNotice();
   const [name, setName] = useState("");
-  const [identifier, setIdentifier] = useState("");
+  const [identifier, setIdentifier] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const fromUrl = new URLSearchParams(window.location.search).get("email");
+    return fromUrl ? String(fromUrl).trim().toLowerCase() : "";
+  });
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [err, setErr] = useState("");

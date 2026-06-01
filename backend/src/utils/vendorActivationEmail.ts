@@ -27,6 +27,27 @@ export function buildVendorActivationEmailHtml(opts: {
 `.trim();
 }
 
+export function buildVendorApplicationReceivedEmailHtml(opts: {
+  fullName: string;
+  shopName: string;
+  registerUrl: string;
+  loginUrl: string;
+}): string {
+  const name = escapeHtml(opts.fullName.trim() || "there");
+  const shop = escapeHtml(opts.shopName.trim());
+  const registerUrl = escapeHtml(opts.registerUrl);
+  const loginUrl = escapeHtml(opts.loginUrl);
+  return `
+<p>Hello ${name},</p>
+<p>We received your vendor application for <strong>${shop}</strong> on SHOPIQGH.</p>
+<p>Our team will review it and email you when there is a decision. Use the <strong>same email address</strong> you used on the form for any account you create.</p>
+<p>Optional: create a shopper account now so approval is faster after we review your application:</p>
+<p><a href="${registerUrl}" style="background:#7c3aed;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">Create account</a></p>
+<p>Already have an account? <a href="${loginUrl}">Sign in</a></p>
+<p>If you are approved and did not register beforehand, we will send a separate email with a link to set your password and open your vendor dashboard.</p>
+`.trim();
+}
+
 export function buildVendorApprovedExistingAccountEmailHtml(opts: {
   fullName: string;
   shopName: string;

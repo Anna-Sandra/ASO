@@ -1745,9 +1745,15 @@ export function AdminPage() {
   };
 
   const onSyncVendorSellerRole = async (row) => {
+    const isGuest = row.isGuestSubmission || !row.userId;
     const ok = await confirm(
-      `Apply seller role to the account for ${row.email}? They must use this same email when signing in.`,
-      { title: "Apply seller role?", confirmLabel: "Apply seller role" }
+      isGuest
+        ? `Send (or resend) the activation email to ${row.email}? They will use the link to set a password and become a vendor.`
+        : `Apply seller role to the shopper account for ${row.email}? They must sign in with this same email.`,
+      {
+        title: isGuest ? "Send activation email?" : "Apply seller role?",
+        confirmLabel: isGuest ? "Send activation email" : "Apply seller role"
+      }
     );
     if (!ok) return;
     try {
@@ -1755,11 +1761,33 @@ export function AdminPage() {
         method: "POST",
         ...auth
       });
-      toast(d?.message || "Seller role applied.", { variant: "success" });
+      toast(d?.message || (d?.activationEmailSent ? "Activation email sent." : "Seller role applied."), {
+        variant: "success"
+      });
       await loadVendorApps();
       await loadUsers();
     } catch (ex) {
-      await alert(apiErrorMessage(ex, "Could not apply seller role."), { variant: "error" });
+      await alert(apiErrorMessage(ex, isGuest ? "Could not send activation email." : "Could not apply seller role."), {
+        variant: "error"
+      });
+    }
+  };
+
+  const onResendVendorActivation = async (row) => {
+    const ok = await confirm(
+      `Resend the vendor activation email to ${row.email}? The previous link will stop working.`,
+      { title: "Resend activation email?", confirmLabel: "Resend email" }
+    );
+    if (!ok) return;
+    try {
+      const d = await apiFetch(`/api/admin/vendor-applications/${row.id}/resend-activation`, {
+        method: "POST",
+        ...auth
+      });
+      toast(d?.message || "Activation email sent.", { variant: "success" });
+      await loadVendorApps();
+    } catch (ex) {
+      await alert(apiErrorMessage(ex, "Could not resend activation email."), { variant: "error" });
     }
   };
 
@@ -1778,14 +1806,17 @@ export function AdminPage() {
       if (!ok) return;
     }
     try {
-      await apiFetch(`/api/admin/vendor-applications/${row.id}`, {
+      const d = await apiFetch(`/api/admin/vendor-applications/${row.id}`, {
         method: "PATCH",
         ...auth,
         json: { action, adminNote: "" }
       });
       toast(
         action === "approve"
-          ? "Vendor approved. Existing shoppers are promoted to seller automatically after the API redeploys; refresh Users to confirm."
+          ? d?.message ||
+              (d?.activationEmailSent
+                ? "Vendor approved. Activation email sent — they must open the link to set a password."
+                : "Vendor approved. They can sign in with their existing account.")
           : "Application rejected.",
         { variant: "success" }
       );
@@ -3522,10 +3553,10 @@ export function AdminPage() {
                             "mt-3 rounded-xl border border-amber-300/60 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-950/30 dark:text-amber-100"
                         },
                         row.accountRole === "buyer" || row.sellerRolePending
-                          ? "Approved, but this email is still a buyer in Users. Use Apply seller role below (requires latest admin + API deploy)."
-                          : row.accountRole == null
-                            ? "Approved — no shopper account with this email yet. They must register with the same email, then use Apply seller role."
-                            : `Approved — linked account role is “${row.accountRole}”. Use Apply seller role if they should be a vendor.`
+                          ? "Approved — shopper account exists but is not a seller yet. Use Apply seller role below."
+                          : row.isGuestSubmission || row.accountRole == null
+                            ? "Approved — guest applicant. They should use the activation link from the approval email to set a password. Resend the email if needed."
+                            : `Approved — linked account role is “${row.accountRole}”. Use Apply seller role or resend activation if they still cannot access the vendor dashboard.`
                       )
                     : null,
                   h("div", { key: "actions", className: "mt-4 flex flex-wrap gap-2" }, [
@@ -3575,15 +3606,28 @@ export function AdminPage() {
                         ]
                       : null,
                     row.status === "approved" && row.accountRole !== "seller" && row.accountRole !== "admin" && row.accountRole !== "rider"
-                      ? h(
-                          Button,
-                          {
-                            key: "sync",
-                            className: "!min-h-[36px] !bg-amber-600 !px-3 !text-xs hover:!bg-amber-500",
-                            onClick: () => onSyncVendorSellerRole(row)
-                          },
-                          "Apply seller role"
-                        )
+                      ? [
+                          row.isGuestSubmission || !row.userId
+                            ? h(
+                                Button,
+                                {
+                                  key: "resend",
+                                  className: "!min-h-[36px] !bg-violet-600 !px-3 !text-xs hover:!bg-violet-500",
+                                  onClick: () => onResendVendorActivation(row)
+                                },
+                                "Resend activation email"
+                              )
+                            : null,
+                          h(
+                            Button,
+                            {
+                              key: "sync",
+                              className: "!min-h-[36px] !bg-amber-600 !px-3 !text-xs hover:!bg-amber-500",
+                              onClick: () => onSyncVendorSellerRole(row)
+                            },
+                            row.isGuestSubmission || !row.userId ? "Send activation email" : "Apply seller role"
+                          )
+                        ]
                       : null,
                     row.status !== "pending" && isSuperAdmin
                       ? h(

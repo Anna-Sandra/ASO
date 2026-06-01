@@ -22,6 +22,7 @@ import {
   listVendorApplications,
   patchAdminCourierApplication,
   patchAdminVendorApplication,
+  resendVendorApplicationActivation,
   syncVendorApplicationSellerRole,
   getAdminConversation,
   getAdminConversationWithUser,
@@ -210,6 +211,14 @@ router.patch(
   requireAdminEnvSecret,
   validateBody(patchVendorApplicationSchema),
   patchAdminVendorApplication
+);
+router.post(
+  "/vendor-applications/:id/resend-activation",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  resendVendorApplicationActivation
 );
 router.post(
   "/vendor-applications/:id/sync-seller-role",

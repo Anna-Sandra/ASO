@@ -12,13 +12,9 @@ import {
   isEmailTransportConfigured,
   isSuperUserAdminEmail
 } from "../../config/env";
-import { createOpaqueToken, sha256 } from "../auth/jwt";
 import { sendEmail } from "../../utils/mailer";
-import {
-  buildVendorActivationEmailHtml,
-  buildVendorApprovedExistingAccountEmailHtml,
-  VENDOR_ACTIVATION_TTL_MS
-} from "../../utils/vendorActivationEmail";
+import { buildVendorApprovedExistingAccountEmailHtml } from "../../utils/vendorActivationEmail";
+import { appOriginBase, issueVendorActivationEmail } from "../../utils/vendorApplicationActivation";
 import {
   promoteBuyerToSellerFromVendorApplication,
   reconcileApprovedVendorApplication
@@ -2260,11 +2256,10 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
   app.reviewedAt = new Date();
   await app.save();
 
-  const appOrigin = env.APP_ORIGIN.replace(/\/$/, "");
   const promoteResult = await promoteBuyerToSellerFromVendorApplication(app);
 
   if (promoteResult.kind === "promoted" || promoteResult.kind === "already_seller") {
-    const signInUrl = `${appOrigin}/login`;
+    const signInUrl = `${appOriginBase()}/login`;
     await sendEmail(
       app.email,
       "Your SHOPIQGH vendor application has been approved!",
@@ -2281,28 +2276,18 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
       title: `Vendor approved — ${app.shopName.slice(0, 60)}`,
       detail: `${app.email} · seller role applied (existing account)`
     });
-    res.json({ ok: true, status: "approved", activationEmailSent: false, sellerRoleApplied: true });
+    res.json({
+      ok: true,
+      status: "approved",
+      activationEmailSent: false,
+      sellerRoleApplied: true,
+      isGuestApplicant: false,
+      message: "Approved. They can sign in with their existing shopper account — seller access is already active."
+    });
     return;
   }
 
-  const activationToken = createOpaqueToken();
-  const activationExpiry = new Date(Date.now() + VENDOR_ACTIVATION_TTL_MS);
-  app.activationTokenHash = sha256(activationToken);
-  app.activationExpiry = activationExpiry;
-  await app.save();
-
-  const activationUrl = `${appOrigin}/activate-account?token=${encodeURIComponent(activationToken)}&type=vendor`;
-
-  await sendEmail(
-    app.email,
-    "Your SHOPIQGH vendor application has been approved!",
-    buildVendorActivationEmailHtml({
-      fullName: app.fullName,
-      shopName: app.shopName,
-      activationUrl
-    }),
-    { category: "vendor_approval" }
-  );
+  await issueVendorActivationEmail(app);
 
   await recordAdminAuditEvent({
     actorId: req.user?.id,
@@ -2310,7 +2295,54 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
     title: `Vendor approved — ${app.shopName.slice(0, 60)}`,
     detail: `${app.email} · activation email sent`
   });
-  res.json({ ok: true, status: "approved", activationEmailSent: true, sellerRoleApplied: false });
+  res.json({
+    ok: true,
+    status: "approved",
+    activationEmailSent: true,
+    sellerRoleApplied: false,
+    isGuestApplicant: true,
+    message:
+      "Approved. An email was sent with a link to set a password and activate their vendor account (valid 7 days)."
+  });
+});
+
+/** Resend vendor activation link for approved guest applicants who have not finished setup. */
+export const resendVendorApplicationActivation = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid application id");
+  const app = await VendorApplication.findById(id);
+  if (!app) throw new HttpError(404, "Application not found");
+  if (app.status !== "approved") {
+    throw new HttpError(400, "Activation links are only sent for approved applications.");
+  }
+
+  const promoteResult = await promoteBuyerToSellerFromVendorApplication(app);
+  if (promoteResult.kind === "promoted" || promoteResult.kind === "already_seller") {
+    res.json({
+      ok: true,
+      sellerRoleApplied: true,
+      activationEmailSent: false,
+      message: "This applicant already has a vendor account. They can sign in with their email and password."
+    });
+    return;
+  }
+  if (promoteResult.kind === "blocked") {
+    throw new HttpError(400, "This account type cannot become a vendor.");
+  }
+
+  await issueVendorActivationEmail(app);
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "application.resend_activation",
+    title: `Vendor activation resent — ${app.shopName.slice(0, 60)}`,
+    detail: app.email
+  });
+  res.json({
+    ok: true,
+    activationEmailSent: true,
+    sellerRoleApplied: false,
+    message: "Activation email sent. They should open the link to set a password and become a vendor."
+  });
 });
 
 /** Fixes approved applications whose shopper account was never promoted (legacy activation-only flow). */
@@ -2337,10 +2369,17 @@ export const syncVendorApplicationSellerRole = asyncHandler(async (req: Request,
   if (result.kind === "blocked") {
     throw new HttpError(400, "This account type cannot become a vendor.");
   }
-  throw new HttpError(
-    400,
-    "No shopper account matches this application email. Ask them to register with the same email they used on the form, or use the activation link from the approval email."
-  );
+
+  const appDoc = await VendorApplication.findById(id);
+  if (!appDoc) throw new HttpError(404, "Application not found");
+  await issueVendorActivationEmail(appDoc);
+  res.json({
+    ok: true,
+    sellerRoleApplied: false,
+    activationEmailSent: true,
+    message:
+      "No account exists yet for this email. We sent (or resent) the activation email — they must open that link to set a password and become a vendor."
+  });
 });
 
 export const listCourierApplications = asyncHandler(async (req: Request, res: Response) => {

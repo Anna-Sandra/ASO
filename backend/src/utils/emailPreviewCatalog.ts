@@ -24,6 +24,15 @@ export const EMAIL_TEMPLATE_PREVIEWS: { id: string; title: string; description: 
 </div>`
   },
   {
+    id: "vendor_application_received",
+    title: "Vendor application received (guest)",
+    description: "Sent when someone applies without signing in; includes optional register link.",
+    sampleHtml: `<div style="font-family:system-ui,sans-serif;max-width:480px">
+  <p>We received your vendor application for <strong>Example Shop</strong>.</p>
+  <p><a href="#">Create account</a> (optional, same email as the form)</p>
+</div>`
+  },
+  {
     id: "vendor_approval",
     title: "Vendor application approved",
     description: "Sent when an admin approves a vendor application; includes activation link.",
