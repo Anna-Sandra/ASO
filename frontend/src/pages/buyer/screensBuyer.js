@@ -76,11 +76,7 @@ import { ShopHomePromoCarousel } from "pages/buyer/shopFlashDealsRail";
 import { MenuItemFeedCard } from "components/marketplace/MenuItemFeedCard";
 import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
 import { RestaurantContextPanel } from "components/marketplace/RestaurantContextPanel";
-import {
-  productSocialProofLines,
-  productStockUrgencyLabel,
-  productStoreContext
-} from "utils/productStore";
+import { productSocialProofLines, productStoreContext } from "utils/productStore";
 import { buyerDisplayPrice } from "utils/checkoutPricing";
 import { computeCheckoutBreakdown, useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
 import { buyerOrderFulfillmentPillClass, formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
@@ -877,24 +873,12 @@ export function ProductDetailPage() {
                 h("span", { className: "text-slate-500" }, `(${reviews.length} review${reviews.length === 1 ? "" : "s"})`)
               ]),
               (() => {
-                const stockUrg = productStockUrgencyLabel(product);
                 const socialLines = productSocialProofLines(product);
-                if (!stockUrg && !socialLines.length) return null;
+                if (!socialLines.length) return null;
                 return h(
-                  "div",
-                  { key: "social-proof", className: "mt-2 space-y-1" },
-                  [
-                    stockUrg
-                      ? h(
-                          "p",
-                          { className: "text-sm font-semibold text-rose-600 dark:text-rose-300" },
-                          stockUrg
-                        )
-                      : null,
-                    socialLines.length
-                      ? h("p", { className: "text-sm text-slate-600 dark:text-slate-400" }, socialLines.map((ln) => ln.text).join(" · "))
-                      : null
-                  ].filter(Boolean)
+                  "p",
+                  { key: "social-proof", className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
+                  socialLines.map((ln) => ln.text).join(" · ")
                 );
               })()
           ]),
@@ -1074,7 +1058,6 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
   const cmpAt = Number(p.compareAtPrice);
   const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
   const storeCtx = productStoreContext(p);
-  const stockUrgency = productStockUrgencyLabel(p);
   const socialLines = productSocialProofLines(p);
 
   return h(
@@ -1086,17 +1069,6 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
     },
     [
       h("div", { key: "img", className: "relative" }, [
-        stockUrgency
-          ? h(
-              "span",
-              {
-                key: "urg",
-                className:
-                  "absolute left-2 top-2 z-[4] rounded-md bg-rose-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow"
-              },
-              stockUrgency
-            )
-          : null,
         storefrontBadgeStack(p),
         h(ProductCardRotatingImage, {
           key: "rot",

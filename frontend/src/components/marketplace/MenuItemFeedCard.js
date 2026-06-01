@@ -7,7 +7,6 @@ import { ProductCardRotatingImage } from "components/marketplace/ProductCardRota
 import {
   productFeedPriceLabel,
   productSocialProofLines,
-  productStockUrgencyLabel,
   productStoreContext,
   productTileDeliveryHints
 } from "utils/productStore";
@@ -80,7 +79,6 @@ export function MenuItemFeedCard({
   const VendorIcon = store.sellerOnly ? User : Store;
   const canBuy = !quote && (Number(product.stock) || 0) > 0;
   const hints = showDeliveryHints ? productTileDeliveryHints(product) : [];
-  const stockUrgency = productStockUrgencyLabel(product);
   const socialLines = productSocialProofLines(product);
 
   const tile =
@@ -116,26 +114,17 @@ export function MenuItemFeedCard({
         `group relative ${tile}${tileLayout} overflow-hidden rounded-lg bg-slate-300/50 ring-1 ring-slate-200/80 transition duration-200 hover:z-[1] hover:scale-[1.02] hover:shadow-md hover:shadow-slate-900/15 ${ringHover} dark:bg-night-800 dark:ring-white/10 dark:hover:shadow-black/40 ${className}`.trim()
     },
     [
-      hints.length || stockUrgency
+      hints.length
         ? h("div", {
             key: "hints",
             className: "pointer-events-none absolute left-1.5 top-1.5 z-[3] flex max-w-[calc(100%-3rem)] flex-col gap-0.5"
           },
-          [
-            stockUrgency
-              ? h("span", {
-                  key: "stock",
-                  className:
-                    "inline-flex w-fit max-w-full truncate rounded-md bg-rose-600/90 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white backdrop-blur-sm sm:text-[9px]"
-                }, stockUrgency)
-              : null,
-            ...hints.map((hint) =>
-              h("span", {
-                key: hint.key,
-                className: "inline-flex w-fit max-w-full truncate rounded-md bg-black/55 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white backdrop-blur-sm sm:text-[9px]"
-              }, hint.label)
-            )
-          ].filter(Boolean)
+          hints.map((hint) =>
+            h("span", {
+              key: hint.key,
+              className: "inline-flex w-fit max-w-full truncate rounded-md bg-black/55 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white backdrop-blur-sm sm:text-[9px]"
+            }, hint.label)
+          )
         )
         : null,
 
