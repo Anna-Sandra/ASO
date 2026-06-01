@@ -5,6 +5,7 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
 import { Order } from "../orders/order.model";
+import { Product } from "../products/product.model";
 import { Conversation } from "./conversation.model";
 import { getPrimarySupportAdminId } from "./supportPeer";
 import { fireNotification } from "../notifications/notification.service";
@@ -43,6 +44,55 @@ async function hasSharedOrder(buyerId: mongoose.Types.ObjectId, sellerId: mongoo
   return !!hit;
 }
 
+async function listingProductMeta(productId?: string, sellerId?: string) {
+  if (!productId || !mongoose.isValidObjectId(productId)) {
+    return { productOid: undefined as mongoose.Types.ObjectId | undefined, productName: "" };
+  }
+  const p = await Product.findById(productId).select("sellerId name").lean();
+  if (!p) throw new HttpError(404, "Product not found");
+  const sid = (p.sellerId as mongoose.Types.ObjectId).toString();
+  if (sellerId && sid !== sellerId) throw new HttpError(400, "That product is not sold by this vendor");
+  return {
+    productOid: new mongoose.Types.ObjectId(productId),
+    productName: String(p.name || "").trim().slice(0, 160)
+  };
+}
+
+type ThreadRow = {
+  peerUserId: string;
+  peerDisplayName: string;
+  itemSummary: string;
+  updatedAt: Date;
+  messages: Array<{ senderRole: "buyer" | "seller" | "admin"; text: string; createdAt: Date; senderLabel: string }>;
+  isSupport?: boolean;
+};
+
+function mapConvMessages(
+  raw: MsgRow[],
+  role: "buyer" | "seller",
+  peerLabel: string
+): ThreadRow["messages"] {
+  return raw.map((m) => ({
+    senderRole: m.senderRole,
+    text: m.text,
+    createdAt: m.createdAt,
+    senderLabel:
+      role === "buyer"
+        ? m.senderRole === "buyer"
+          ? "You"
+          : peerLabel
+        : m.senderRole === "seller"
+          ? "You"
+          : peerLabel
+  }));
+}
+
+function listingItemSummary(conv: { listingProductName?: string; productId?: unknown }) {
+  const name = String(conv.listingProductName || "").trim();
+  if (name) return `About: ${name}`;
+  return "Question about a listing";
+}
+
 async function displayNameMap(ids: mongoose.Types.ObjectId[]) {
   const uniq = [...new Set(ids.map((id) => id.toString()))].map((s) => new mongoose.Types.ObjectId(s));
   if (!uniq.length) return new Map<string, string>();
@@ -79,16 +129,8 @@ function latestOrderSnippetForPair(orders: LeanOrder[], buyerId: string, sellerI
   return { itemSummary, touch };
 }
 
-/** One thread per (buyerId, sellerId) for orders; support row uses `isSupport`. */
+/** One thread per peer for orders; listing threads for pre-order questions; support row uses `isSupport`. */
 export const listConversations = asyncHandler(async (req: Request, res: Response) => {
-  type ThreadRow = {
-    peerUserId: string;
-    peerDisplayName: string;
-    itemSummary: string;
-    updatedAt: Date;
-    messages: Array<{ senderRole: "buyer" | "seller" | "admin"; text: string; createdAt: Date; senderLabel: string }>;
-    isSupport?: boolean;
-  };
   const accountRole = req.user!.role;
   if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
     throw new HttpError(403, "Messages are only available for buyer or seller accounts");
@@ -114,18 +156,14 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
     const convs = await Conversation.find({ buyerId: uid, sellerId: { $in: sidList }, kind: "order" }).lean();
     const convBySeller = new Map(convs.map((c) => [c.sellerId.toString(), c]));
 
+    const orderSellerKeys = new Set(sidList.map((s) => s.toString()));
     const threads: ThreadRow[] = sidList.map((sellerId) => {
       const sid = sellerId.toString();
       const conv = convBySeller.get(sid);
       const { itemSummary, touch } = latestOrderSnippetForPair(orders, uid.toString(), sid);
       const raw = sortMessagesAsc((conv?.messages as MsgRow[]) || []);
       const peerLabel = names.get(sid) || "Seller";
-      const messages = raw.map((m) => ({
-        senderRole: m.senderRole,
-        text: m.text,
-        createdAt: m.createdAt,
-        senderLabel: m.senderRole === "buyer" ? "You" : peerLabel
-      }));
+      const messages = mapConvMessages(raw, "buyer", peerLabel);
       const convTouch = conv?.updatedAt ? new Date(conv.updatedAt).getTime() : 0;
       const updatedAt = new Date(Math.max(convTouch, touch.getTime()));
       return {
@@ -136,6 +174,27 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
         messages
       };
     });
+
+    const listingConvs = await Conversation.find({ buyerId: uid, kind: "listing" }).lean();
+    const listingOnly = listingConvs.filter((c) => !orderSellerKeys.has(c.sellerId.toString()));
+    if (listingOnly.length) {
+      const extraIds = listingOnly.map((c) => c.sellerId);
+      const extraNames = await displayNameMap(extraIds);
+      for (const conv of listingOnly) {
+        const sid = conv.sellerId.toString();
+        const raw = sortMessagesAsc((conv.messages as MsgRow[]) || []);
+        const peerLabel = extraNames.get(sid) || "Seller";
+        const convTouch = conv.updatedAt ? new Date(conv.updatedAt).getTime() : 0;
+        threads.push({
+          peerUserId: sid,
+          peerDisplayName: peerLabel,
+          itemSummary: listingItemSummary(conv),
+          updatedAt: new Date(convTouch),
+          messages: mapConvMessages(raw, "buyer", peerLabel)
+        });
+      }
+    }
+
     threads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
     const supportIdForBuyer = await getPrimarySupportAdminId();
@@ -180,18 +239,14 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
   const convs = await Conversation.find({ sellerId: uid, buyerId: { $in: bidList }, kind: "order" }).lean();
   const convByBuyer = new Map(convs.map((c) => [c.buyerId.toString(), c]));
 
+  const orderBuyerKeys = new Set(bidList.map((b) => b.toString()));
   const threads: ThreadRow[] = bidList.map((buyerId) => {
     const bid = buyerId.toString();
     const conv = convByBuyer.get(bid);
     const { itemSummary, touch } = latestOrderSnippetForPair(orders, bid, uid.toString());
     const raw = sortMessagesAsc((conv?.messages as MsgRow[]) || []);
     const peerLabel = names.get(bid) || "Buyer";
-    const messages = raw.map((m) => ({
-      senderRole: m.senderRole,
-      text: m.text,
-      createdAt: m.createdAt,
-      senderLabel: m.senderRole === "seller" ? "You" : peerLabel
-    }));
+    const messages = mapConvMessages(raw, "seller", peerLabel);
     const convTouch = conv?.updatedAt ? new Date(conv.updatedAt).getTime() : 0;
     const updatedAt = new Date(Math.max(convTouch, touch.getTime()));
     return {
@@ -202,6 +257,27 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
       messages
     };
   });
+
+  const listingConvsSeller = await Conversation.find({ sellerId: uid, kind: "listing" }).lean();
+  const listingBuyersOnly = listingConvsSeller.filter((c) => !orderBuyerKeys.has(c.buyerId.toString()));
+  if (listingBuyersOnly.length) {
+    const extraIds = listingBuyersOnly.map((c) => c.buyerId);
+    const extraNames = await displayNameMap(extraIds);
+    for (const conv of listingBuyersOnly) {
+      const bid = conv.buyerId.toString();
+      const raw = sortMessagesAsc((conv.messages as MsgRow[]) || []);
+      const peerLabel = extraNames.get(bid) || "Buyer";
+      const convTouch = conv.updatedAt ? new Date(conv.updatedAt).getTime() : 0;
+      threads.push({
+        peerUserId: bid,
+        peerDisplayName: peerLabel,
+        itemSummary: listingItemSummary(conv),
+        updatedAt: new Date(convTouch),
+        messages: mapConvMessages(raw, "seller", peerLabel)
+      });
+    }
+  }
+
   threads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   const supportIdForSeller = await getPrimarySupportAdminId();
@@ -232,7 +308,11 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
 
 export const addMessageByPeer = asyncHandler(async (req: Request, res: Response) => {
   const { peerUserId } = req.params;
-  const { text } = req.body as { text: string };
+  const { text, context, productId: bodyProductId } = req.body as {
+    text: string;
+    context?: "listing" | "order";
+    productId?: string;
+  };
   const accountRole = req.user!.role;
   if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
     throw new HttpError(403, "Only buyers and sellers can send messages");
@@ -294,14 +374,41 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
     senderRole = "seller";
   }
 
-  if (!(await hasSharedOrder(buyerId, sellerId))) {
-    throw new HttpError(403, "You can only message people you share an active order with");
+  const sharedOrder = await hasSharedOrder(buyerId, sellerId);
+  const existingListing = await Conversation.findOne({ buyerId, sellerId, kind: "listing" });
+
+  let convKind: "order" | "listing" = "order";
+  if (existingListing && context !== "order") {
+    convKind = "listing";
+  } else if (context === "listing" || bodyProductId) {
+    convKind = "listing";
+  } else if (sharedOrder) {
+    convKind = "order";
+  } else if (role === "buyer") {
+    convKind = "listing";
+  } else {
+    throw new HttpError(403, "You can only message buyers who have contacted you about a listing or order");
   }
 
-  let conv = await Conversation.findOne({ buyerId, sellerId, kind: "order" });
+  let conv = await Conversation.findOne({ buyerId, sellerId, kind: convKind });
   if (!conv) {
-    conv = await Conversation.create({ buyerId, sellerId, kind: "order", messages: [] });
+    const createPayload: Record<string, unknown> = { buyerId, sellerId, kind: convKind, messages: [] };
+    if (convKind === "listing" && role === "buyer") {
+      const { productOid, productName } = await listingProductMeta(bodyProductId, sellerId.toString());
+      if (productOid) {
+        createPayload.productId = productOid;
+        createPayload.listingProductName = productName;
+      }
+    }
+    conv = await Conversation.create(createPayload);
+  } else if (convKind === "listing" && bodyProductId && !conv.productId) {
+    const { productOid, productName } = await listingProductMeta(bodyProductId, sellerId.toString());
+    if (productOid) {
+      conv.productId = productOid;
+      conv.listingProductName = productName;
+    }
   }
+
   conv.messages.push({
     senderId: myOid,
     senderRole,
@@ -314,7 +421,7 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
   const preview = previewRaw.length > 160 ? `${previewRaw.slice(0, 160)}…` : previewRaw;
   fireNotification(peerOid, {
     type: "message_received",
-    title: "New message",
+    title: convKind === "listing" ? "Listing question" : "New message",
     message: preview || "You have a new direct message.",
     orderId: undefined
   });
@@ -326,26 +433,68 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
     "User";
 
   const raw = sortMessagesAsc(conv.messages as MsgRow[]);
-  const messages = raw.map((m) => ({
-    senderRole: m.senderRole,
-    text: m.text,
-    createdAt: m.createdAt,
-    senderLabel:
-      role === "buyer"
-        ? m.senderRole === "buyer"
-          ? "You"
-          : peerLabel
-        : m.senderRole === "seller"
-          ? "You"
-          : peerLabel
-  }));
+  const messages = mapConvMessages(raw, role, peerLabel);
 
   res.json({
     conversation: {
       peerUserId: peerOid.toString(),
       peerDisplayName: peerLabel,
       updatedAt: conv.updatedAt,
-      messages
+      messages,
+      kind: convKind
+    }
+  });
+});
+
+/** Buyer opens (or resumes) a pre-order chat with a seller from a product listing. */
+export const openListingConversation = asyncHandler(async (req: Request, res: Response) => {
+  if (req.user!.role !== "buyer") {
+    throw new HttpError(403, "Only buyers can start a listing conversation");
+  }
+  const { peerUserId } = req.params;
+  if (!mongoose.isValidObjectId(peerUserId)) throw new HttpError(400, "Invalid seller id");
+  const sellerOid = new mongoose.Types.ObjectId(peerUserId);
+  const buyerOid = new mongoose.Types.ObjectId(req.user!.id);
+  if (sellerOid.equals(buyerOid)) throw new HttpError(400, "Invalid seller");
+
+  const seller = await User.findById(sellerOid).select("role displayName email").lean();
+  if (!seller || (seller as { role?: string }).role !== "seller") {
+    throw new HttpError(404, "Seller not found");
+  }
+
+  const body = req.body as { productId?: string };
+  const { productOid, productName } = await listingProductMeta(body?.productId, sellerOid.toString());
+
+  let conv = await Conversation.findOne({ buyerId: buyerOid, sellerId: sellerOid, kind: "listing" });
+  if (!conv) {
+    conv = await Conversation.create({
+      buyerId: buyerOid,
+      sellerId: sellerOid,
+      kind: "listing",
+      ...(productOid ? { productId: productOid, listingProductName: productName } : {}),
+      messages: []
+    });
+  } else if (productOid && !conv.productId) {
+    conv.productId = productOid;
+    conv.listingProductName = productName;
+    await conv.save();
+  }
+
+  const peerLabel =
+    String((seller as { displayName?: string }).displayName || "").trim() ||
+    String((seller as { email?: string }).email || "").trim() ||
+    "Seller";
+  const raw = sortMessagesAsc(conv.messages as MsgRow[]);
+
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.json({
+    thread: {
+      peerUserId: sellerOid.toString(),
+      peerDisplayName: peerLabel,
+      itemSummary: listingItemSummary(conv),
+      updatedAt: conv.updatedAt,
+      messages: mapConvMessages(raw, "buyer", peerLabel),
+      kind: "listing"
     }
   });
 });

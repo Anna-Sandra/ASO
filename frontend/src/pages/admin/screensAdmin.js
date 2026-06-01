@@ -5138,29 +5138,30 @@ export function AdminPage() {
   };
 
   const renderSettingsBody = () => {
+    const toggleRow = (id, label, hint, checked, onChange) =>
+      h(
+        "label",
+        {
+          key: id,
+          className:
+            "flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/30 px-4 py-3 text-sm dark:bg-white/5"
+        },
+        [
+          h("div", { key: "l", className: "min-w-0" }, [
+            h("p", { className: "font-semibold text-slate-900 dark:text-white" }, label),
+            h("p", { className: "text-xs text-slate-500" }, hint)
+          ]),
+          h("input", {
+            key: "c",
+            type: "checkbox",
+            checked: !!checked,
+            onChange: (e) => onChange(e.target.checked),
+            className: "h-5 w-5 shrink-0"
+          })
+        ]
+      );
+
     if (settingsTab === "general") {
-      const toggleRow = (id, label, hint, checked, onChange) =>
-        h(
-          "label",
-          {
-            key: id,
-            className:
-              "flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/30 px-4 py-3 text-sm dark:bg-white/5"
-          },
-          [
-            h("div", { key: "l", className: "min-w-0" }, [
-              h("p", { className: "font-semibold text-slate-900 dark:text-white" }, label),
-              h("p", { className: "text-xs text-slate-500" }, hint)
-            ]),
-            h("input", {
-              key: "c",
-              type: "checkbox",
-              checked: !!checked,
-              onChange: (e) => onChange(e.target.checked),
-              className: "h-5 w-5 shrink-0"
-            })
-          ]
-        );
       return h("div", { className: "space-y-4" }, [
         h("h3", { key: "t", className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "General"),
         h(

@@ -43,7 +43,7 @@ export function productStoreContext(product) {
 export function productFeedPriceLabel(product, pricingOpts) {
   if (!product) return "";
   if (isOfflineQuoteCategory(product) || isFoodCallToOrderCategory(product)) {
-    return isFoodCallToOrderCategory(product) ? "Call to order" : "Quote";
+    return isFoodCallToOrderCategory(product) ? "Buy" : "Quote";
   }
   return formatGhc(buyerDisplayPrice(Number(product.price), pricingOpts, 1));
 }

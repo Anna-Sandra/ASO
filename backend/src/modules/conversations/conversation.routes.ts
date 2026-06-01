@@ -2,8 +2,8 @@ import { Router } from "express";
 import { protect, authorize } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
-import { addMessageByPeer, getSupportPeer, listConversations } from "./conversation.controller";
-import { conversationMessageSchema } from "./conversation.schemas";
+import { addMessageByPeer, getSupportPeer, listConversations, openListingConversation } from "./conversation.controller";
+import { conversationMessageSchema, openListingConversationSchema } from "./conversation.schemas";
 
 const router = Router();
 
@@ -16,6 +16,14 @@ router.post(
   authorize("buyer", "seller", "admin"),
   validateBody(conversationMessageSchema),
   addMessageByPeer
+);
+router.post(
+  "/by-peer/:peerUserId/open-listing",
+  protect,
+  requireActiveAccount,
+  authorize("buyer"),
+  validateBody(openListingConversationSchema),
+  openListingConversation
 );
 
 export default router;

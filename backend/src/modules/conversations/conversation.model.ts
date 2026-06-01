@@ -9,10 +9,13 @@ export interface ConversationMessage {
 
 export interface ConversationDoc {
   _id: mongoose.Types.ObjectId;
-  /** `order` = messaging between buyer & seller for an order; `support` = customer (buyerId) ↔ primary admin (sellerId). */
-  kind: "order" | "support";
+  /** `order` = after purchase; `listing` = questions before order; `support` = buyer ↔ admin. */
+  kind: "order" | "listing" | "support";
   buyerId: mongoose.Types.ObjectId;
   sellerId: mongoose.Types.ObjectId;
+  /** Set when thread opened from a product page (listing kind). */
+  productId?: mongoose.Types.ObjectId;
+  listingProductName?: string;
   messages: ConversationMessage[];
   createdAt: Date;
   updatedAt: Date;
@@ -30,9 +33,11 @@ const messageSchema = new Schema<ConversationMessage>(
 
 const conversationSchema = new Schema<ConversationDoc>(
   {
-    kind: { type: String, enum: ["order", "support"], default: "order", index: true },
+    kind: { type: String, enum: ["order", "listing", "support"], default: "order", index: true },
     buyerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     sellerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    productId: { type: Schema.Types.ObjectId, ref: "Product", index: true },
+    listingProductName: { type: String, trim: true, maxlength: 160 },
     messages: { type: [messageSchema], default: [] }
   },
   { timestamps: true }

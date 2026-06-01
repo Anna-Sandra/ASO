@@ -10,8 +10,6 @@ export function RestaurantContextPanel({ product }) {
   const store = productStoreContext(product);
   const menuLabel = store.isRestaurant ? "View full menu" : "View store";
   const Icon = store.sellerOnly ? User : store.isRestaurant ? Utensils : Store;
-  const phone = product?.sellerPayment?.phone ? String(product.sellerPayment.phone).trim() : "";
-  const sellerEmail = product?.sellerPayment?.email ? String(product.sellerPayment.email).trim() : "";
 
   return h(
     "div",
@@ -65,41 +63,12 @@ export function RestaurantContextPanel({ product }) {
             { className: "mt-1 text-xs text-slate-600 dark:text-slate-400" },
             store.sellerOnly
               ? store.isRestaurant || product?.category === "food_drinks"
-                ? "This seller has not set up a store menu yet. Use the contact options below to order this dish."
-                : "This seller lists on SHOPIQGH without a storefront — open contact details below to buy."
+                ? "This seller has not set up a store menu yet. Use Message seller below or Place order for this dish."
+                : "This seller lists on SHOPIQGH without a storefront — message them below to buy."
               : store.isRestaurant
                 ? "This dish is on their menu. Order here or browse everything they serve."
                 : "Browse all listings from this store."
-          ),
-          phone || sellerEmail
-            ? h(
-                "div",
-                { key: "contact", className: "mt-1.5 space-y-1 text-xs font-semibold text-slate-800 dark:text-slate-200" },
-                [
-                  phone
-                    ? h(
-                        "p",
-                        { key: "ph" },
-                        ["Phone: ", h("a", { href: `tel:${phone}`, className: "text-sky-700 underline dark:text-sky-300" }, phone)]
-                      )
-                    : null,
-                  sellerEmail
-                    ? h(
-                        "p",
-                        { key: "em" },
-                        [
-                          "Email: ",
-                          h(
-                            "a",
-                            { href: `mailto:${sellerEmail}`, className: "text-sky-700 underline dark:text-sky-300" },
-                            sellerEmail
-                          )
-                        ]
-                      )
-                    : null
-                ].filter(Boolean)
-              )
-            : null
+          )
         ])
       ]),
       store.href

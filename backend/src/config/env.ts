@@ -180,7 +180,7 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().optional().default(""),
 
   /** Groq model ID (see Groq docs), e.g. llama3-8b-8192 */
-  GROQ_MODEL: z.string().optional().default("llama3-8b-8192"),
+  GROQ_MODEL: z.string().optional().default("llama-3.1-8b-instant"),
 
   /** Max completion tokens for Groq chat (separate from Ollama `OLLAMA_NUM_PREDICT`). */
   GROQ_MAX_TOKENS: z.coerce.number().int().min(64).max(8192).optional().default(300),

@@ -258,7 +258,7 @@ export function VendorDashboardBody({ analytics, allOrders, myProducts }) {
                         p.category === "services"
                           ? "Quote"
                           : isFoodCallToOrderCategory(p)
-                            ? "Call to order"
+                            ? "Buy"
                             : formatGhc(p.price ?? 0)
                       ),
                       h(Badge, { tone: productStatusTone(p.status) }, formatProductStatus(p.status))

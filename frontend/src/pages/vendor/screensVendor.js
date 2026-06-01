@@ -1136,7 +1136,7 @@ export function VendorProductsPage() {
               h("span", { key: "nm", className: "font-medium text-slate-900 dark:text-white" }, row.name)
             ])),
             h("td", { key: "c-cat", className: "px-4 py-3 text-slate-600 dark:text-slate-300" }, CATEGORY_LABELS[row.category] || row.category),
-            h("td", { key: "c-price", className: "px-4 py-3 font-semibold text-slate-900 dark:text-white" }, row.category === "services" ? "Quote on request" : isFoodCallToOrderCategory(row) ? "Call to order" : formatGhc(row.price)),
+            h("td", { key: "c-price", className: "px-4 py-3 font-semibold text-slate-900 dark:text-white" }, row.category === "services" ? "Quote on request" : isFoodCallToOrderCategory(row) ? "Buy" : formatGhc(row.price)),
             h(
               "td",
               { key: "c-stock", className: "px-4 py-3" },

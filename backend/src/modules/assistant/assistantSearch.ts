@@ -6,10 +6,30 @@ import {
   enrichPublicProducts,
   foodMenuStoreFilter
 } from "../products/product.publicSerialize";
-import { detectCategoryFromMessage } from "./assistantFallback";
-
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Map casual shopper language to our catalog category (narrow fallback results). */
+export function detectCategoryFromMessage(message: string): ProductCategory | null {
+  const m = String(message || "").toLowerCase();
+  if (/shoe|heel|boot|sandal|footwear|sneaker|trainer|slipper|canvas\b/.test(m)) return "fashion_accessories";
+  if (/food|eat|eating|hungry|menu|dish|dishes|restaurant|cafeteria|waakye|jollof|fufu|snack\b/.test(m)) return "food_drinks";
+  if (/electronic|gadget|laptop|phone|charger|cable|earbud|headphone|tablet/.test(m)) return "electronics_gadgets";
+  if (
+    /beauty|makeup|skin|skincare|hair|perfume|cosmetic|lipstick|toothbrush|toothpaste|deodorant|soap|shampoo|conditioner|razor|shaving|floss|mouthwash|sanitary|tampon|pad\b|lotion|cream\b|cologne|\bmask\b/.test(
+      m
+    )
+  )
+    return "beauty_personal_care";
+  if (/\bbaby|babies|infant|infants|newborn|nursery|stroller|pram|crib|diaper|nappy|teether|bodysuit|onesie\b/.test(m))
+    return "babies_infants";
+  if (/\bbook|novel|textbook|course ?book\b/.test(m)) return "books_academic";
+  if (/service|repair|fix|tutor|plumb|electrician|hire\b/.test(m)) return "services";
+  if (/grocery|groceries|vegetable|fruit\b|essentials\b/.test(m)) return "groceries_essentials";
+  if (/fashion|cloth|dress|shirt|pant|skirt|jean|denim|bag|purse|wallet|jewelry|watch|belt|accessor/.test(m))
+    return "fashion_accessories";
+  return null;
 }
 
 export type AssistantSearchIntent = {
@@ -31,9 +51,14 @@ export function extractSearchIntent(message: string): AssistantSearchIntent {
 
   const isFood = /food|eat|hungry|fufu|jollof|kenkey|banku|waakye|rice|soup|drink|snack|breakfast|lunch|dinner|restaurant|menu/.test(m);
   const isFashion =
-    /shoe|heel|boot|sneaker|canvas|sandal|dress|shirt|trouser|jean|bag|purse|cloth|wear|fashion|outfit|jewel|watch|accessory/.test(m);
+    /shoe|heel|boot|sneaker|canvas|sandal|dress|shirt|trouser|jean|bag|purse|cloth|wear|fashion|outfit|jewel|jewelry|jewellery|watch|accessory/.test(
+      m
+    );
   const isElectronics = /phone|laptop|tablet|earphone|headphone|charger|cable|gadget|computer|screen/.test(m);
-  const isBeauty = /cream|lotion|makeup|hair|skin|nail|beauty|perfume|cologne/.test(m);
+  const isBeauty =
+    /cream|lotion|makeup|hair|skin|skincare|nail|beauty|perfume|cologne|toothbrush|toothpaste|deodorant|soap|shampoo|conditioner|razor|shaving|floss|mouthwash|sanitary|tampon|\bpad\b|\bmask\b/.test(
+      m
+    );
   const isGrocery = /rice|oil|tomato|pepper|onion|grocery|provision/.test(m);
 
   let category: ProductCategory | null = detectCategoryFromMessage(message);
@@ -134,7 +159,11 @@ export function extractSearchIntent(message: string): AssistantSearchIntent {
     "any",
     "all",
     "this",
-    "that"
+    "that",
+    "got",
+    "sell",
+    "carry",
+    "stock"
   ]);
   const keywords = m
     .replace(/[^a-z0-9\s]/g, " ")
@@ -156,22 +185,206 @@ export function extractSearchIntent(message: string): AssistantSearchIntent {
   };
 }
 
+/** True when the shopper is asking about a specific product type (not just browsing). */
+export function messageHasShoppingIntent(message: string): boolean {
+  const t = String(message || "").trim();
+  if (!t) return false;
+  if (/\b(i|we)\s+(need|want|get|buy|looking\s+for)\b/i.test(t)) return true;
+  if (/\b(do you have|have you got|got any|in stock|looking for|show\s+me|any\s+.+\s+(available|in stock))\b/i.test(t)) {
+    return true;
+  }
+  const intent = extractSearchIntent(t);
+  if (intent.keywords.length >= 2) return true;
+  if (intent.colors.length && intent.keywords.length > 0) return true;
+  if (intent.keywords.length >= 1 && (intent.category || intent.isFood || intent.isFashion)) return true;
+  return false;
+}
+
+/** Short label for “what they asked for” in no-match copy. */
+export function queryLabelFromMessage(message: string): string {
+  const intent = extractSearchIntent(message);
+  const colorSet = new Set(intent.colors.map((c) => c.toLowerCase()));
+  const parts = [
+    ...intent.colors,
+    ...intent.keywords.filter((k) => !colorSet.has(k.toLowerCase())),
+    ...intent.brands
+  ];
+  let label = [...new Set(parts.map((p) => p.trim()).filter(Boolean))].join(" ").trim();
+  label = humanizeQueryLabel(label);
+  return label || humanizeQueryLabel(String(message || "").trim().slice(0, 72));
+}
+
+/** "friedrice" → "fried rice", etc., for natural assistant copy. */
+function humanizeQueryLabel(label: string): string {
+  let s = String(label || "").trim();
+  const fixes: [RegExp, string][] = [
+    [/\bfriedrice\b/gi, "fried rice"],
+    [/\bgreenjeans\b/gi, "green jeans"],
+    [/\bbluejeans\b/gi, "blue jeans"],
+    [/\bblackjeans\b/gi, "black jeans"],
+    [/\bt\s*shirt\b/gi, "t-shirt"]
+  ];
+  for (const [re, rep] of fixes) s = s.replace(re, rep);
+  return s.replace(/\s+/g, " ").trim();
+}
+
+function productSearchBlob(p: Record<string, unknown>): string {
+  const parts: string[] = [
+    String(p.name || ""),
+    String(p.description || ""),
+    String(p.listingSearchAssist || "")
+  ];
+  const tags = p.tags;
+  if (Array.isArray(tags)) parts.push(...tags.map(String));
+  const aiTags = p.aiTags;
+  if (Array.isArray(aiTags)) parts.push(...aiTags.map(String));
+  const attrs = p.categoryAttributes;
+  if (attrs && typeof attrs === "object") {
+    for (const v of Object.values(attrs as Record<string, unknown>)) {
+      if (Array.isArray(v)) parts.push(...v.map(String));
+      else if (v != null) parts.push(String(v));
+    }
+  }
+  return parts.join(" ").toLowerCase();
+}
+
+function termVariants(term: string): string[] {
+  const t = term.toLowerCase().trim();
+  if (!t) return [];
+  const out = [t];
+  if (t.length > 3 && t.endsWith("s")) out.push(t.slice(0, -1));
+  if (t.length > 3 && !t.endsWith("s")) out.push(`${t}s`);
+  return [...new Set(out)];
+}
+
+function termMatchesHay(hay: string, term: string): boolean {
+  for (const v of termVariants(term)) {
+    if (v.length <= 4) {
+      const re = new RegExp(`\\b${escapeRegex(v)}\\b`, "i");
+      if (re.test(hay)) return true;
+    } else if (hay.includes(v)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function scoreProductMatch(p: Record<string, unknown>, terms: string[]): number {
+  if (!terms.length) return 0;
+  const hay = productSearchBlob(p);
+  let score = 0;
+  for (const term of terms) {
+    if (termMatchesHay(hay, term)) {
+      score += term.length >= 4 ? 2 : 1;
+    }
+  }
+  return score;
+}
+
+/** Drop food/beauty/etc. when the shopper asked for fashion (and vice versa). */
+function matchesIntentCategory(p: Record<string, unknown>, intent: AssistantSearchIntent): boolean {
+  const cat = String((p as { category?: string }).category || "");
+  if (intent.isFood) return cat === "food_drinks" || cat === "services";
+  if (intent.isFashion) return cat === "fashion_accessories";
+  if (intent.category) return cat === intent.category;
+  return true;
+}
+
+function filterRelevantRows(rows: Record<string, unknown>[], intent: AssistantSearchIntent): Record<string, unknown>[] {
+  return rows.filter((p) => isExactProductMatch(p, intent) && matchesIntentCategory(p, intent));
+}
+
+function partitionSearchTerms(intent: AssistantSearchIntent) {
+  const colorSet = new Set(intent.colors.map((c) => c.toLowerCase()));
+  const allTerms = [...intent.keywords, ...intent.colors, ...intent.brands, ...intent.sizes].filter(Boolean);
+  const primary = [
+    ...intent.keywords.filter((k) => !colorSet.has(k.toLowerCase())),
+    ...intent.brands,
+    ...intent.sizes
+  ].filter(Boolean);
+  const uniq = (arr: string[]) => [...new Set(arr.map((s) => s.toLowerCase().trim()).filter(Boolean))];
+  return { allTerms: uniq(allTerms), primary: uniq(primary), colorSet };
+}
+
+function enrichSearchTermsForIntent(intent: AssistantSearchIntent, terms: string[]): string[] {
+  const joined = terms.join(" ").toLowerCase();
+  const out = new Set(terms.map((s) => s.toLowerCase().trim()).filter(Boolean));
+
+  if (/\bshoe|shoes|shoea|footwear|sneaker|trainer|canvas\b/.test(joined)) {
+    for (const t of ["shoe", "shoes", "sneaker", "sneakers", "canvas", "trainer", "trainers", "footwear", "sandal"]) {
+      out.add(t);
+    }
+  }
+  if (/\bjewel|jewelry|jewellery\b/.test(joined)) {
+    for (const t of ["jewelry", "jewellery", "necklace", "earring", "earrings", "bracelet", "ring", "chain", "pendant"]) {
+      out.add(t);
+    }
+  }
+  if (/\bmask\b/.test(joined)) {
+    out.add("mask");
+    out.add("masks");
+  }
+  if (intent.isFood || /\b(food|foods|dish|dishes|meal|meals|menu|menus|eat|eating|lunch|dinner|breakfast|brunch|snack|restaurant)\b/.test(joined)) {
+    for (const t of [
+      "food",
+      "foods",
+      "dish",
+      "dishes",
+      "meal",
+      "meals",
+      "menu",
+      "menus",
+      "restaurant",
+      "restaurants",
+      "eat",
+      "lunch",
+      "dinner",
+      "breakfast",
+      "snack"
+    ]) {
+      out.add(t);
+    }
+  }
+
+  return [...out];
+}
+
+function isExactProductMatch(p: Record<string, unknown>, intent: AssistantSearchIntent): boolean {
+  const { allTerms, primary } = partitionSearchTerms(intent);
+  if (!allTerms.length) return true;
+
+  const maskQuery = primary.some((t) => t === "mask" || t === "masks") || allTerms.some((t) => t === "mask" || t === "masks");
+  if (maskQuery && scoreProductMatch(p, ["mask", "masks"]) === 0) return false;
+
+  if (primary.length >= 2) {
+    for (const term of primary) {
+      if (scoreProductMatch(p, [term]) === 0) return false;
+    }
+    return true;
+  }
+
+  if (primary.length > 0 && scoreProductMatch(p, primary) === 0) return false;
+  if (intent.colors.length > 0 && scoreProductMatch(p, intent.colors) === 0) return false;
+  return scoreProductMatch(p, allTerms) > 0;
+}
+
+function rankByRelevance(rows: Record<string, unknown>[], intent: AssistantSearchIntent): Record<string, unknown>[] {
+  const { allTerms } = partitionSearchTerms(intent);
+  return [...rows].sort((a, b) => scoreProductMatch(b, allTerms) - scoreProductMatch(a, allTerms));
+}
+
 const buyerCatalogBase = (activeIds: Awaited<ReturnType<typeof activeStoreBusinessIds>>) => ({
   status: "active",
   $or: [{ category: "services" }, { stock: { $gt: 0 } }, { category: "food_drinks" }],
   ...foodMenuStoreFilter(activeIds)
 });
 
-/**
- * Message-driven catalog search for the shopping assistant (replaces random product sample).
- */
-export async function searchProductsForAssistant(
-  message: string,
-  limit = 10
+async function queryCatalogRows(
+  intent: AssistantSearchIntent,
+  searchTerms: string[],
+  limit: number
 ): Promise<Record<string, unknown>[]> {
-  const intent = extractSearchIntent(message);
   const activeIds = await activeStoreBusinessIds();
-
   const base: Record<string, unknown> = {
     ...buyerCatalogBase(activeIds)
   };
@@ -190,8 +403,6 @@ export async function searchProductsForAssistant(
 
   let rows: Record<string, unknown>[] = [];
 
-  const searchTerms = [...intent.keywords, ...intent.colors, ...intent.brands, ...intent.sizes].filter(Boolean);
-
   if (searchTerms.length > 0) {
     const searchStr = searchTerms.join(" ");
     try {
@@ -200,14 +411,14 @@ export async function searchProductsForAssistant(
         $text: { $search: searchStr }
       })
         .sort({ score: { $meta: "textScore" } })
-        .limit(limit)
+        .limit(limit * 3)
         .lean()) as unknown as Record<string, unknown>[];
     } catch {
       rows = [];
     }
   }
 
-  if (rows.length < 3 && searchTerms.length > 0) {
+  if (rows.length < limit && searchTerms.length > 0) {
     const re = new RegExp(searchTerms.map(escapeRegex).join("|"), "i");
     const regexRows = (await Product.find({
       ...base,
@@ -226,7 +437,7 @@ export async function searchProductsForAssistant(
       ]
     })
       .sort({ updatedAt: -1 })
-      .limit(limit)
+      .limit(limit * 3)
       .lean()) as unknown as Record<string, unknown>[];
 
     const seen = new Set(rows.map((r) => String(r._id)));
@@ -239,23 +450,58 @@ export async function searchProductsForAssistant(
     }
   }
 
-  if (rows.length === 0 && intent.category) {
-    rows = (await Product.find(base)
-      .sort({ updatedAt: -1 })
-      .limit(limit)
-      .lean()) as unknown as Record<string, unknown>[];
+  return rows;
+}
+
+/**
+ * Message-driven catalog search — only returns listings that match the shopper’s terms.
+ * Never fills with unrelated “latest” products when the query is specific.
+ */
+export async function searchProductsForAssistant(
+  message: string,
+  limit = 10
+): Promise<Record<string, unknown>[]> {
+  const intent = extractSearchIntent(message);
+  const { allTerms } = partitionSearchTerms(intent);
+  const searchTerms = enrichSearchTermsForIntent(intent, allTerms);
+
+  if (!searchTerms.length) {
+    return [];
   }
 
-  if (rows.length === 0) {
-    rows = (await Product.find({
-      status: "active",
-      ...foodMenuStoreFilter(activeIds)
-    })
-      .sort({ updatedAt: -1 })
-      .limit(limit)
-      .lean()) as unknown as Record<string, unknown>[];
+  let rows = await queryCatalogRows(intent, searchTerms, limit);
+  rows = filterRelevantRows(rows, intent);
+  rows = rankByRelevance(rows, intent).slice(0, limit);
+
+  if (!rows.length) {
+    return [];
   }
 
-  const enriched = await enrichPublicProducts(rows.slice(0, limit) as unknown as Record<string, unknown>[]);
-  return enriched;
+  return enrichPublicProducts(rows as unknown as Record<string, unknown>[]);
+}
+
+/**
+ * Relaxed search (e.g. “jeans” without “green”) when there is no exact catalog match.
+ */
+export async function searchSimilarProductsForAssistant(
+  message: string,
+  limit = 6
+): Promise<Record<string, unknown>[]> {
+  const intent = extractSearchIntent(message);
+  const { primary } = partitionSearchTerms(intent);
+  const relaxedTerms = enrichSearchTermsForIntent(intent, primary.length > 0 ? primary : intent.keywords.slice(0, 3));
+
+  if (!relaxedTerms.length) {
+    return [];
+  }
+
+  let rows = await queryCatalogRows(intent, relaxedTerms, limit);
+  rows = rows.filter((p) => scoreProductMatch(p, relaxedTerms) > 0 && matchesIntentCategory(p, intent));
+  rows = rankByRelevance(rows, intent).slice(0, limit);
+
+  if (!rows.length) {
+    return [];
+  }
+
+  return enrichPublicProducts(rows as unknown as Record<string, unknown>[]);
 }

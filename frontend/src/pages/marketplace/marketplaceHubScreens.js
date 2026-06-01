@@ -727,7 +727,7 @@ export function StorefrontProductCard({ product, business, vendorMode = false })
   const priceLabel =
     quote || foodCall
       ? foodCall
-        ? "Call to order"
+        ? "Buy"
         : "Quote / request"
       : formatGhc(buyerDisplayPrice(Number(product.price || 0), pricingOpts, 1));
 

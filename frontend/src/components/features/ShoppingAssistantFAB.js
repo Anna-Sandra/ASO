@@ -41,7 +41,7 @@ function offlineOrderPayMarkdown(siteName, short) {
       `2. 🧺 Open Cart (cart button / drawer).\n` +
       `3. 📋 Tap Checkout and enter email and phone — guest checkout is fine.\n` +
       `4. 💳 Pay with Paystack on the checkout screen.\n\n` +
-      `🍽️ Food (call-to-order): open the dish → Place Order or call to order — details on the page.\n\n` +
+      `🍽️ Food (buy): open the dish → buy — details on the page.\n\n` +
       `📩 Services (quotes): Send request on the listing (sign-in may be required).\n\n` +
       `🔓 Signing in is optional — useful for order history. 🛒`
   );
@@ -94,14 +94,10 @@ function BubbleContent({ mine, content }) {
   const parts = splitAssistantMarkdown(content);
   return h(
     "div",
-    { className: "space-y-2" },
+    { className: "space-y-2 whitespace-pre-wrap break-words leading-relaxed [word-break:break-word]" },
     parts.map((p, idx) => {
       if (p.type === "text") {
-        return h(
-          "div",
-          { key: `t-${idx}`, className: "whitespace-pre-wrap break-words leading-relaxed [word-break:break-word]" },
-          p.value || ""
-        );
+        return h("span", { key: `t-${idx}` }, p.value || "");
       }
       if (p.type === "link" && p.to) {
         const internal = String(p.to).startsWith("/");
@@ -111,7 +107,7 @@ function BubbleContent({ mine, content }) {
               {
                 key: `l-${idx}`,
                 to: p.to,
-                className: "font-semibold text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-300"
+                className: "inline font-semibold text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-300"
               },
               p.label || p.to
             )
@@ -120,7 +116,7 @@ function BubbleContent({ mine, content }) {
               {
                 key: `l-${idx}`,
                 href: p.to,
-                className: "font-semibold text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-300",
+                className: "inline font-semibold text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-300",
                 target: "_blank",
                 rel: "noreferrer"
               },
@@ -171,7 +167,7 @@ export function ShoppingAssistantFAB() {
       id: msgIdRef.current++,
       role: "assistant",
       content:
-        "Hi ✨ I'm your SHOPIQGH assistant. Ask about food and local sellers, products, checkout, or orders — I'll point you to real listings and restaurant menus."
+        "Hi 👋 I'm your SHOPIQGH shopping assistant — here to help you find food, fashion, electronics, and more from local sellers. What are you looking for today?"
     }
   ]);
   const [draft, setDraft] = useState("");

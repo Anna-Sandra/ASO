@@ -99,7 +99,7 @@ function buyerServicePricingPanel() {
     h(
       "p",
       { className: "mt-1 text-xs leading-relaxed text-amber-950/90 dark:text-amber-100/90" },
-      "Contact vendor for more details — use the seller details below to reach them and agree scope and payment."
+      "Contact the vendor in-app — tap Message seller below to ask about scope and payment."
     )
   ]);
 }
@@ -115,72 +115,51 @@ function buyerFoodCallPricingPanel() {
   ]);
 }
 
-/** @param {Record<string, unknown> | null | undefined} sellerPayment @param {{ paystackOnly?: boolean } | null | undefined} opts */
-function buyerVendorPayPanel(sellerPayment, opts) {
+/** @param {{ sellerId?: string, sellerDisplayName?: string, productId?: string, productName?: string, accessToken?: string | null, paystackOnly?: boolean, onSignIn?: () => void }} opts */
+function buyerVendorMessagePanel(opts) {
+  const sellerId = String(opts?.sellerId || "").trim();
+  const sellerName = String(opts?.sellerDisplayName || "").trim();
+  const productId = String(opts?.productId || "").trim();
+  const productName = String(opts?.productName || "").trim();
   const paystackOnly = Boolean(opts?.paystackOnly);
-  if (!sellerPayment || typeof sellerPayment !== "object") {
-    return h(
-      GlassPanel,
-      { key: "vend-pay", className: !paystackOnly ? "!border-amber-500/30 !bg-amber-500/10" : "!border-sky-500/20" },
-      h(
-        "p",
-        {
-          className: !paystackOnly ? "text-sm text-amber-950 dark:text-amber-100" : "text-sm text-slate-700 dark:text-slate-200"
-        },
-        paystackOnly
-          ? "This seller has not finished payout registration yet. You still pay with Paystack at checkout; the platform pays the vendor from there after your order succeeds."
-          : "Seller contact is not on file yet. You can still order; use Messages on your order if you need help reaching them."
-      )
-    );
-  }
-  const sp = sellerPayment;
-  const name = String(sp.displayName || "").trim();
-  const phone = String(sp.phone || "").trim();
-  const email = String(sp.email || "").trim();
-  const rows = [];
-  if (name) rows.push(h("p", { key: "dn", className: "text-sm font-semibold text-slate-900 dark:text-white" }, name));
-  if (phone) {
-    rows.push(
-      h("div", { key: "ph", className: "mt-2" }, [
-        h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Phone"),
-        h(
-          "a",
-          { href: `tel:${phone}`, className: "mt-0.5 block font-mono text-sm text-sky-700 underline dark:text-sky-300" },
-          phone
-        )
-      ])
-    );
-  }
-  if (email) {
-    rows.push(
-      h("div", { key: "em", className: "mt-2" }, [
-        h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Email"),
-        h(
-          "a",
-          { href: `mailto:${email}`, className: "mt-0.5 block text-sm text-sky-700 underline dark:text-sky-300" },
-          email
-        )
-      ])
-    );
-  }
-  if (!name && !phone && !email) {
-    return h(
-      GlassPanel,
-      { key: "vend-pay", className: "!border-amber-500/30 !bg-amber-500/10" },
-      h("p", { className: "text-sm text-amber-950 dark:text-amber-100" }, "Seller contact is not on file yet.")
-    );
-  }
-  return h(GlassPanel, { key: "vend-pay", className: "!border-white/10" }, [
-    h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Seller contact"),
+  const signedIn = Boolean(opts?.accessToken);
+  const msgQs = new URLSearchParams();
+  if (sellerId) msgQs.set("peer", sellerId);
+  if (productId) msgQs.set("product", productId);
+  if (productName) msgQs.set("productName", productName);
+  const msgTo = sellerId ? `/messages?${msgQs.toString()}` : "/messages";
+
+  return h(GlassPanel, { key: "vend-msg", className: "!border-white/10" }, [
+    h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Questions for the seller?"),
     h(
       "p",
-      { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" },
+      { className: "mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400" },
       paystackOnly
-        ? "Pay with Paystack at checkout. For questions about this listing, contact the seller below."
-        : "Reach the seller below to coordinate purchase, pickup, or delivery."
+        ? "Pay with Paystack at checkout. Message the seller in the app if you need details about this listing."
+        : "Message the seller in the app to ask about pickup, delivery, or the item before you buy."
     ),
-    h("div", { className: "mt-3 space-y-1" }, rows)
-  ]);
+    sellerName ? h("p", { className: "mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100" }, sellerName) : null,
+    signedIn
+      ? h(
+          Link,
+          { key: "msg", to: msgTo, className: "mt-4 inline-block" },
+          h(
+            Button,
+            { type: "button", className: "w-full gap-2 !rounded-xl sm:w-auto" },
+            [h(MessageSquare, { className: "h-4 w-4", "aria-hidden": true }), "Message seller"]
+          )
+        )
+      : h(
+          Button,
+          {
+            key: "msg-guest",
+            type: "button",
+            className: "mt-4 w-full gap-2 !rounded-xl sm:w-auto",
+            onClick: () => (typeof opts?.onSignIn === "function" ? opts.onSignIn() : null)
+          },
+          [h(MessageSquare, { className: "h-4 w-4", "aria-hidden": true }), "Sign in to message seller"]
+        )
+  ].filter(Boolean));
 }
 
 export function ReviewStars({ value, className = "" }) {
@@ -913,7 +892,18 @@ export function ProductDetailPage() {
             h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Description"),
             h("p", { className: "mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200" }, product.description || "No description provided.")
           ]),
-          buyerVendorPayPanel(product.sellerPayment, { paystackOnly: pricingOpts?.paystackOnly }),
+          buyerVendorMessagePanel({
+            sellerId: product.sellerId,
+            sellerDisplayName:
+              product.sellerPayment && typeof product.sellerPayment === "object"
+                ? String(product.sellerPayment.displayName || "").trim()
+                : "",
+            productId: product.id,
+            productName: product.name,
+            accessToken,
+            paystackOnly: pricingOpts?.paystackOnly,
+            onSignIn: () => nav("/login", { state: { from: loc.pathname + loc.search } })
+          }),
           offlineListing &&
             h(GlassPanel, { key: "offline-inq", className: "!mt-4 !border-sky-500/25" }, [
               h(
@@ -1006,7 +996,7 @@ export function ProductDetailPage() {
                 "span",
                 { key: "tx" },
                 svc
-                  ? "Use the form above to contact the seller"
+                  ? "Use the request form above"
                   : foodC2O
                     ? "Use the form above to place your order"
                     : (product.stock ?? 0) <= 0
@@ -1148,7 +1138,7 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
                 key: "svc-pr",
                 className: `mt-3 text-sm font-semibold leading-snug ${foodCard ? "text-violet-900 dark:text-violet-50" : "text-amber-800 dark:text-amber-100"}`
               },
-              foodCard ? "Call to order" : "See listing for pricing & scope"
+              foodCard ? "Buy" : "See listing for pricing & scope"
             )
           : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
               strikeCmp
@@ -1207,6 +1197,69 @@ function browseMenuGridClassName() {
 
 function ShopHomeRecommendationRow({ row, className = "mb-7" }) {
   if (!row) return null;
+  const railRef = useRef(null);
+  const trackRef = useRef(null);
+  const cards = Array.isArray(row.products) ? row.products : [];
+  const marqueeCards = cards.length > 1 ? [...cards, ...cards] : cards;
+
+  useEffect(() => {
+    const viewport = railRef.current;
+    const track = trackRef.current;
+    if (!viewport || !track || typeof window === "undefined") return undefined;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return undefined;
+    if (cards.length <= 1) return undefined;
+
+    let rafId = 0;
+    let paused = false;
+    const speed = 0.35;
+    let x = 0;
+
+    const tick = () => {
+      if (!track || paused) {
+        rafId = window.requestAnimationFrame(tick);
+        return;
+      }
+      const loopWidth = track.scrollWidth / 2;
+      if (!Number.isFinite(loopWidth) || loopWidth <= viewport.clientWidth + 4) {
+        rafId = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      x += speed;
+      if (x >= loopWidth) {
+        x -= loopWidth;
+      }
+      track.style.transform = `translate3d(${-x}px,0,0)`;
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    const pause = () => {
+      paused = true;
+    };
+    const resume = () => {
+      paused = false;
+    };
+
+    viewport.addEventListener("mouseenter", pause);
+    viewport.addEventListener("mouseleave", resume);
+    viewport.addEventListener("touchstart", pause, { passive: true });
+    viewport.addEventListener("touchend", resume, { passive: true });
+    viewport.addEventListener("focusin", pause);
+    viewport.addEventListener("focusout", resume);
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      viewport.removeEventListener("mouseenter", pause);
+      viewport.removeEventListener("mouseleave", resume);
+      viewport.removeEventListener("touchstart", pause);
+      viewport.removeEventListener("touchend", resume);
+      viewport.removeEventListener("focusin", pause);
+      viewport.removeEventListener("focusout", resume);
+      if (track) track.style.transform = "translate3d(0,0,0)";
+    };
+  }, [row?.id, cards.length]);
+
   return h("div", { className, key: row.id || row.title }, [
     h("div", { key: "hdr", className: "mb-2 flex items-center gap-2" }, [
       h(Sparkles, { key: "ic", className: "h-4 w-4 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
@@ -1223,10 +1276,18 @@ function ShopHomeRecommendationRow({ row, className = "mb-7" }) {
       "div",
       {
         key: "rail",
-        className:
-          "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:gap-3.5 sm:px-0"
+        ref: railRef,
+        className: "no-scrollbar -mx-4 overflow-hidden px-4 pb-1 sm:-mx-0 sm:px-0"
       },
-      (row.products || []).map((p) => h(MenuItemFeedCard, { key: p.id, product: p, compact: true }))
+      h(
+        "div",
+        {
+          key: "track",
+          ref: trackRef,
+          className: "flex w-max gap-3 sm:gap-3.5 will-change-transform"
+        },
+        marqueeCards.map((p, idx) => h(MenuItemFeedCard, { key: `${p.id}-${idx}`, product: p, compact: true }))
+      )
     )
   ]);
 }
@@ -2389,7 +2450,7 @@ export function CartDrawer({ open, onClose }) {
                       },
                       blocked
                         ? isFoodCallToOrderCategory(p)
-                          ? "Food: call to order — remove to check out other items"
+                          ? "Food: buy from the listing — remove to check out other items"
                           : "Services: contact vendor — remove to check out other items"
                         : formatGhc(buyerDisplayPrice(Number(p.price) || 0, pricingOpts, Number(p.qty) || 1))
                     ),
@@ -3044,7 +3105,7 @@ export function SavedProductsPage() {
                                 className:
                                   `mt-3 text-sm font-semibold leading-snug ${foodCard ? "text-violet-900 dark:text-violet-50" : "text-amber-800 dark:text-amber-100"}`
                               },
-                              foodCard ? "Call to order" : "See listing for pricing & scope"
+                              foodCard ? "Buy" : "See listing for pricing & scope"
                             )
                           : h("div", { key: "prices", className: "mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1" }, [
                               strikeCmp
@@ -3883,6 +3944,10 @@ export function BuyerHelpSupportPage() {
 export function BuyerMessagesPage() {
   const [cartOpen, setCartOpen] = useState(false);
   const { accessToken } = useAuth();
+  const [searchParams] = useSearchParams();
+  const peerFromQuery = searchParams.get("peer") || "";
+  const productFromQuery = searchParams.get("product") || "";
+  const productNameFromQuery = searchParams.get("productName") || "";
   const [threads, setThreads] = useState([]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
@@ -3890,6 +3955,15 @@ export function BuyerMessagesPage() {
   const [sending, setSending] = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [mobileShowChat, setMobileShowChat] = useState(false);
+  const selectPeerOnLoadRef = useRef(true);
+  const openedListingRef = useRef(false);
+  const prefillDoneRef = useRef(false);
+
+  useEffect(() => {
+    selectPeerOnLoadRef.current = true;
+    openedListingRef.current = false;
+    prefillDoneRef.current = false;
+  }, [peerFromQuery, productFromQuery]);
 
   const loadThreads = useCallback(() => {
     if (!accessToken) return Promise.resolve();
@@ -3897,6 +3971,27 @@ export function BuyerMessagesPage() {
       headers: { Authorization: `Bearer ${accessToken}` }
     }).then((d) => setThreads(Array.isArray(d?.threads) ? d.threads : []));
   }, [accessToken]);
+
+  const ensureListingThread = useCallback(async () => {
+    const peer = String(peerFromQuery || "").trim();
+    if (!accessToken || !peer) return null;
+    const json = productFromQuery ? { productId: productFromQuery } : {};
+    const d = await apiFetch(`/api/conversations/by-peer/${encodeURIComponent(peer)}/open-listing`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      json
+    });
+    const thread = d?.thread;
+    if (!thread?.peerUserId) return null;
+    setThreads((prev) => {
+      const pid = String(thread.peerUserId);
+      const rest = prev.filter((t) => String(t.peerUserId) !== pid);
+      return [thread, ...rest];
+    });
+    setActiveId(String(thread.peerUserId));
+    setMobileShowChat(true);
+    return thread;
+  }, [accessToken, peerFromQuery, productFromQuery]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -3906,7 +4001,19 @@ export function BuyerMessagesPage() {
     let cancelled = false;
     setLoading(true);
     setErr("");
-    loadThreads()
+    (async () => {
+      await loadThreads();
+      if (cancelled) return;
+      const peer = String(peerFromQuery || "").trim();
+      if (peer && !openedListingRef.current) {
+        openedListingRef.current = true;
+        try {
+          await ensureListingThread();
+        } catch (ex) {
+          if (!cancelled) setErr(apiErrorMessage(ex, "Could not open seller chat"));
+        }
+      }
+    })()
       .catch((ex) => {
         if (!cancelled) setErr(apiErrorMessage(ex, "Could not load messages"));
       })
@@ -3916,18 +4023,34 @@ export function BuyerMessagesPage() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, loadThreads]);
+  }, [accessToken, loadThreads, peerFromQuery, productFromQuery, ensureListingThread]);
+
+  useEffect(() => {
+    const peer = String(peerFromQuery || "").trim();
+    const pname = String(productNameFromQuery || "").trim();
+    if (!peer || !pname || prefillDoneRef.current) return;
+    prefillDoneRef.current = true;
+    setReplyByPeer((prev) => ({
+      ...prev,
+      [peer]: `Hi, I have a question about "${pname}": `
+    }));
+  }, [peerFromQuery, productNameFromQuery]);
 
   useEffect(() => {
     if (!threads.length) {
-      setActiveId(null);
+      if (!peerFromQuery) setActiveId(null);
       return;
     }
     const ids = threads.map((t) => String(t.peerUserId));
-    if (!activeId || !ids.includes(String(activeId))) {
-      setActiveId(String(threads[0].peerUserId));
+    if (selectPeerOnLoadRef.current && peerFromQuery && ids.includes(String(peerFromQuery))) {
+      setActiveId(String(peerFromQuery));
+      setMobileShowChat(true);
+      selectPeerOnLoadRef.current = false;
+      return;
     }
-  }, [threads, activeId]);
+    selectPeerOnLoadRef.current = false;
+    setActiveId((cur) => (cur && ids.includes(String(cur)) ? cur : String(threads[0].peerUserId)));
+  }, [threads, activeId, peerFromQuery]);
 
   const activeThread = useMemo(
     () => threads.find((t) => String(t.peerUserId) === String(activeId)) || null,
@@ -3955,11 +4078,21 @@ export function BuyerMessagesPage() {
     if (!text || !accessToken) return;
     setErr("");
     setSending(pid);
+    const thread = threads.find((t) => String(t.peerUserId) === pid);
+    const isListingThread =
+      String(pid) === String(peerFromQuery || "") ||
+      String(thread?.itemSummary || "").startsWith("About:") ||
+      String(thread?.itemSummary || "").includes("listing");
+    const json = { text };
+    if (isListingThread) {
+      json.context = "listing";
+      if (productFromQuery) json.productId = productFromQuery;
+    }
     try {
       await apiFetch(`/api/conversations/by-peer/${encodeURIComponent(pid)}/messages`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        json: { text }
+        json
       });
       setReplyByPeer((prev) => ({ ...prev, [pid]: "" }));
       await loadThreads();
@@ -4021,7 +4154,7 @@ export function BuyerMessagesPage() {
           [
             h("div", { key: "conv-h", className: "shrink-0 border-b border-white/10 px-4 py-3" }, [
               h("h2", { className: "text-base font-semibold text-slate-900 dark:text-white" }, "Chats"),
-              h("p", { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" }, "Sellers you’ve ordered from — plus SHOPIQGH Support for account help.")
+              h("p", { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" }, "Sellers you’ve messaged or ordered from — plus SHOPIQGH Support for account help.")
             ]),
             h(
               "div",

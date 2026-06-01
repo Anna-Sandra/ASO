@@ -12,9 +12,14 @@ import { BuyerProductView } from "../products/buyerProductView.model";
 import { ProductSave } from "../products/productSave.model";
 import { Order } from "../orders/order.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
-import { buildAssistantCatalogReply, buildAssistantIdleReply, formatProductLine, shouldUseNoCategoryFallback } from "./assistantFallback";
-import { searchProductsForAssistant } from "./assistantSearch";
-import { groqChatStream, groqCompletion, groqConfigured } from "./groqChat";
+import {
+  assistantConversationalToneRules,
+  buildAssistantCatalogReply,
+  formatProductLine,
+  shouldUseNoCategoryFallback
+} from "./assistantFallback";
+import { queryLabelFromMessage, searchProductsForAssistant, searchSimilarProductsForAssistant } from "./assistantSearch";
+import { groqConfigured } from "./groqChat";
 
 function resolvePublicApiOrigin(): string {
   const raw = env.API_PUBLIC_ORIGIN?.trim();
@@ -174,9 +179,17 @@ async function loadAssistantPrompt(
   const appOrigin = env.APP_ORIGIN.replace(/\/$/, "");
 
   const strictListings = shouldUseNoCategoryFallback(String(message || "").trim());
-  const [settings, sampleProducts, sampleStores] = await Promise.all([
+  let listingsAreSimilar = false;
+  let sampleProducts = await searchProductsForAssistant(message, ASSISTANT_PRODUCT_LIMIT);
+  if (strictListings && sampleProducts.length === 0) {
+    const similar = await searchSimilarProductsForAssistant(message, ASSISTANT_PRODUCT_LIMIT);
+    if (similar.length > 0) {
+      sampleProducts = similar;
+      listingsAreSimilar = true;
+    }
+  }
+  const [settings, sampleStores] = await Promise.all([
     getOrCreateSettings(),
-    searchProductsForAssistant(message, ASSISTANT_PRODUCT_LIMIT),
     Business.find({ status: "active" })
       .sort({ updatedAt: -1 })
       .limit(ASSISTANT_BUSINESS_LIMIT)
@@ -221,17 +234,23 @@ async function loadAssistantPrompt(
     return `- [${name}](${appOrigin}/store/${encodeURIComponent(slug)}) — ${String(b.businessType || "store")}${blurb ? ` · ${blurb}` : ""}`;
   });
 
+  const queryLabel = queryLabelFromMessage(message);
+
   const factsNoMatch =
     strictListings && lines.length === 0
-      ? `- **No listing lines below** matched this question — the catalog search returned nothing for that product/budget request. Tell the shopper clearly you don’t see matching items on ${siteName} in these results **right now**. Do NOT invent products, brands, specs, or GHS prices. Suggest **Search** or a category hub (e.g. \`/electronics\` for laptops). Then you may add the one-line ordering tip (🛒→🧺→📋→💳 Paystack; 🍽️ food call-to-order; 📩 services quote).\n`
+      ? `- **No listing lines below** for **${queryLabel || "what they asked"}**. Say warmly that you couldn't find it right now (avoid "I don't see…" every time). Suggest relevant alternatives: Food → browse /food or similar dishes; Fashion → similar styles or colors; never invent listings. Do NOT append checkout/Paystack steps unless they asked how to pay.\n`
       : "";
 
   const searchIntel =
     lines.length > 0
-      ? `- The listings below were **search-matched** to the shopper’s message — show relevant ones first.\n- If they asked for a **color** or **brand**, prioritize lines that match; if unsure, add “(tap to confirm color/brand in photos)”.\n- NEVER say “no products available” when listing lines exist below.\n- NEVER show food when they asked for fashion (or vice versa) unless a line clearly fits.\n`
+      ? listingsAreSimilar
+        ? `- **Similar only** — no exact **${queryLabel || "match"}**. Open with something like "I couldn't find any [item] right now, but here are similar styles/options" then list the lines below. Do NOT claim they are the exact item.\n- For fashion + color (e.g. green jeans), you may suggest olive, khaki, army green, or dark denim after the listings.\n- NEVER show food when they asked for fashion (or vice versa).\n`
+        : `- Listings below match their search — introduce naturally ("Here are some options…") and show relevant lines first.\n- NEVER show food when they asked for fashion (or vice versa).\n`
       : "";
 
   const system = `You are the ${siteName} shopping assistant — a Ghana marketplace platform. ${userNote}${personalizeBlock}
+
+${assistantConversationalToneRules()}
 
 IDENTITY:
 - You represent the WHOLE ${siteName} marketplace, NOT any single store, brand, or vendor
@@ -241,19 +260,19 @@ IDENTITY:
 - When asked what the platform sells, list ALL categories: food & drinks, fashion, electronics, beauty, groceries, books, and services
 
 BEHAVIOUR:
-- Be concise and warm. Emoji OK sparingly ✨ 🛒. Short answers unless they ask "explain" style questions
-- If the message is only a short greeting (hi, hello, hey, good morning), reply warmly and introduce yourself as the ${siteName} assistant — do NOT push products or food
-- For hunger/food/eating intent (hungry, "im hungry", food, lunch, dinner, snacks, etc.), ALWAYS show 2–3 relevant food listings from the catalog context below immediately when those listing lines exist — then you may ask ONE short follow-up — NEVER ask questions before showing food listings. If there are **no** food listing lines below, say you don’t see matching dishes in the snapshot and suggest Food & drinks or search — do not invent dishes
+- If the message is only a short greeting (hi, hello, hey, good morning), reply warmly and ask what they're looking for — do NOT push products immediately
+- For hunger/food/eating intent: when food listing lines exist below, show 2–3 right away, then one short follow-up. When **no** food lines below, apologize briefly and suggest /food or similar dishes (jollof, waakye, noodles, etc.) — do not invent dishes or list unrelated categories
 
 FORMATTING RULES — follow exactly:
-- Format each food item like: "🍽️ [Item Name](full-https-url) at [Store Name](full-store-https-url) — call to order"
+- Format each food item like: "🍽️ [Item Name](full-https-url) at [Store Name](full-store-https-url) · buy"
+- Format priced products like: "[Item Name](full-https-url) at [Store Name](full-store-https-url) · GHS 123" — one line per item, no bullet dashes, no line breaks inside a listing
 - NEVER output raw pipe-separated data like "| food_drinks | call-to-order | ok" or internal tables
 - NEVER show internal fields (category codes, stock codes, availability flags) — use plain shopper wording
 - Store and product links must be full markdown links [Name](https://…); copy them from the listings — never paste bare paths like /store/slug
 - When mentioning products, copy markdown from the listings below; never output raw hex IDs or placeholders
 
 PRICING RULES — CRITICAL:
-- Food & drinks (food_drinks) NEVER have a cart price online — ALWAYS end the line with "call to order". NEVER show "GHS …" or any price for food, even if you imagine one. Buyers contact the seller from the listing page
+- Food & drinks (food_drinks) NEVER have a cart price online — ALWAYS end the line with "buy". NEVER show "GHS …" or any price for food, even if you imagine one. Buyers contact the seller from the listing page
 - Services ALWAYS say "request a quote" — never a fixed GHS checkout price unless the listing line shows quote terminology
 - ONLY ordinary physical products (not food_drinks, not services) may show a GHS price, and only when it appears in the listing lines below
 
@@ -267,10 +286,10 @@ ${factsNoMatch}- Only cite products using the listing lines below — never inve
 - Always include the restaurant/store link when present in a listing line
 
 CONTACT / VENDOR QUESTIONS:
-- If the user asks **how to contact the seller**, **phone**, **WhatsApp**, or **where is the vendor**: say **email or contact** on the listing when shown; full payout wallet numbers are **not** shown to shoppers — payments go through checkout. Food: **call to order** / **Place Order** from the listing; **Messages** may require an account
+- If the user asks **how to contact the seller**, **phone**, **WhatsApp**, or **where is the vendor**: say **email or contact** on the listing when shown; full payout wallet numbers are **not** shown to shoppers — payments go through checkout. Food: buy from the listing; **Messages** may require an account
 
 CRITICAL — food & local dishes (catalog only):
-- When asked about food, local dishes, Ghanaian/regional dishes, or similar, ALWAYS show real listings from the "Listings (partial)" lines below with full markdown links (🍽️ line + store link + call to order)
+- When asked about food, local dishes, Ghanaian/regional dishes, or similar, ALWAYS show real listings from the "Listings (partial)" lines below with full markdown links (🍽️ line + store link + buy)
 - NEVER describe dishes from general knowledge without a listing link from below. If a dish exists in those listings, show that link. If nothing matches, say so briefly and suggest Food & drinks or search — do not answer from cookbook trivia
 
 Stores: each food item belongs to a restaurant; storefront URLs appear in the listing lines (use those full links). Category hubs (navigation hints): /food, /fashion, /electronics, /beauty, /groceries, /books, /services
@@ -317,11 +336,7 @@ export const getAssistantLlmStatus = asyncHandler(async (_req: Request, res: Res
       model: env.OLLAMA_MODEL
     },
     hint:
-      primary === "groq"
-        ? "Shopping assistant uses Groq Cloud (groq.com, GROQ_API_KEY). Not xAI Grok."
-        : primary === "ollama"
-          ? "Shopping assistant uses local Ollama. Set GROQ_API_KEY to prefer Groq Cloud instead."
-          : "No remote/local LLM — assistant uses catalog fallback. Set GROQ_API_KEY or OLLAMA_BASE_URL."
+      "Shopping assistant chat uses live catalog search only (real listings). Groq/Ollama are not used for product replies — avoids invented items."
   });
 });
 
@@ -465,11 +480,18 @@ function sseWrite(res: Response, obj: Record<string, unknown>) {
  * Uses **Groq** when `GROQ_API_KEY` is set; else **local Ollama** when `OLLAMA_BASE_URL` is set; else catalog fallback.
  * With `stream: true`, responds as `text/event-stream` (SSE) so the UI can show tokens as they arrive.
  */
+async function resolveSiteName(): Promise<string> {
+  const settings = await getOrCreateSettings();
+  return typeof settings?.siteName === "string" && settings.siteName.trim()
+    ? settings.siteName.trim()
+    : DEFAULT_SITE_NAME;
+}
+
 export const postAssistantChat = asyncHandler(async (req: Request, res: Response) => {
   const { message, history, stream } = req.body as AssistantChatBody;
   const chatHistory = history ?? [];
-
-  const { siteName, system, msgs } = await loadAssistantPrompt(req, message, history);
+  const siteName = await resolveSiteName();
+  const reply = await buildAssistantCatalogReply(siteName, message, req, chatHistory);
 
   if (stream) {
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -477,103 +499,15 @@ export const postAssistantChat = asyncHandler(async (req: Request, res: Response
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
     (res as Response & { flushHeaders?: () => void }).flushHeaders?.();
-
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), env.OLLAMA_TIMEOUT_MS);
-    const onClose = () => ac.abort();
-    req.on("close", onClose);
-
-    const cleanup = () => {
-      clearTimeout(t);
-      req.off("close", onClose);
-    };
-
-    try {
-      const llm = primaryAssistantLlm();
-      if (!llm) {
-        const reply = await buildAssistantIdleReply(siteName, message, req, chatHistory);
-        sseWrite(res, { delta: "", reply, done: true, source: "catalog", model: null });
-        return;
-      }
-
-      let full = "";
-      if (llm === "groq") {
-        for await (const delta of groqChatStream(system, msgs, ac.signal)) {
-          full += delta;
-          sseWrite(res, { delta, done: false });
-        }
-      } else {
-        for await (const delta of ollamaChatStream(system, msgs, ac.signal)) {
-          full += delta;
-          sseWrite(res, { delta, done: false });
-        }
-      }
-
-      const trimmed = full.trim();
-      if (!trimmed) {
-        const reply = await buildAssistantCatalogReply(siteName, message, req, chatHistory);
-        sseWrite(res, {
-          delta: "",
-          reply,
-          done: true,
-          source: "catalog",
-          model: llm === "groq" ? env.GROQ_MODEL : env.OLLAMA_MODEL
-        });
-      } else {
-        sseWrite(res, {
-          delta: "",
-          reply: trimmed,
-          done: true,
-          source: llm,
-          model: llm === "groq" ? env.GROQ_MODEL : env.OLLAMA_MODEL
-        });
-      }
-    } catch (err) {
-      console.error("[assistant] stream error:", err instanceof Error ? err.message : err);
-      const reply = await buildAssistantCatalogReply(siteName, message, req, chatHistory);
-      sseWrite(res, { delta: "", reply, done: true, source: "catalog", model: null });
-    } finally {
-      cleanup();
-      res.end();
-    }
+    sseWrite(res, { delta: "", reply, done: true, source: "catalog", model: null });
+    res.end();
     return;
   }
-
-  let reply: string | null = null;
-  let source: "groq" | "ollama" | "catalog" = "catalog";
-
-  if (groqConfigured()) {
-    try {
-      reply = await groqCompletion(system, msgs);
-      source = "groq";
-    } catch (err) {
-      console.error("[assistant] Groq completion failed:", err instanceof Error ? err.message : err);
-      reply = null;
-    }
-  }
-
-  if (!reply && env.OLLAMA_BASE_URL.trim()) {
-    try {
-      reply = await ollamaCompletion(system, msgs);
-      source = "ollama";
-    } catch (err) {
-      console.error("[assistant] Ollama completion failed:", err instanceof Error ? err.message : err);
-      reply = await buildAssistantCatalogReply(siteName, message, req, chatHistory);
-      source = "catalog";
-    }
-  }
-
-  if (!reply) {
-    reply = await buildAssistantIdleReply(siteName, message, req, chatHistory);
-    source = "catalog";
-  }
-
-  const modelId = source === "groq" ? env.GROQ_MODEL : source === "ollama" ? env.OLLAMA_MODEL : null;
 
   res.json({
     reply,
     assistant: "SHOPIQGH",
-    model: modelId,
-    source
+    model: null,
+    source: "catalog"
   });
 });

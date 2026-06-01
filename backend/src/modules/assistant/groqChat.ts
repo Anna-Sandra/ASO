@@ -33,7 +33,7 @@ export async function groqCompletion(system: string, userMessages: ChatMsg[]): P
         Authorization: `Bearer ${key}`
       },
       body: JSON.stringify({
-        model: env.GROQ_MODEL || "llama3-8b-8192",
+        model: env.GROQ_MODEL || "llama-3.1-8b-instant",
         messages: [{ role: "system", content: system }, ...userMessages.filter((m) => m.role && m.content)],
         max_tokens: env.GROQ_MAX_TOKENS,
         temperature: env.OLLAMA_TEMPERATURE,
@@ -71,7 +71,7 @@ export async function* groqChatStream(
       Authorization: `Bearer ${key}`
     },
     body: JSON.stringify({
-      model: env.GROQ_MODEL || "llama3-8b-8192",
+      model: env.GROQ_MODEL || "llama-3.1-8b-instant",
       messages: [{ role: "system", content: system }, ...userMessages.filter((m) => m.role && m.content)],
       max_tokens: env.GROQ_MAX_TOKENS,
       temperature: env.OLLAMA_TEMPERATURE,
