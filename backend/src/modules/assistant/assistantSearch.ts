@@ -10,27 +10,13 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Map casual shopper language to our catalog category (narrow fallback results). */
-export function detectCategoryFromMessage(message: string): ProductCategory | null {
-  const m = String(message || "").toLowerCase();
-  if (/shoe|heel|boot|sandal|footwear|sneaker|trainer|slipper|canvas\b/.test(m)) return "fashion_accessories";
-  if (/food|eat|eating|hungry|menu|dish|dishes|restaurant|cafeteria|waakye|jollof|fufu|snack\b/.test(m)) return "food_drinks";
-  if (/electronic|gadget|laptop|phone|charger|cable|earbud|headphone|tablet/.test(m)) return "electronics_gadgets";
-  if (
-    /beauty|makeup|skin|skincare|hair|perfume|cosmetic|lipstick|toothbrush|toothpaste|deodorant|soap|shampoo|conditioner|razor|shaving|floss|mouthwash|sanitary|tampon|pad\b|lotion|cream\b|cologne|\bmask\b/.test(
-      m
-    )
-  )
-    return "beauty_personal_care";
-  if (/\bbaby|babies|infant|infants|newborn|nursery|stroller|pram|crib|diaper|nappy|teether|bodysuit|onesie\b/.test(m))
-    return "babies_infants";
-  if (/\bbook|novel|textbook|course ?book\b/.test(m)) return "books_academic";
-  if (/service|repair|fix|tutor|plumb|electrician|hire\b/.test(m)) return "services";
-  if (/grocery|groceries|vegetable|fruit\b|essentials\b/.test(m)) return "groceries_essentials";
-  if (/fashion|cloth|dress|shirt|pant|skirt|jean|denim|bag|purse|wallet|jewelry|watch|belt|accessor/.test(m))
-    return "fashion_accessories";
-  return null;
-}
+import {
+  detectCategoryFromMessage,
+  expandShopSearchQuery,
+  shouldSupplementCategoryBrowse
+} from "../products/shopSearchExpand";
+
+export { detectCategoryFromMessage };
 
 export type AssistantSearchIntent = {
   keywords: string[];
@@ -51,17 +37,21 @@ export function extractSearchIntent(message: string): AssistantSearchIntent {
 
   const isFood = /food|eat|hungry|fufu|jollof|kenkey|banku|waakye|rice|soup|drink|snack|breakfast|lunch|dinner|restaurant|menu/.test(m);
   const isFashion =
-    /shoe|heel|boot|sneaker|canvas|sandal|dress|shirt|trouser|jean|bag|purse|cloth|wear|fashion|outfit|jewel|jewelry|jewellery|watch|accessory/.test(
+    /shoe|heel|boot|sneaker|canvas|sandal|dress|shirt|trouser|jean|bag|purse|cloth|wear|fashion|outfit|jewel|jewelry|jewellery|watch|accessor|accessories|bracelet|necklace|earring|bangle|ankara|kente/.test(
       m
     );
-  const isElectronics = /phone|laptop|tablet|earphone|headphone|charger|cable|gadget|computer|screen/.test(m);
+  const isElectronics =
+    /phone|laptop|tablet|earphone|headphone|charger|cable|gadget|computer|computing|screen|\bit\b|tech|technology|ict|iphone|android|powerbank|usb/.test(
+      m
+    );
   const isBeauty =
-    /cream|lotion|makeup|hair|skin|skincare|nail|beauty|perfume|cologne|toothbrush|toothpaste|deodorant|soap|shampoo|conditioner|razor|shaving|floss|mouthwash|sanitary|tampon|\bpad\b|\bmask\b/.test(
+    /cream|lotion|makeup|hair|braid|braids|weave|wig|extension|skin|skincare|nail|beauty|perfume|cologne|toothbrush|toothpaste|deodorant|soap|shampoo|conditioner|razor|shaving|floss|mouthwash|sanitary|tampon|\bpad\b|\bmask\b|barber/.test(
       m
     );
   const isGrocery = /rice|oil|tomato|pepper|onion|grocery|provision/.test(m);
 
-  let category: ProductCategory | null = detectCategoryFromMessage(message);
+  const shopExpansion = expandShopSearchQuery(message);
+  let category: ProductCategory | null = detectCategoryFromMessage(message) ?? shopExpansion.categoryHint;
   if (!category) {
     if (isFood) category = "food_drinks";
     else if (isFashion) category = "fashion_accessories";
@@ -165,14 +155,17 @@ export function extractSearchIntent(message: string): AssistantSearchIntent {
     "carry",
     "stock"
   ]);
-  const keywords = m
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !stopWords.has(w))
-    .slice(0, 10);
+  const keywordSet = new Set(
+    m
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !stopWords.has(w))
+  );
+  for (const k of shopExpansion.queryTokens) keywordSet.add(k);
+  for (const k of shopExpansion.keywords.slice(0, 14)) keywordSet.add(k);
 
   return {
-    keywords,
+    keywords: [...keywordSet].slice(0, 16),
     category,
     subcategory: null,
     colors,
@@ -309,6 +302,8 @@ function partitionSearchTerms(intent: AssistantSearchIntent) {
 function enrichSearchTermsForIntent(intent: AssistantSearchIntent, terms: string[]): string[] {
   const joined = terms.join(" ").toLowerCase();
   const out = new Set(terms.map((s) => s.toLowerCase().trim()).filter(Boolean));
+  const expanded = expandShopSearchQuery(joined || terms.join(" "));
+  for (const k of expanded.keywords) out.add(k);
 
   if (/\bshoe|shoes|shoea|footwear|sneaker|trainer|canvas\b/.test(joined)) {
     for (const t of ["shoe", "shoes", "sneaker", "sneakers", "canvas", "trainer", "trainers", "footwear", "sandal"]) {
@@ -352,6 +347,19 @@ function enrichSearchTermsForIntent(intent: AssistantSearchIntent, terms: string
 function isExactProductMatch(p: Record<string, unknown>, intent: AssistantSearchIntent): boolean {
   const { allTerms, primary } = partitionSearchTerms(intent);
   if (!allTerms.length) return true;
+
+  const shopExpansion = expandShopSearchQuery(
+    [...intent.keywords, ...intent.colors, ...intent.brands].join(" ").trim() || primary.join(" ")
+  );
+  if (shopExpansion.isBroadCategory && matchesIntentCategory(p, intent)) {
+    return true;
+  }
+  if (shopExpansion.keywords.length > 0 && scoreProductMatch(p, shopExpansion.keywords) > 0) {
+    if (shopExpansion.categoryHint) {
+      return matchesIntentCategory(p, { ...intent, category: shopExpansion.categoryHint });
+    }
+    return true;
+  }
 
   const maskQuery = primary.some((t) => t === "mask" || t === "masks") || allTerms.some((t) => t === "mask" || t === "masks");
   if (maskQuery && scoreProductMatch(p, ["mask", "masks"]) === 0) return false;
@@ -433,7 +441,8 @@ async function queryCatalogRows(
         { "categoryAttributes.sizes": re },
         { "categoryAttributes.material": re },
         { "categoryAttributes.style": re },
-        { listingSearchAssist: re }
+        { listingSearchAssist: re },
+        { subcategory: re }
       ]
     })
       .sort({ updatedAt: -1 })
@@ -442,6 +451,23 @@ async function queryCatalogRows(
 
     const seen = new Set(rows.map((r) => String(r._id)));
     for (const r of regexRows) {
+      const id = String(r._id);
+      if (!seen.has(id)) {
+        rows.push(r);
+        seen.add(id);
+      }
+    }
+  }
+
+  const shopExpansion = expandShopSearchQuery(intent.keywords.join(" ") || searchTerms.slice(0, 6).join(" "));
+  const browseCat = intent.category ?? shopExpansion.categoryHint;
+  if (rows.length < limit && browseCat && shouldSupplementCategoryBrowse(shopExpansion, rows.length)) {
+    const browseRows = (await Product.find(base)
+      .sort({ updatedAt: -1 })
+      .limit(limit * 3)
+      .lean()) as unknown as Record<string, unknown>[];
+    const seen = new Set(rows.map((r) => String(r._id)));
+    for (const r of browseRows) {
       const id = String(r._id);
       if (!seen.has(id)) {
         rows.push(r);

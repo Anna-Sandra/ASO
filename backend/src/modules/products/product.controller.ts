@@ -22,7 +22,11 @@ import { assertProductBusinessLink, getSellerDefaultBusinessId } from "../busine
 import { Business, primaryProductCategoryForBusinessType, type BusinessType } from "../businesses/business.model";
 import { notifySaversPriceDrop } from "../notifications/notification.service";
 import { groqCompletion, groqConfigured } from "../assistant/groqChat";
-import { detectCategoryFromMessage } from "../assistant/assistantFallback";
+import {
+  detectCategoryFromMessage,
+  expandShopSearchQuery,
+  shouldSupplementCategoryBrowse
+} from "./shopSearchExpand";
 import { computeListingSearchAssist, isValidMarketplaceSubcategory } from "./productSubcategories";
 import {
   listingTextLooksLikeBabies,
@@ -127,45 +131,15 @@ function stripJsonMarkdownFences(s: string): string {
   return t;
 }
 
-/** Quick token split — used when Groq is off or returns junk. */
+/** Synonym expansion — used when Groq is off or returns junk. */
 function heuristicSearchKeywords(q: string): string[] {
-  const t = q.trim().toLowerCase().replace(/\s+/g, " ");
-  const stop = new Set([
-    "the",
-    "a",
-    "an",
-    "for",
-    "and",
-    "or",
-    "to",
-    "want",
-    "looking",
-    "cheap",
-    "buy",
-    "best",
-    "near",
-    "some",
-    "please",
-    "need",
-    "get",
-    "under",
-    "within",
-    "with",
-    "show",
-    "me",
-    "find"
-  ]);
-  const parts = t
-    .split(/\s+/)
-    .filter((w) => w.length >= 2 && !stop.has(w))
-    .slice(0, 6);
-  if (parts.length) return parts;
-  return t.length >= 2 ? [t.slice(0, 80)] : [];
+  return expandShopSearchQuery(q).keywords;
 }
 
 async function aiExpandShopSearchTerms(q: string): Promise<{ keywords: string[]; categoryHint: ProductCategory | null }> {
-  const fallbackKw = heuristicSearchKeywords(q);
-  const heuristicCat = detectCategoryFromMessage(q);
+  const expansion = expandShopSearchQuery(q);
+  const fallbackKw = expansion.keywords.length ? expansion.keywords : heuristicSearchKeywords(q);
+  const heuristicCat = expansion.categoryHint ?? detectCategoryFromMessage(q);
   if (!groqConfigured()) {
     return { keywords: fallbackKw, categoryHint: heuristicCat };
   }
@@ -196,8 +170,9 @@ Prefer category_hint null when unsure.`;
       const c = parsed.category_hint.trim();
       if ((PRODUCT_CATEGORIES as readonly string[]).includes(c)) categoryHint = c as ProductCategory;
     }
+    const merged = [...new Set([...keywords, ...fallbackKw])].slice(0, 20);
     return {
-      keywords: keywords.length ? keywords : fallbackKw,
+      keywords: merged.length ? merged : fallbackKw,
       categoryHint: categoryHint ?? heuristicCat
     };
   } catch {
@@ -242,7 +217,8 @@ async function fetchShopProductRows(opts: {
           { description: re },
           { tags: re },
           { aiTags: re },
-          { listingSearchAssist: re }
+          { listingSearchAssist: re },
+          { subcategory: re }
         ]
       };
     });
@@ -254,6 +230,40 @@ async function fetchShopProductRows(opts: {
     >[];
   }
   return rows;
+}
+
+function mergeProductRows(
+  primary: Record<string, unknown>[],
+  extra: Record<string, unknown>[],
+  cap: number
+): Record<string, unknown>[] {
+  const seen = new Set(primary.map((r) => String(r._id)));
+  const out = [...primary];
+  for (const r of extra) {
+    const id = String(r._id);
+    if (!seen.has(id)) {
+      out.push(r);
+      seen.add(id);
+    }
+    if (out.length >= cap) break;
+  }
+  return out.slice(0, cap);
+}
+
+async function supplementCategoryBrowse(
+  filter: Record<string, unknown>,
+  categoryHint: ProductCategory,
+  existing: Record<string, unknown>[],
+  cap: number
+): Promise<Record<string, unknown>[]> {
+  const browse = (await Product.find({
+    ...filter,
+    ...mongoCategoryBrowseFilter(categoryHint)
+  })
+    .sort({ updatedAt: -1 })
+    .limit(cap)
+    .lean()) as unknown as Record<string, unknown>[];
+  return mergeProductRows(existing, browse, cap);
 }
 
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
@@ -283,42 +293,18 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   let rows: Record<string, unknown>[];
   const searchStr = q.q?.trim();
   if (searchStr) {
-    try {
-      rows = (await Product.find({
-        ...filter,
-        $text: { $search: searchStr }
-      })
-        .sort({ score: { $meta: "textScore" } })
-        .lean()) as unknown as Record<string, unknown>[];
-    } catch {
-      rows = [];
+    const expansion = expandShopSearchQuery(searchStr);
+    const searchBlob = (expansion.keywords.length ? expansion.keywords.join(" ") : searchStr).slice(0, 400);
+    rows = await fetchShopProductRows({ filter, searchStr: searchBlob });
+    if (!rows.length && searchBlob !== searchStr) {
+      rows = await fetchShopProductRows({ filter, searchStr });
     }
-    if (!rows.length) {
-      const terms = searchStr
-        .split(/\s+/)
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0);
-      const termBlocks =
-        terms.length > 0
-          ? terms.map((term) => {
-              const re = new RegExp(escapeRegex(term), "i");
-              return {
-        $or: [
-          { name: re },
-          { description: re },
-          { tags: re },
-          { aiTags: re },
-          { listingSearchAssist: re }
-        ]
-      };
-            })
-          : [];
-      const altFilter =
-        termBlocks.length > 0 ? { ...filter, $and: termBlocks } : { ...filter };
-      rows = (await Product.find(altFilter).sort({ updatedAt: -1 }).limit(500).lean()) as unknown as Record<
-        string,
-        unknown
-      >[];
+    if (
+      expansion.categoryHint &&
+      !q.category &&
+      shouldSupplementCategoryBrowse(expansion, rows.length)
+    ) {
+      rows = await supplementCategoryBrowse(filter, expansion.categoryHint, rows, 500);
     }
   } else {
     rows = (await Product.find(filter).sort({ updatedAt: -1 }).lean()) as unknown as Record<string, unknown>[];
@@ -339,6 +325,7 @@ export const smartSearchProducts = asyncHandler(async (req: Request, res: Respon
 
   /** Only filter by category when the shopper picked a chip — never auto-apply AI/heuristic hints (hurts recall, e.g. shoes miscategorized). */
   const effectiveCategory: ProductCategory | undefined = body.category;
+  const expansion = expandShopSearchQuery(body.q);
   const { keywords, categoryHint } = await aiExpandShopSearchTerms(body.q);
   if (effectiveCategory) Object.assign(filter, mongoCategoryBrowseFilter(effectiveCategory));
   if (body.tag) filter.tags = body.tag;
@@ -349,12 +336,18 @@ export const smartSearchProducts = asyncHandler(async (req: Request, res: Respon
   if (body.maxPrice != null) priceCond.$lte = body.maxPrice;
   if (Object.keys(priceCond).length) filter.price = priceCond;
 
-  const uniqKw = [...new Set(keywords)].slice(0, 6);
-  const searchBlob = (uniqKw.length ? uniqKw.join(" ") : "").trim() || body.q.trim();
-
+  const mergedKw = [...new Set([...expansion.keywords, ...keywords])].slice(0, 20);
+  const searchBlob = (mergedKw.length ? mergedKw.join(" ") : "").trim() || body.q.trim();
   let rows = await fetchShopProductRows({ filter, searchStr: searchBlob.slice(0, 400) });
   if (!rows.length && searchBlob !== body.q.trim()) {
     rows = await fetchShopProductRows({ filter, searchStr: body.q.trim() });
+  }
+  if (
+    expansion.categoryHint &&
+    !effectiveCategory &&
+    shouldSupplementCategoryBrowse(expansion, rows.length)
+  ) {
+    rows = await supplementCategoryBrowse(filter, expansion.categoryHint, rows, SMART_SEARCH_ROWS_CAP);
   }
 
   const enriched = await enrichPublicProducts(rows as unknown as Record<string, unknown>[]);
