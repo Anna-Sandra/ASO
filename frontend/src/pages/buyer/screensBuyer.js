@@ -1197,71 +1197,11 @@ function browseMenuGridClassName() {
 
 function ShopHomeRecommendationRow({ row, className = "mb-7" }) {
   if (!row) return null;
-  const railRef = useRef(null);
-  const trackRef = useRef(null);
   const cards = Array.isArray(row.products) ? row.products : [];
-  const marqueeCards = cards.length > 1 ? [...cards, ...cards] : cards;
-
-  useEffect(() => {
-    const viewport = railRef.current;
-    const track = trackRef.current;
-    if (!viewport || !track || typeof window === "undefined") return undefined;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return undefined;
-    if (cards.length <= 1) return undefined;
-
-    let rafId = 0;
-    let paused = false;
-    const speed = 0.35;
-    let x = 0;
-
-    const tick = () => {
-      if (!track || paused) {
-        rafId = window.requestAnimationFrame(tick);
-        return;
-      }
-      const loopWidth = track.scrollWidth / 2;
-      if (!Number.isFinite(loopWidth) || loopWidth <= viewport.clientWidth + 4) {
-        rafId = window.requestAnimationFrame(tick);
-        return;
-      }
-
-      x += speed;
-      if (x >= loopWidth) {
-        x -= loopWidth;
-      }
-      track.style.transform = `translate3d(${-x}px,0,0)`;
-      rafId = window.requestAnimationFrame(tick);
-    };
-
-    const pause = () => {
-      paused = true;
-    };
-    const resume = () => {
-      paused = false;
-    };
-
-    viewport.addEventListener("mouseenter", pause);
-    viewport.addEventListener("mouseleave", resume);
-    viewport.addEventListener("touchstart", pause, { passive: true });
-    viewport.addEventListener("touchend", resume, { passive: true });
-    viewport.addEventListener("focusin", pause);
-    viewport.addEventListener("focusout", resume);
-
-    rafId = window.requestAnimationFrame(tick);
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      viewport.removeEventListener("mouseenter", pause);
-      viewport.removeEventListener("mouseleave", resume);
-      viewport.removeEventListener("touchstart", pause);
-      viewport.removeEventListener("touchend", resume);
-      viewport.removeEventListener("focusin", pause);
-      viewport.removeEventListener("focusout", resume);
-      if (track) track.style.transform = "translate3d(0,0,0)";
-    };
-  }, [row?.id, cards.length]);
+  if (!cards.length) return null;
 
   return h("div", { className, key: row.id || row.title }, [
-    h("div", { key: "hdr", className: "mb-2 flex items-center gap-2" }, [
+    h("div", { key: "hdr", className: "mb-3 flex items-center gap-2" }, [
       h(Sparkles, { key: "ic", className: "h-4 w-4 shrink-0 text-sky-500 dark:text-sky-400", "aria-hidden": true }),
       h(
         "h3",
@@ -1274,19 +1214,15 @@ function ShopHomeRecommendationRow({ row, className = "mb-7" }) {
     ]),
     h(
       "div",
-      {
-        key: "rail",
-        ref: railRef,
-        className: "no-scrollbar -mx-4 overflow-hidden px-4 pb-1 sm:-mx-0 sm:px-0"
-      },
-      h(
-        "div",
-        {
-          key: "track",
-          ref: trackRef,
-          className: "flex w-max gap-3 sm:gap-3.5 will-change-transform"
-        },
-        marqueeCards.map((p, idx) => h(MenuItemFeedCard, { key: `${p.id}-${idx}`, product: p, compact: true }))
+      { key: "grid", className: browseMenuGridClassName() },
+      cards.map((p) =>
+        h(MenuItemFeedCard, {
+          key: p.id,
+          product: p,
+          layout: "grid",
+          showSave: true,
+          showQuickAdd: true
+        })
       )
     )
   ]);
@@ -1318,7 +1254,7 @@ function ShopHomeRecommendationRails({ rows, loading, err }) {
   );
 }
 
-/** Horizontal discovery rail on product detail (matches shop recommendation poster tiles). */
+/** Discovery grid on product detail (“Explore your interests”, “More in …”). */
 function BuyerProductDiscoveryRail({ title, products }) {
   if (!Array.isArray(products) || products.length === 0) return null;
   return h("div", { className: "mt-12 border-t border-white/10 pt-10", "aria-label": title }, [
@@ -1339,12 +1275,16 @@ function BuyerProductDiscoveryRail({ title, products }) {
     ),
     h(
       "div",
-      {
-        key: "rail",
-        className:
-          "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:gap-3.5 sm:px-0"
-      },
-      products.map((p) => h(MenuItemFeedCard, { key: p.id, product: p }))
+      { key: "grid", className: browseMenuGridClassName() },
+      products.map((p) =>
+        h(MenuItemFeedCard, {
+          key: p.id,
+          product: p,
+          layout: "grid",
+          showSave: true,
+          showQuickAdd: true
+        })
+      )
     )
   ]);
 }

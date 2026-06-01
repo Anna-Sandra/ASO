@@ -32,6 +32,8 @@ export function MenuItemFeedCard({
   product,
   className = "",
   compact = false,
+  /** `grid` = full-width cell in a vertical catalog grid; default = narrow tile for horizontal rails */
+  layout = "rail",
   showRating = false,
   showSave = false,
   showQuickAdd = false,
@@ -74,9 +76,13 @@ export function MenuItemFeedCard({
   const hints = showDeliveryHints ? productTileDeliveryHints(product) : [];
 
   const tile =
-    compact
-      ? "aspect-[3/4] w-[min(30vw,7.25rem)] sm:min-w-0 sm:max-w-[7.25rem] sm:w-[7.25rem]"
-      : "aspect-[3/4] w-[min(36vw,8.75rem)] sm:min-w-0 sm:max-w-[9rem] sm:w-[9rem]";
+    layout === "grid"
+      ? "aspect-[3/4] w-full min-w-0"
+      : compact
+        ? "aspect-[3/4] w-[min(30vw,7.25rem)] sm:min-w-0 sm:max-w-[7.25rem] sm:w-[7.25rem]"
+        : "aspect-[3/4] w-[min(36vw,8.75rem)] sm:min-w-0 sm:max-w-[9rem] sm:w-[9rem]";
+  const tileLayout =
+    layout === "grid" ? "" : " shrink-0 snap-start";
 
   const ringHover = "hover:ring-violet-500/45 dark:hover:ring-violet-400/45";
 
@@ -99,7 +105,7 @@ export function MenuItemFeedCard({
     "article",
     {
       className:
-        `group relative ${tile} shrink-0 snap-start overflow-hidden rounded-lg bg-slate-300/50 ring-1 ring-slate-200/80 transition duration-200 hover:z-[1] hover:scale-[1.02] hover:shadow-md hover:shadow-slate-900/15 ${ringHover} dark:bg-night-800 dark:ring-white/10 dark:hover:shadow-black/40 ${className}`.trim()
+        `group relative ${tile}${tileLayout} overflow-hidden rounded-lg bg-slate-300/50 ring-1 ring-slate-200/80 transition duration-200 hover:z-[1] hover:scale-[1.02] hover:shadow-md hover:shadow-slate-900/15 ${ringHover} dark:bg-night-800 dark:ring-white/10 dark:hover:shadow-black/40 ${className}`.trim()
     },
     [
       hints.length

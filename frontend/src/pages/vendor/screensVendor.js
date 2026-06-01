@@ -10,7 +10,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Building2,
+  CreditCard,
   LayoutDashboard,
+  Smartphone,
   LineChart,
   LogOut,
   Menu,
@@ -866,7 +868,7 @@ export function VendorShell() {
                   h(
                     "p",
                     { key: "blurb", className: "min-w-0" },
-                    "You need to link your payment details in Store settings so Paystack can pay out your share when buyers use card or MoMo. Do this as soon as you can."
+                    "Link where you receive payouts (MoMo wallet or bank account) in Store settings. Buyers can pay by card or MoMo at checkout — that is separate from your payout link."
                   ),
                   h(
                     Link,
@@ -2845,6 +2847,16 @@ export function VendorAnalyticsPage() {
 
 export { VendorReviewsPage } from "./VendorReviewsPage";
 
+/** Paystack Ghana: sellers receive payouts to MoMo wallet or bank account — not to a payment card. */
+function payoutMethodTileClass(active) {
+  return [
+    "flex w-full flex-col items-start gap-2 rounded-2xl border p-4 text-left transition",
+    active
+      ? "border-violet-500 bg-violet-500/10 ring-2 ring-violet-500/40 dark:border-violet-400 dark:bg-violet-500/15"
+      : "border-slate-200/90 bg-white/60 hover:border-slate-300 dark:border-white/10 dark:bg-white/5 dark:hover:border-white/20"
+  ].join(" ");
+}
+
 export function VendorSettingsPage() {
   const nav = useNavigate();
   const { confirm, alert } = useNotice();
@@ -2864,6 +2876,8 @@ export function VendorSettingsPage() {
   const [photoLoading, setPhotoLoading] = useState(false);
   const photoFileRef = useRef(null);
   const [ghanaBanks, setGhanaBanks] = useState([]);
+  /** `mobile_money` | `ghipss` — chosen before picking institution from Paystack list */
+  const [payoutReceiveMethod, setPayoutReceiveMethod] = useState("");
   /** Format: `ghipss|CODE` or `mobile_money|CODE` (from Paystack list). */
   const [payoutBankKey, setPayoutBankKey] = useState("");
   const [banksLoading, setBanksLoading] = useState(false);
@@ -2962,9 +2976,32 @@ export function VendorSettingsPage() {
     const ch = user?.ghanaPayoutChannel;
     const code = (user && user.ghanaBankCode && String(user.ghanaBankCode).trim()) || "";
     if (ch && code && (ch === "ghipss" || ch === "mobile_money")) {
+      setPayoutReceiveMethod(ch);
       setPayoutBankKey(`${ch}|${code}`);
     }
   }, [user?.ghanaPayoutChannel, user?.ghanaBankCode]);
+
+  const payoutInstitutions = useMemo(() => {
+    if (!payoutReceiveMethod) return [];
+    return ghanaBanks.filter((b) => b.channel === payoutReceiveMethod);
+  }, [ghanaBanks, payoutReceiveMethod]);
+
+  const linkedPayoutLabel = useMemo(() => {
+    if (!user?.paystackPayoutRegistered) return null;
+    if (user.ghanaPayoutChannel === "mobile_money") {
+      const net = ghanaBanks.find(
+        (b) => b.channel === "mobile_money" && String(b.code) === String(user.ghanaBankCode || "")
+      );
+      return net?.name ? `Linked MoMo: ${net.name}` : "Linked: mobile money wallet";
+    }
+    if (user.ghanaPayoutChannel === "ghipss") {
+      const bank = ghanaBanks.find(
+        (b) => b.channel === "ghipss" && String(b.code) === String(user.ghanaBankCode || "")
+      );
+      return bank?.name ? `Linked bank: ${bank.name}` : "Linked: bank account";
+    }
+    return "Linked for Paystack payouts";
+  }, [user?.paystackPayoutRegistered, user?.ghanaPayoutChannel, user?.ghanaBankCode, ghanaBanks]);
 
   const onPickProfilePhoto = async (e) => {
     const f = e.target.files?.[0];
@@ -3038,15 +3075,27 @@ export function VendorSettingsPage() {
     setPayoutErr("");
     setPayoutOk("");
     if (!accessToken) return;
+    if (payoutReceiveMethod !== "ghipss" && payoutReceiveMethod !== "mobile_money") {
+      setPayoutErr("Choose how you want to receive payouts: mobile money (MoMo) or bank account.");
+      return;
+    }
     const p = payoutBankKey.indexOf("|");
     if (p < 1) {
-      setPayoutErr("Select a bank or mobile money provider from the list.");
+      setPayoutErr(
+        payoutReceiveMethod === "mobile_money"
+          ? "Select your MoMo network (e.g. MTN, Telecel, AirtelTigo)."
+          : "Select your bank from the list."
+      );
       return;
     }
     const recipientType = payoutBankKey.slice(0, p);
     const bankCode = payoutBankKey.slice(p + 1).trim();
     if (!bankCode || (recipientType !== "ghipss" && recipientType !== "mobile_money")) {
-      setPayoutErr("Select a valid payout method from the list.");
+      setPayoutErr("Select a valid institution from the list.");
+      return;
+    }
+    if (recipientType !== payoutReceiveMethod) {
+      setPayoutErr("The network or bank you selected does not match your payout type. Pick again.");
       return;
     }
     /* Same rules as server: MoMo wallet can live in “Mobile money number” or “Account number”; name can fall back to display name. */
@@ -3070,6 +3119,19 @@ export function VendorSettingsPage() {
     }
     setRegisteringPayout(true);
     try {
+      const profileRes = await apiFetch("/api/auth/profile", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: {
+          displayName: displayName.trim(),
+          phone: phone.trim(),
+          bankName: bankName.trim(),
+          bankAccountNumber: accountNum,
+          bankAccountName: accountHolder
+        }
+      });
+      if (profileRes?.user) setUser(profileRes.user);
+
       const data = await apiFetch("/api/vendor/paystack/payout-account", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -3089,7 +3151,14 @@ export function VendorSettingsPage() {
         if (me.user) setUser(me.user);
       }
     } catch (ex) {
-      setPayoutErr(apiErrorMessage(ex, "Could not link bank. Check details with your bank and try again."));
+      setPayoutErr(
+        apiErrorMessage(
+          ex,
+          recipientType === "mobile_money"
+            ? "Could not link MoMo wallet. Check the number and network, then try again."
+            : "Could not link bank account. Check details with your bank and try again."
+        )
+      );
     } finally {
       setRegisteringPayout(false);
     }
@@ -3168,13 +3237,13 @@ export function VendorSettingsPage() {
         h(
           "p",
           { className: "mb-4 text-sm text-slate-600 dark:text-slate-400" },
-          "Shoppers see your display name, phone, and email on product pages. The phone below is your buyer contact and your Paystack MoMo number. Bank details are for payouts only and are not shown on listings."
+          "Shoppers see your display name, phone, and email on product pages. Payout account details (MoMo or bank) are configured in the Paystack section below — not shown on listings."
         ),
         h(Field, { label: "Display name" }, h(TextInput, { value: displayName, onChange: (e) => setDisplayName(e.target.value) })),
         h(Field, { label: "Contact email" }, h(TextInput, { type: "email", value: email, disabled: true })),
         h(
           Field,
-          { label: "Phone number (shown to buyers)" },
+          { label: "Phone number (shown to buyers for MoMo / calls)" },
           h(TextInput, {
             type: "tel",
             value: phone,
@@ -3182,9 +3251,6 @@ export function VendorSettingsPage() {
             placeholder: "e.g. 0241234567"
           })
         ),
-        h(Field, { label: "Bank name" }, h(TextInput, { value: bankName, onChange: (e) => setBankName(e.target.value) })),
-        h(Field, { label: "Account name" }, h(TextInput, { value: bankAccountName, onChange: (e) => setBankAccountName(e.target.value) })),
-        h(Field, { label: "Account number" }, h(TextInput, { value: bankAccountNumber, onChange: (e) => setBankAccountNumber(e.target.value) })),
         err
           ? h(InlineNotice, { key: "err", variant: "error", className: "mt-2", onDismiss: () => setErr("") }, err)
           : null,
@@ -3230,23 +3296,144 @@ export function VendorSettingsPage() {
           ])
         : null,
       h(GlassPanel, { id: "vendor-paystack-payouts", className: "!scroll-mt-28" }, [
-        h("h2", { className: "mb-2 text-lg font-semibold text-slate-900 dark:text-white" }, "Paystack — automatic payouts (bank or MoMo)"),
+        h("h2", { className: "mb-2 text-lg font-semibold text-slate-900 dark:text-white" }, "Paystack — where you receive payouts"),
         h(
           "p",
           { className: "mb-3 text-sm text-slate-600 dark:text-slate-400" },
-          "When a buyer pays with Paystack, the platform can send your share to a Ghanaian bank or mobile money wallet (per Paystack’s Ghana transfer rules). You set this up once. Auto-payouts also require the server option and a valid Paystack key."
+          "When a buyer pays on SHOPIQGH (card or MoMo at checkout), Paystack can send your seller share to you. Choose where you want to receive that money — your MoMo wallet or a bank account. You do not link a debit/credit card here; cards are only how buyers pay."
         ),
-        user?.paystackPayoutRegistered
-          ? h(
-              InlineNotice,
-              { key: "pout-ok", variant: "success", className: "mb-3" },
-              "This account is registered for automatic Paystack payouts. Paystack uses the account number and institution you select below."
+        h(
+          InlineNotice,
+          { key: "card-info", variant: "info", className: "mb-4" },
+          h("div", { className: "space-y-1 text-sm" }, [
+            h("p", { key: "c1", className: "font-medium" }, "Buyer card payments vs your payout account"),
+            h(
+              "p",
+              { key: "c2" },
+              "Shoppers may pay with Visa/Mastercard or MoMo at checkout. That is separate from this step. Below you link the MoMo wallet or bank account where Paystack should send your earnings."
             )
+          ])
+        ),
+        user?.paystackPayoutRegistered && linkedPayoutLabel
+          ? h(InlineNotice, { key: "pout-ok", variant: "success", className: "mb-3" }, linkedPayoutLabel)
           : h(
               "p",
               { className: "mb-3 text-sm font-medium text-amber-800 dark:text-amber-200" },
-              "Not registered yet — for MoMo, your wallet can be under “Mobile money number” or “Account number”; for banks, use account name and number. Then pick the bank or MoMo network and link."
+              "Not linked yet — choose MoMo or bank, enter your details, select the network or bank, then link."
             ),
+        h("p", { key: "step1", className: "mb-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Step 1 — How you receive payouts"),
+        h(
+          "div",
+          { key: "method-grid", className: "mb-4 grid gap-3 sm:grid-cols-2" },
+          [
+            h(
+              "button",
+              {
+                key: "m-momo",
+                type: "button",
+                className: payoutMethodTileClass(payoutReceiveMethod === "mobile_money"),
+                onClick: () => {
+                  setPayoutReceiveMethod("mobile_money");
+                  setPayoutBankKey("");
+                  setPayoutErr("");
+                }
+              },
+              [
+                h(Smartphone, { className: "h-6 w-6 text-violet-600 dark:text-violet-400", "aria-hidden": true }),
+                h("span", { className: "font-semibold text-slate-900 dark:text-white" }, "Mobile money (MoMo)"),
+                h(
+                  "span",
+                  { className: "text-xs text-slate-600 dark:text-slate-400" },
+                  "Receive to your MTN, Telecel, or AirtelTigo wallet — the number registered on that line."
+                )
+              ]
+            ),
+            h(
+              "button",
+              {
+                key: "m-bank",
+                type: "button",
+                className: payoutMethodTileClass(payoutReceiveMethod === "ghipss"),
+                onClick: () => {
+                  setPayoutReceiveMethod("ghipss");
+                  setPayoutBankKey("");
+                  setPayoutErr("");
+                }
+              },
+              [
+                h(Building2, { className: "h-6 w-6 text-violet-600 dark:text-violet-400", "aria-hidden": true }),
+                h("span", { className: "font-semibold text-slate-900 dark:text-white" }, "Bank account"),
+                h(
+                  "span",
+                  { className: "text-xs text-slate-600 dark:text-slate-400" },
+                  "Receive to a Ghana bank account (savings or current). This is not a payment card."
+                )
+              ]
+            )
+          ]
+        ),
+        h(
+          "div",
+          {
+            key: "card-note",
+            className:
+              "mb-4 flex gap-3 rounded-2xl border border-dashed border-slate-300/80 bg-slate-50/80 px-4 py-3 dark:border-white/15 dark:bg-white/5"
+          },
+          [
+            h(CreditCard, { className: "mt-0.5 h-5 w-5 shrink-0 text-slate-400", "aria-hidden": true }),
+            h("div", { className: "min-w-0 text-xs text-slate-600 dark:text-slate-400" }, [
+              h("p", { key: "t", className: "font-semibold text-slate-800 dark:text-slate-200" }, "Card (checkout only — do not link here)"),
+              h(
+                "p",
+                { key: "d", className: "mt-1" },
+                "Buyers can pay with card at checkout. You never link your own card for payouts — only MoMo or bank above."
+              )
+            ])
+          ]
+        ),
+        payoutReceiveMethod === "mobile_money" || payoutReceiveMethod === "ghipss"
+          ? h("div", { key: "step2", className: "mb-4 space-y-3 border-t border-white/10 pt-4" }, [
+              h(
+                "p",
+                { className: "text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+                payoutReceiveMethod === "mobile_money" ? "Step 2 — MoMo wallet details" : "Step 2 — Bank account details"
+              ),
+              payoutReceiveMethod === "mobile_money"
+                ? h(Field, { label: "Name on MoMo wallet" }, h(TextInput, {
+                    value: bankAccountName,
+                    onChange: (e) => setBankAccountName(e.target.value),
+                    placeholder: "As registered on the wallet"
+                  }))
+                : h(Field, { label: "Account holder name" }, h(TextInput, {
+                    value: bankAccountName,
+                    onChange: (e) => setBankAccountName(e.target.value),
+                    placeholder: "Name on the bank account"
+                  })),
+              payoutReceiveMethod === "mobile_money"
+                ? h(Field, { label: "MoMo wallet number" }, h(TextInput, {
+                    value: bankAccountNumber,
+                    onChange: (e) => setBankAccountNumber(e.target.value),
+                    placeholder: "e.g. 0241234567 — or use phone above"
+                  }))
+                : [
+                    h(Field, { key: "bn", label: "Bank name (optional note)" }, h(TextInput, {
+                      value: bankName,
+                      onChange: (e) => setBankName(e.target.value),
+                      placeholder: "e.g. GCB, Ecobank"
+                    })),
+                    h(Field, { key: "an", label: "Bank account number" }, h(TextInput, {
+                      value: bankAccountNumber,
+                      onChange: (e) => setBankAccountNumber(e.target.value),
+                      placeholder: "Account number"
+                    }))
+                  ],
+              h(
+                "p",
+                { key: "save-hint", className: "text-xs text-slate-500 dark:text-slate-400" },
+                "These details are saved automatically when you tap the link button below."
+              )
+            ].flat())
+          : null,
         banksLoadErr
           ? h(InlineNotice, { key: "banks-err", variant: "error", className: "mb-3", onDismiss: () => setBanksLoadErr("") }, banksLoadErr)
           : null,
@@ -3257,59 +3444,73 @@ export function VendorSettingsPage() {
               "No banks or mobile money networks were returned from Paystack. Check that PAYSTACK_SECRET_KEY is set on the server and that your Paystack business supports Ghana transfers, then refresh this page."
             )
           : null,
-        h(Field, { label: "Payout destination (Ghana — Paystack list)" }, [
-          banksLoading
-            ? h("p", { className: "text-sm text-slate-500" }, "Loading banks and mobile money networks…")
-            : h(
-                "select",
-                {
-                  className:
-                    "w-full rounded-xl border border-slate-300/70 bg-white/80 px-3 py-2.5 text-sm text-slate-900 dark:border-white/10 dark:bg-night-900/80 dark:text-slate-100",
-                  value: payoutBankKey,
-                  onChange: (e) => setPayoutBankKey(e.target.value)
-                },
-                [
-                  h("option", { value: "" }, "Select bank or mobile money…"),
-                  ghanaBanks.filter((b) => b.channel === "ghipss").length
-                    ? h("optgroup", { key: "og-b", label: "Banks" }, [
-                        ...ghanaBanks
-                          .filter((b) => b.channel === "ghipss")
-                          .map((b) =>
-                            h("option", { key: `g-${b.code}`, value: `ghipss|${b.code}` }, b.name || b.code)
-                          )
-                      ])
-                    : null,
-                  ghanaBanks.filter((b) => b.channel === "mobile_money").length
-                    ? h("optgroup", { key: "og-m", label: "Mobile money" }, [
-                        ...ghanaBanks
-                          .filter((b) => b.channel === "mobile_money")
-                          .map((b) =>
-                            h("option", { key: `m-${b.code}`, value: `mobile_money|${b.code}` }, b.name || b.code)
-                          )
-                      ])
-                    : null
-                ].filter(Boolean)
-              )
-        ]),
-        payoutBankKey.startsWith("mobile_money|")
+        payoutReceiveMethod
+          ? h(Field, {
+              label:
+                payoutReceiveMethod === "mobile_money"
+                  ? "Step 3 — MoMo network (Paystack list)"
+                  : "Step 3 — Bank (Paystack list)"
+            }, [
+              banksLoading
+                ? h("p", { className: "text-sm text-slate-500" }, "Loading networks…")
+                : h(
+                    "select",
+                    {
+                      className:
+                        "w-full rounded-xl border border-slate-300/70 bg-white/80 px-3 py-2.5 text-sm text-slate-900 dark:border-white/10 dark:bg-night-900/80 dark:text-slate-100",
+                      value: payoutBankKey,
+                      onChange: (e) => setPayoutBankKey(e.target.value)
+                    },
+                    [
+                      h(
+                        "option",
+                        { value: "" },
+                        payoutReceiveMethod === "mobile_money" ? "Select MoMo network…" : "Select your bank…"
+                      ),
+                      ...payoutInstitutions.map((b) =>
+                        h(
+                          "option",
+                          { key: `${b.channel}-${b.code}`, value: `${b.channel}|${b.code}` },
+                          b.name || b.code
+                        )
+                      )
+                    ]
+                  )
+            ])
+          : null,
+        payoutReceiveMethod === "mobile_money"
           ? h(
               "p",
               { key: "momo-hint", className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
-              "For mobile money, use the wallet number as “Account number” and the name registered on that MoMo line as “Account name” above."
+              "We will link this MoMo wallet with Paystack so your share of card and MoMo checkout payments can be sent here (when auto-payout is enabled)."
             )
-          : null,
+          : payoutReceiveMethod === "ghipss"
+            ? h(
+                "p",
+                { key: "bank-hint", className: "mt-2 text-xs text-slate-500 dark:text-slate-400" },
+                "We will link this bank account with Paystack so your share of checkout payments can be sent here (when auto-payout is enabled)."
+              )
+            : null,
         payoutErr
           ? h(InlineNotice, { key: "pout-err", variant: "error", className: "mt-2", onDismiss: () => setPayoutErr("") }, payoutErr)
           : null,
         payoutOk
           ? h(InlineNotice, { key: "pout-done", variant: "success", className: "mt-2", onDismiss: () => setPayoutOk("") }, payoutOk)
           : null,
-        h(Button, {
-          className: "mt-3 w-full sm:w-auto",
-          type: "button",
-          loading: registeringPayout,
-          onClick: registerPaystackPayout
-        }, user?.paystackPayoutRegistered ? "Update bank for Paystack payouts" : "Link bank for Paystack payouts")
+        payoutReceiveMethod
+          ? h(Button, {
+              className: "mt-3 w-full sm:w-auto",
+              type: "button",
+              loading: registeringPayout,
+              onClick: registerPaystackPayout
+            }, user?.paystackPayoutRegistered
+              ? payoutReceiveMethod === "mobile_money"
+                ? "Update linked MoMo wallet"
+                : "Update linked bank account"
+              : payoutReceiveMethod === "mobile_money"
+                ? "Link MoMo wallet for payouts"
+                : "Link bank account for payouts")
+          : null
       ]),
       h(GlassPanel, { className: "!border-rose-500/30 !bg-rose-500/[0.05]" }, [
         h("h2", { className: "mb-2 flex items-center gap-2 font-semibold text-rose-700 dark:text-rose-300" }, [
@@ -3385,10 +3586,32 @@ export function VendorProfilePage() {
     h("dl", { className: "mt-6 space-y-3 text-sm" }, [
       h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Email"), h("dd", { className: "font-medium text-slate-900 dark:text-white" }, u?.email || "—")]),
       h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Display name"), h("dd", { className: "font-medium" }, u?.displayName || "—")]),
-      h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "MoMo (payments)"), h("dd", { className: "font-mono font-medium" }, u?.phone || "—")]),
-      h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Bank"), h("dd", { className: "font-medium" }, u?.bankName || "—")]),
-      h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Account name"), h("dd", { className: "font-medium" }, u?.bankAccountName || "—")]),
-      h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Account no."), h("dd", { className: "font-medium" }, u?.bankAccountNumber || "—")]),
+      h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Buyer contact phone"), h("dd", { className: "font-mono font-medium" }, u?.phone || "—")]),
+      h("div", {}, [
+        h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Payout method (Paystack)"),
+        h(
+          "dd",
+          { className: "font-medium" },
+          u?.ghanaPayoutChannel === "mobile_money"
+            ? "Mobile money (MoMo)"
+            : u?.ghanaPayoutChannel === "ghipss"
+              ? "Bank account"
+              : u?.paystackPayoutRegistered
+                ? "Linked"
+                : "—"
+        )
+      ]),
+      u?.ghanaPayoutChannel === "ghipss"
+        ? h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Bank (note)"), h("dd", { className: "font-medium" }, u?.bankName || "—")])
+        : null,
+      h("div", {}, [
+        h("dt", { className: "text-slate-500 dark:text-slate-400" }, u?.ghanaPayoutChannel === "mobile_money" ? "MoMo wallet name" : "Account name"),
+        h("dd", { className: "font-medium" }, u?.bankAccountName || "—")
+      ]),
+      h("div", {}, [
+        h("dt", { className: "text-slate-500 dark:text-slate-400" }, u?.ghanaPayoutChannel === "mobile_money" ? "MoMo wallet number" : "Account number"),
+        h("dd", { className: "font-medium font-mono" }, u?.bankAccountNumber || "—")
+      ]),
       h("div", {}, [h("dt", { className: "text-slate-500 dark:text-slate-400" }, "Role"), h("dd", { className: "font-medium" }, u?.role || "—")])
     ]),
     h(Link, { to: "/vendor/settings" }, h(Button, { variant: "ghost", className: "mt-6" }, "Edit in settings"))
