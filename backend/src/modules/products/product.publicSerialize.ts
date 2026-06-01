@@ -4,10 +4,12 @@ import { Business } from "../businesses/business.model";
 import { buildSellerPublicPhoneMap } from "../../utils/sellerContactPhone";
 import { Review } from "../reviews/review.model";
 import { getEffectiveCommissionPercent } from "../platform/platformSettings.service";
+import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import type { ProductCategory } from "./product.model";
 import { marketplaceSubcategoryLabel } from "./productSubcategories";
 import { attachDealPricingToPublicProducts } from "../promotions/promotionDeal.service";
+import { getVendorBillingSnapshot } from "../vendorSubscription/vendorSubscription.service";
 
 export type PublicStoreRef = {
   id: string;
@@ -115,11 +117,33 @@ export async function attachSellerPayments(
   const users = await User.find({
     _id: { $in: sellerIds.map((id) => new mongoose.Types.ObjectId(id)) }
   })
-    .select("_id displayName phone email bankName bankAccountNumber bankAccountName")
+    .select(
+      "_id role displayName phone email bankName bankAccountNumber bankAccountName vendorSubscriptionStatus vendorSubscriptionExempt vendorSubscriptionExpiresAt"
+    )
     .lean();
   const byId = new Map(users.map((u) => [u._id.toString(), u]));
+
+  let visibleProducts = products;
+  if (!includePayoutDetails) {
+    const settings = await getOrCreateSettings();
+    const blockedSellerIds = new Set(
+      users
+        .filter((u) => String((u as { role?: string }).role || "") === "seller")
+        .filter((u) => !getVendorBillingSnapshot(u, settings).canOperate)
+        .map((u) => u._id.toString())
+    );
+    if (blockedSellerIds.size > 0) {
+      visibleProducts = products.filter((p) => {
+        const raw = p.sellerId;
+        const sid = raw instanceof mongoose.Types.ObjectId ? raw.toString() : raw != null ? String(raw) : "";
+        return sid ? !blockedSellerIds.has(sid) : true;
+      });
+      if (!visibleProducts.length) return [];
+    }
+  }
+
   const businessIdsBySeller = new Map<string, string>();
-  for (const p of products) {
+  for (const p of visibleProducts) {
     const raw = p.sellerId;
     const sellerKey =
       raw instanceof mongoose.Types.ObjectId
@@ -139,7 +163,7 @@ export async function attachSellerPayments(
   }
   const sellerPhones = await buildSellerPublicPhoneMap(sellerIds, byId, businessIdsBySeller);
 
-  return products.map((p) => {
+  return visibleProducts.map((p) => {
     const base = toPublicProduct(p);
     const raw = p.sellerId;
     const sellerKey =

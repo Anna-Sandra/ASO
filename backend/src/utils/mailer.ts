@@ -7,6 +7,15 @@ import { parseEmailFrom } from "./emailFrom";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let cached: Transporter<any> | null = null;
 
+function maskEmailAddress(value: string): string {
+  const v = String(value || "").trim().toLowerCase();
+  if (!v || !v.includes("@")) return "(unknown)";
+  const [local, domain] = v.split("@");
+  if (!local || !domain) return "(unknown)";
+  const localMasked = local.length <= 2 ? `${local[0] || "*"}*` : `${local[0]}***${local[local.length - 1]}`;
+  return `${localMasked}@${domain}`;
+}
+
 function brevoSender() {
   const email = (env.BREVO_SENDER_EMAIL || parseEmailFrom(env.EMAIL_FROM).email).trim().toLowerCase();
   const name = (env.BREVO_SENDER_NAME || parseEmailFrom(env.EMAIL_FROM).name).trim() || "SHOPIQGH";
@@ -62,6 +71,23 @@ export type SendEmailResult =
   | { ok: true }
   | { ok: false; reason: string };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isLikelyTransientBrevoFailure(reason: string): boolean {
+  const r = String(reason || "").toLowerCase();
+  return (
+    r.includes("timed out") ||
+    r.includes("fetch failed") ||
+    r.includes("network") ||
+    r.includes("econnreset") ||
+    r.includes("503") ||
+    r.includes("502") ||
+    r.includes("504")
+  );
+}
+
 async function sendViaBrevo(to: string, subject: string, html: string): Promise<SendEmailResult> {
   const apiKey = (env.BREVO_API_KEY || "").trim();
   if (!apiKey) return { ok: false, reason: "Brevo API key not set" };
@@ -74,47 +100,61 @@ async function sendViaBrevo(to: string, subject: string, html: string): Promise<
     };
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: {
-        "api-key": apiKey,
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify({
-        sender: { name: sender.name, email: sender.email },
-        to: [{ email: to.trim().toLowerCase() }],
-        subject,
-        htmlContent: html,
-        textContent: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-      }),
-      signal: controller.signal
-    });
-    const body = (await res.json().catch(() => ({}))) as { message?: string; code?: string };
-    if (!res.ok) {
-      const msg = body.message || body.code || `Brevo HTTP ${res.status}`;
+  const maxAttempts = 2;
+  let lastFailure = "Brevo request failed";
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          "api-key": apiKey,
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify({
+          sender: { name: sender.name, email: sender.email },
+          to: [{ email: to.trim().toLowerCase() }],
+          subject,
+          htmlContent: html,
+          textContent: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+        }),
+        signal: controller.signal
+      });
+      const body = (await res.json().catch(() => ({}))) as { message?: string; code?: string; messageId?: string };
+      if (!res.ok) {
+        const msg = body.message || body.code || `Brevo HTTP ${res.status}`;
+        lastFailure = msg;
+        if (attempt < maxAttempts && isLikelyTransientBrevoFailure(msg)) {
+          await sleep(600);
+          continue;
+        }
+        return { ok: false, reason: msg };
+      }
+      if (body.messageId) {
+        // eslint-disable-next-line no-console
+        console.log("[email:brevo:messageId]", body.messageId);
+      }
+      return { ok: true };
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error && err.name === "AbortError"
+          ? "Brevo request timed out"
+          : err instanceof Error
+            ? err.message
+            : "Brevo request failed";
+      lastFailure = msg;
+      if (attempt < maxAttempts && isLikelyTransientBrevoFailure(msg)) {
+        await sleep(600);
+        continue;
+      }
       return { ok: false, reason: msg };
+    } finally {
+      clearTimeout(timer);
     }
-    const messageId = (body as { messageId?: string }).messageId;
-    if (messageId) {
-      // eslint-disable-next-line no-console
-      console.log("[email:brevo:messageId]", messageId);
-    }
-    return { ok: true };
-  } catch (err: unknown) {
-    const msg =
-      err instanceof Error && err.name === "AbortError"
-        ? "Brevo request timed out"
-        : err instanceof Error
-          ? err.message
-          : "Brevo request failed";
-    return { ok: false, reason: msg };
-  } finally {
-    clearTimeout(timer);
   }
+  return { ok: false, reason: lastFailure };
 }
 
 async function recordEmailLog(entry: {
@@ -142,6 +182,7 @@ export async function sendEmail(
   meta?: SendEmailMeta
 ): Promise<SendEmailResult> {
   const category = (meta?.category || "general").slice(0, 80);
+  const maskedTo = maskEmailAddress(to);
 
   if ((env.BREVO_API_KEY || "").trim()) {
     const result = await sendViaBrevo(to, subject, html);
@@ -153,7 +194,7 @@ export async function sendEmail(
         status: "sent"
       });
       // eslint-disable-next-line no-console
-      console.log("[email:sent:brevo]", { to, subject });
+      console.log("[email:sent:brevo]", { to: maskedTo, category });
       return result;
     }
     await recordEmailLog({
@@ -164,7 +205,7 @@ export async function sendEmail(
       errorMessage: result.reason.slice(0, 2000)
     });
     // eslint-disable-next-line no-console
-    console.error("[email:failed:brevo]", { to, subject, error: result.reason });
+    console.error("[email:failed:brevo]", { to: maskedTo, category, error: result.reason });
     return result;
   }
 
@@ -185,9 +226,8 @@ export async function sendEmail(
     });
     // eslint-disable-next-line no-console
     console.log("[email:not-configured]", {
-      to,
-      subject,
-      html: html.replace(/\s+/g, " ").slice(0, 200)
+      to: maskedTo,
+      category
     });
     return { ok: false, reason };
   }
@@ -206,7 +246,7 @@ export async function sendEmail(
       status: "sent"
     });
     // eslint-disable-next-line no-console
-    console.log("[email:sent]", { to, subject });
+    console.log("[email:sent]", { to: maskedTo, category });
     return { ok: true };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "sendMail failed";
@@ -218,7 +258,7 @@ export async function sendEmail(
       errorMessage: msg.slice(0, 2000)
     });
     // eslint-disable-next-line no-console
-    console.error("[email:failed]", { to, subject, error: msg });
+    console.error("[email:failed]", { to: maskedTo, category, error: msg });
     return { ok: false, reason: msg };
   }
 }

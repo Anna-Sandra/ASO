@@ -38,6 +38,7 @@ import {
   signBootstrapRefreshToken,
   tryVerifyBootstrapRefreshToken
 } from "./jwt";
+import { issueCsrfToken } from "../../middleware/csrf";
 
 type LeanUser = {
   _id: mongoose.Types.ObjectId;
@@ -314,6 +315,11 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     requiresEmailVerification: shouldEmailVerify,
     ...(!canSendEmail && shouldEmailVerify && env.NODE_ENV !== "production" ? { devOtp } : {})
   });
+});
+
+export const csrfToken = asyncHandler(async (_req: Request, res: Response) => {
+  const token = issueCsrfToken(res);
+  res.json({ ok: true, message: "CSRF token issued.", csrfToken: token });
 });
 
 export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {

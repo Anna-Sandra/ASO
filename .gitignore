@@ -1,0 +1,16 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+
+# Env secrets (also in backend/.gitignore and frontend/.gitignore)
+.env
+.env.*
+!.env.example
+
+# Backend compile output (backend/.gitignore also lists dist)
+backend/dist/
+
+# Frontend build & tooling cache (frontend/.gitignore also lists /build)
+frontend/build/
+frontend/node_modules/.cache/

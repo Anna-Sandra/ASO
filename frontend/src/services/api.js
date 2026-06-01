@@ -24,13 +24,6 @@ function mergeAdminHeaders(path, headers) {
   }
 }
 
-if (process.env.NODE_ENV === "development" && typeof window !== "undefined" && !API_BASE) {
-  console.warn(
-    "[SHOPIQGH] REACT_APP_API_URL is empty — `/api/*` will use the dev-server proxy (see setupProxy.js → :4000). " +
-      "Set REACT_APP_API_URL only if you want the browser to call the API host directly."
-  );
-}
-
 export function getApiBase() {
   return API_BASE;
 }
@@ -73,14 +66,37 @@ function shouldSkip401Refresh(path) {
   return p === "/api/auth/refresh" || p === "/api/auth/login" || p === "/api/auth/register" || p === "/api/auth/logout";
 }
 
+function needsCsrf(path, method = "GET") {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const m = String(method || "GET").toUpperCase();
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(m)) return false;
+  return p === "/api/auth/refresh" || p === "/api/auth/logout";
+}
+
+async function ensureCsrfToken() {
+  const existing = storageGet(StorageKeys.CSRF_TOKEN);
+  if (existing) return existing;
+  const res = await fetch(`${API_BASE}/api/auth/csrf`, {
+    method: "GET",
+    credentials: "include"
+  });
+  const data = await parseResponse(res);
+  if (!res.ok || !data?.csrfToken) {
+    throw new Error("Could not initialize session security token.");
+  }
+  storageSet(StorageKeys.CSRF_TOKEN, data.csrfToken);
+  return data.csrfToken;
+}
+
 async function refreshAccessToken() {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
     const storedRefresh = storageGet(StorageKeys.REFRESH_TOKEN);
     const url = `${API_BASE}/api/auth/refresh`;
+    const csrfToken = await ensureCsrfToken();
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
       body: JSON.stringify(storedRefresh ? { refreshToken: storedRefresh } : {}),
       credentials: "include"
     });
@@ -88,6 +104,9 @@ async function refreshAccessToken() {
     if (!res.ok || !data?.accessToken) {
       storageRemove(StorageKeys.ACCESS_TOKEN);
       storageRemove(StorageKeys.REFRESH_TOKEN);
+      if (res.status === 403 && data?.error?.code === "CSRF_CHECK_FAILED") {
+        storageRemove(StorageKeys.CSRF_TOKEN);
+      }
       emitTokenUpdate(null);
       return null;
     }
@@ -146,6 +165,10 @@ export async function apiFetch(path, opts = {}) {
   }
   if (opts.json !== undefined) {
     headers.set("Content-Type", "application/json");
+  }
+  if (needsCsrf(path, opts.method || "GET")) {
+    const csrfToken = await ensureCsrfToken();
+    headers.set("X-CSRF-Token", csrfToken);
   }
   const init = {
     ...opts,

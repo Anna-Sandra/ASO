@@ -13,6 +13,7 @@ export type VendorBillingSnapshot = {
   trialEndsAt: string | null;
   subscriptionExpiresAt: string | null;
   daysLeftInTrial: number | null;
+  daysSinceExpiry: number | null;
   priceGhs: number;
   periodMonths: number;
   status: VendorSubscriptionStatus;
@@ -101,6 +102,7 @@ export function getVendorBillingSnapshot(
       trialEndsAt,
       subscriptionExpiresAt: subExp,
       daysLeftInTrial: null,
+      daysSinceExpiry: null,
       priceGhs,
       periodMonths,
       status,
@@ -121,6 +123,7 @@ export function getVendorBillingSnapshot(
       trialEndsAt,
       subscriptionExpiresAt: subExp,
       daysLeftInTrial: launchTrial && trialEnds ? Math.max(0, Math.ceil((trialEnds.getTime() - now.getTime()) / 86400000)) : null,
+      daysSinceExpiry: null,
       priceGhs,
       periodMonths,
       status: exempt ? "active" : status,
@@ -143,6 +146,7 @@ export function getVendorBillingSnapshot(
       trialEndsAt,
       subscriptionExpiresAt: null,
       daysLeftInTrial: daysLeft,
+      daysSinceExpiry: null,
       priceGhs,
       periodMonths,
       status: status === "none" ? "trialing" : status,
@@ -150,6 +154,12 @@ export function getVendorBillingSnapshot(
       message: `Free seller trial — ${daysLeft} day${daysLeft === 1 ? "" : "s"} left until the platform seller fee applies.`
     };
   }
+
+  const expiryBase = subExp ? new Date(subExp) : trialEnds;
+  const daysSinceExpiry =
+    expiryBase && !Number.isNaN(expiryBase.getTime())
+      ? Math.max(0, Math.ceil((now.getTime() - expiryBase.getTime()) / 86400000))
+      : null;
 
   return {
     phase: "payment_required",
@@ -159,11 +169,15 @@ export function getVendorBillingSnapshot(
     trialEndsAt,
     subscriptionExpiresAt: subExp,
     daysLeftInTrial: 0,
+    daysSinceExpiry,
     priceGhs,
     periodMonths,
     status: status === "trialing" ? "expired" : status === "none" ? "expired" : status,
     exempt,
-    message: `Pay the seller platform fee (GHS ${priceGhs.toFixed(2)} / ${periodMonths} mo.) to add or edit listings and stores.`
+    message:
+      daysSinceExpiry != null
+        ? `Your seller subscription expired ${daysSinceExpiry} day${daysSinceExpiry === 1 ? "" : "s"} ago. Pay GHS ${priceGhs.toFixed(2)} / ${periodMonths} mo. to reactivate your store and listings.`
+        : `Pay the seller platform fee (GHS ${priceGhs.toFixed(2)} / ${periodMonths} mo.) to add or edit listings and stores.`
   };
 }
 

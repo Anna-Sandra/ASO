@@ -4,6 +4,7 @@ import { env } from "../../config/env";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { User } from "../auth/user.model";
+import { fireNotification } from "../notifications/notification.service";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { paystackGet, paystackPost } from "../payments/paystackClient";
 import {
@@ -25,6 +26,28 @@ type PaystackVerifyData = {
   metadata?: { type?: string; userId?: string };
 };
 
+function subscriptionAlreadyActive(user: {
+  vendorSubscriptionStatus?: string;
+  vendorSubscriptionExpiresAt?: Date | null;
+}): boolean {
+  if (user.vendorSubscriptionStatus !== "active") return false;
+  const exp = user.vendorSubscriptionExpiresAt;
+  if (!(exp instanceof Date) || Number.isNaN(exp.getTime())) return true;
+  return exp.getTime() > Date.now();
+}
+
+async function notifyAdminsSellerSubscriptionPaid(user: { _id: mongoose.Types.ObjectId; displayName?: string; email?: string }) {
+  const admins = await User.find({ role: "admin", accountStatus: "active" }).select("_id").lean();
+  const sellerLabel = String(user.displayName || user.email || user._id.toString()).trim();
+  for (const admin of admins) {
+    fireNotification(admin._id, {
+      type: "listing_decision",
+      title: "Seller subscription paid",
+      message: `${sellerLabel} completed seller subscription payment. You can now reactivate their listings from Admin > Sellers.`
+    });
+  }
+}
+
 export const getVendorSubscriptionStatus = asyncHandler(async (req: Request, res: Response) => {
   const user = await User.findById(req.user!.id)
     .select(
@@ -34,7 +57,7 @@ export const getVendorSubscriptionStatus = asyncHandler(async (req: Request, res
   if (!user) throw new HttpError(404, "Account not found");
   const settings = await getOrCreateSettings();
   const billing = getVendorBillingSnapshot(user, settings);
-  res.json({ billing });
+  res.json({ ok: true, billing });
 });
 
 export const initializeVendorSubscription = asyncHandler(async (req: Request, res: Response) => {
@@ -76,6 +99,8 @@ export const initializeVendorSubscription = asyncHandler(async (req: Request, re
   await user.save();
 
   res.json({
+    ok: true,
+    message: "Seller subscription checkout initialized.",
     authorizationUrl: data.authorization_url,
     reference: data.reference,
     amountGhs: priceGhs,
@@ -116,11 +141,15 @@ export const verifyVendorSubscription = asyncHandler(async (req: Request, res: R
   }
 
   const periodMonths = Number(settings.vendorSubscriptionPeriodMonths ?? env.VENDOR_SUBSCRIPTION_PERIOD_MONTHS ?? 12);
+  const wasAlreadyActive = subscriptionAlreadyActive(user);
   Object.assign(user, activateVendorSubscription(periodMonths));
   await user.save();
+  if (!wasAlreadyActive) {
+    await notifyAdminsSellerSubscriptionPaid(user);
+  }
 
   const billing = getVendorBillingSnapshot(user, settings);
-  res.json({ ok: true, billing });
+  res.json({ ok: true, message: "Seller subscription activated.", billing });
 });
 
 /** Called from Paystack webhook when metadata.type is vendor_subscription. */
@@ -146,7 +175,11 @@ export async function finalizeVendorSubscriptionFromPaystack(
   }
 
   const periodMonths = Number(settings.vendorSubscriptionPeriodMonths ?? env.VENDOR_SUBSCRIPTION_PERIOD_MONTHS ?? 12);
+  const wasAlreadyActive = subscriptionAlreadyActive(user);
   Object.assign(user, activateVendorSubscription(periodMonths));
   await user.save();
+  if (!wasAlreadyActive) {
+    await notifyAdminsSellerSubscriptionPaid(user);
+  }
   return true;
 }

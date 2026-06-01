@@ -237,6 +237,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setAccessToken(null);
     storageRemove(StorageKeys.REFRESH_TOKEN);
+    storageRemove(StorageKeys.CSRF_TOKEN);
   }, [setAccessToken]);
 
   const value = useMemo(

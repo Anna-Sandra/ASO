@@ -15,10 +15,6 @@ export function deliverySocketUrl() {
 
 export function openDeliverySocket(accessToken) {
   const url = deliverySocketUrl();
-  if (!url && typeof window !== "undefined") {
-    // eslint-disable-next-line no-console
-    console.warn("[SHOPIQGH] Cannot resolve delivery socket URL; set REACT_APP_API_URL to your API origin.");
-  }
   return io(url || (typeof window !== "undefined" ? window.location.origin : ""), {
     auth: { token: accessToken },
     transports: ["websocket", "polling"],

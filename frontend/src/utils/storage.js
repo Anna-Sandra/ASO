@@ -6,6 +6,7 @@
 export const StorageKeys = {
   ACCESS_TOKEN: "SHOPIQGH_access_token",
   REFRESH_TOKEN: "SHOPIQGH_refresh_token",
+  CSRF_TOKEN: "SHOPIQGH_csrf_token",
   CART: "SHOPIQGH_cart_v1",
   THEME: "SHOPIQGH-theme",
   SAVE_SESSION: "SHOPIQGH_save_session"

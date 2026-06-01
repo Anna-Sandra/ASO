@@ -1718,6 +1718,32 @@ export function AdminPage() {
     await patchUser(u.id, { sellerVerified: verified }, tab === "sellers" ? loadSellers : loadUsers);
   };
 
+  const onReactivateSellerListings = async (u) => {
+    const label = u.displayName || u.email || "this seller";
+    const ok = await confirm(
+      `Reactivate non-rejected listings for ${label}? This sets their draft/pending listings back to active now that subscription is paid.`,
+      { title: "Reactivate listings?", confirmLabel: "Reactivate" }
+    );
+    if (!ok) return;
+    try {
+      const d = await apiFetch(`/api/admin/sellers/${encodeURIComponent(u.id)}/reactivate-listings`, {
+        method: "POST",
+        ...auth
+      });
+      const reactivated = Number(d?.reactivated || 0);
+      toast(
+        reactivated > 0
+          ? `Reactivated ${reactivated} listing${reactivated === 1 ? "" : "s"}.`
+          : "No draft/pending listings needed reactivation.",
+        { variant: "success" }
+      );
+      await loadSellers();
+      await loadListings();
+    } catch (ex) {
+      await alert(apiErrorMessage(ex, "Could not reactivate listings."), { variant: "error" });
+    }
+  };
+
   const onSyncVendorSellerRole = async (row) => {
     const ok = await confirm(
       `Apply seller role to the account for ${row.email}? They must use this same email when signing in.`,
@@ -3896,6 +3922,11 @@ export function AdminPage() {
                               className: "!min-h-[36px] !px-3 !text-xs",
                               onClick: () => onOpenUserDetails(u)
                             }, "View details"),
+                            h(Button, {
+                              key: "rx",
+                              className: "!min-h-[36px] !px-3 !text-xs",
+                              onClick: () => onReactivateSellerListings(u)
+                            }, "Reactivate listings"),
                             h(Button, {
                               key: "un",
                               variant: "danger",
@@ -6125,6 +6156,19 @@ export function AdminPage() {
               h(StatCard, { key: "r", label: "Reports mentioning user", value: String(viewUser.activity.reportsMentioningUser), icon: AlertTriangle })
             ]
           ),
+          viewUser.user.role === "seller"
+            ? h("div", { key: "seller-actions", className: "mt-4 flex flex-wrap gap-2" }, [
+                h(
+                  Button,
+                  {
+                    key: "reactivate-seller-listings",
+                    className: "!min-h-[36px] !px-3 !text-xs",
+                    onClick: () => onReactivateSellerListings(viewUser.user)
+                  },
+                  "Reactivate seller listings"
+                )
+              ])
+            : null,
           (viewUser.recentOrders || []).length > 0
             ? h("div", { key: "ro", className: "mt-4" }, [
                 h("p", { key: "t", className: "mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Recent orders"),

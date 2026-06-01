@@ -47,6 +47,7 @@ import {
   patchAdminUser,
   postAdminSettingsEmailTest,
   rejectProduct,
+  reactivateSellerListings,
   resetAdminUserPassword
 } from "./admin.controller";
 import { autoTagAllProductsAdmin } from "../products/product.controller";
@@ -134,6 +135,14 @@ router.post(
   revokeAdmin
 );
 router.patch("/users/:id", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateBody(adminPatchUserSchema), patchAdminUser);
+router.post(
+  "/sellers/:id/reactivate-listings",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  reactivateSellerListings
+);
 router.get(
   "/businesses",
   protect,

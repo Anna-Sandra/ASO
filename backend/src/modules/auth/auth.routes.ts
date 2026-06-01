@@ -1,11 +1,13 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { env } from "../../config/env";
+import { requireCsrf } from "../../middleware/csrf";
 import { protect } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import {
   activateAccount,
+  csrfToken,
   forgotPassword,
   getMe,
   login,
@@ -56,8 +58,9 @@ router.post(
 router.post("/verify-login-otp", otpVerifyLimiter, validateBody(verifyLoginOtpSchema), verifyLoginOtp);
 router.post("/resend-login-otp", loginLimiter, validateBody(loginSchema), resendLoginOtp);
 router.post("/login", loginLimiter, validateBody(loginSchema), login);
-router.post("/refresh", authLimiter, validateBody(refreshSchema), refresh);
-router.post("/logout", authLimiter, logout);
+router.get("/csrf", authLimiter, csrfToken);
+router.post("/refresh", authLimiter, requireCsrf, validateBody(refreshSchema), refresh);
+router.post("/logout", authLimiter, requireCsrf, logout);
 
 router.post("/activate-account", authLimiter, validateBody(activateAccountSchema), activateAccount);
 router.post("/forgot-password", authLimiter, validateBody(forgotPasswordSchema), forgotPassword);

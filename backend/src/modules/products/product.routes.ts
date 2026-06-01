@@ -38,7 +38,15 @@ router.get("/", listProducts);
 router.post("/smart-search", validateBody(smartSearchBodySchema), smartSearchProducts);
 /** `GET /recommended` is mounted on the root app in {@link createApp} before this router mounts. */
 router.get("/mine", protect, requireActiveAccount, authorize("seller", "admin"), listMyProducts);
-router.post("/", protect, requireActiveAccount, authorize("seller", "admin"), validateBody(createProductSchema), createProduct);
+router.post(
+  "/",
+  protect,
+  requireActiveAccount,
+  authorize("seller", "admin"),
+  requireVendorSubscription,
+  validateBody(createProductSchema),
+  createProduct
+);
 router.get("/:id/reviews", listProductReviews);
 router.get("/:id/review-status", protect, requireActiveAccount, authorize(...shopAccountRoles), getReviewStatus);
 router.post("/:id/reviews", protect, requireActiveAccount, authorize(...shopAccountRoles), validateBody(createReviewSchema), createReview);

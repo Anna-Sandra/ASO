@@ -724,6 +724,43 @@ export const approveProduct = asyncHandler(async (req: Request, res: Response) =
   res.json({ ok: true, product: { id: p._id.toString(), status: p.status } });
 });
 
+/** After seller subscription payment, admins can re-activate non-rejected listings in one click. */
+export const reactivateSellerListings = asyncHandler(async (req: Request, res: Response) => {
+  const sellerId = String(req.params.id || "").trim();
+  if (!mongoose.isValidObjectId(sellerId)) throw new HttpError(400, "Invalid seller id");
+
+  const seller = await User.findById(sellerId).select("role displayName email").lean();
+  if (!seller) throw new HttpError(404, "Seller account not found");
+  if (seller.role !== "seller") throw new HttpError(400, "That account is not a seller.");
+
+  const result = await Product.updateMany(
+    {
+      sellerId: new mongoose.Types.ObjectId(sellerId),
+      status: { $in: ["draft", "pending_approval"] }
+    },
+    {
+      $set: {
+        status: "active",
+        rejectionReason: null
+      }
+    }
+  );
+
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "seller.reactivate_listings",
+    title: `Reactivated ${result.modifiedCount} listing(s)`,
+    detail: `${sellerId} · ${String((seller as { email?: string }).email || (seller as { displayName?: string }).displayName || "seller")}`
+  });
+
+  res.json({
+    ok: true,
+    sellerId,
+    matched: result.matchedCount,
+    reactivated: result.modifiedCount
+  });
+});
+
 export const rejectProduct = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid product id");
