@@ -177,7 +177,13 @@ export type SellerContactSerialized = {
   bankAccountName: string;
 };
 
-export async function withContacts(rows: Record<string, unknown>[]) {
+export type WithContactsOpts = {
+  /** MoMo/card fields the buyer submitted for off-platform payment — admin + buyer only. */
+  includeBuyerPaymentDetails?: boolean;
+};
+
+export async function withContacts(rows: Record<string, unknown>[], opts?: WithContactsOpts) {
+  const includeBuyerPaymentDetails = Boolean(opts?.includeBuyerPaymentDetails);
   const buyerIds = new Set<string>();
   const sellerIds = new Set<string>();
   for (const o of rows) {
@@ -217,8 +223,11 @@ export async function withContacts(rows: Record<string, unknown>[]) {
       }
     }
     const bu = buyerId ? byId.get(buyerId) : null;
+    const redacted = includeBuyerPaymentDetails
+      ? base
+      : { ...base, paymentDetails: null };
     return {
-      ...base,
+      ...redacted,
       buyerContact: buyerId
         ? {
             id: buyerId,

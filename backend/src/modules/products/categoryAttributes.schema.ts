@@ -26,7 +26,8 @@ const fashionCategoryAttributesSchema = z
     gender: z.string().max(80).optional(),
     condition: z.string().max(80).optional(),
     brand: z.string().max(200).optional(),
-    material: z.string().max(400).optional()
+    material: z.string().max(400).optional(),
+    style: z.string().max(120).optional()
   })
   .strict();
 
@@ -35,6 +36,8 @@ const electronicsCategoryAttributesSchema = z
     brand: z.string().max(200).optional(),
     model: z.string().max(200).optional(),
     condition: z.string().max(80).optional(),
+    color: z.string().max(120).optional(),
+    storage: z.string().max(120).optional(),
     warranty: z.string().max(600).optional(),
     specifications: z.string().max(8000).optional()
   })
@@ -42,6 +45,7 @@ const electronicsCategoryAttributesSchema = z
 
 const beautyCategoryAttributesSchema = z
   .object({
+    brand: z.string().max(200).optional(),
     skinHairType: z.string().max(300).optional(),
     expiryDate: z.string().max(80).optional()
   })
@@ -107,4 +111,49 @@ export function normalizeCategoryAttributes(
   const r = safeParseCategoryAttributes(category, raw);
   if (!r.success) return {};
   return coerceEmptyStrings(r.data as Record<string, unknown>);
+}
+
+function req(attrs: Record<string, unknown>, key: string): boolean {
+  const v = attrs[key];
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+/** Publish-time required fields — drafts may omit. Returns first error message or null. */
+export function validateRequiredCategoryAttributesForPublish(
+  category: ProductCategory,
+  raw: unknown
+): string | null {
+  const attrs = normalizeCategoryAttributes(category, raw);
+  switch (category) {
+    case "fashion_accessories":
+      if (!req(attrs, "brand")) {
+        return "Please enter the brand name. Write 'No brand' if unbranded.";
+      }
+      if (!req(attrs, "colors")) return "Please enter the color(s) of this item.";
+      if (!req(attrs, "sizes")) return "Please enter sizes offered (e.g. 40, 41, 42 or S, M, L).";
+      if (!req(attrs, "gender")) return "Please select gender / fit.";
+      if (!req(attrs, "condition")) return "Please select condition.";
+      break;
+    case "electronics_gadgets":
+      if (!req(attrs, "brand")) return "Please enter the brand (e.g. Samsung, Apple, Tecno).";
+      if (!req(attrs, "model")) return "Please enter the model name or number.";
+      if (!req(attrs, "condition")) return "Please select condition.";
+      break;
+    case "beauty_personal_care":
+      if (!req(attrs, "brand")) return "Please enter the brand name.";
+      if (!req(attrs, "skinHairType")) return "Please describe skin / hair type this product suits.";
+      break;
+    case "babies_infants":
+      if (!req(attrs, "ageRangeOrStage")) return "Please enter age range / stage (e.g. Newborn, 0–6 months).";
+      break;
+    case "food_drinks":
+      if (!req(attrs, "ingredients")) return "Please list main ingredients buyers should know.";
+      if (!req(attrs, "portionSize")) return "Please enter portion size.";
+      if (!req(attrs, "availability")) return "Please enter availability (days/hours).";
+      if (!req(attrs, "deliveryOption")) return "Please choose a delivery option.";
+      break;
+    default:
+      break;
+  }
+  return null;
 }

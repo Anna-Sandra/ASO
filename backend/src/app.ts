@@ -29,6 +29,7 @@ import productRoutes from "./modules/products/product.routes";
 import { recommendProducts } from "./modules/products/product.controller";
 import { recommendedProductsQuerySchema } from "./modules/products/product.schemas";
 import uploadRoutes from "./modules/uploads/upload.routes";
+import { getUploadStorageDiagnostics } from "./utils/uploadStorage";
 import { uploadBookPdf, uploadBookPdfMiddleware } from "./modules/uploads/upload.controller";
 import vendorRoutes from "./modules/vendor/vendor.routes";
 import promotionPublicRoutes from "./modules/promotions/promotion.public.routes";
@@ -142,6 +143,7 @@ export function createApp() {
       ok: mongoOk,
       mongo: mongoOk ? "connected" : "disconnected",
       mongoReadyState: mongoose.connection.readyState,
+      uploadStorage: getUploadStorageDiagnostics(),
       /** If these are missing in JSON, this process is an old build — run `npm run build` in backend and restart. */
       accountDeletion: { post: "/api/auth/delete-account", delete: "/api/auth/account" },
       reports: {

@@ -272,7 +272,9 @@ export const adminDashboard = asyncHandler(async (_req: Request, res: Response) 
     .sort({ createdAt: -1 })
     .limit(RECENT_LOG_EACH)
     .lean();
-  const recentSerialized = await withContacts(recentOrders as unknown as Record<string, unknown>[]);
+  const recentSerialized = await withContacts(recentOrders as unknown as Record<string, unknown>[], {
+    includeBuyerPaymentDetails: true
+  });
 
   const recentSignups = await User.find()
     .select("email displayName role createdAt")
@@ -866,7 +868,9 @@ export const listAdminOrders = asyncHandler(async (req: Request, res: Response) 
     Order.find(filter).sort({ createdAt: -1 }).skip(skip).limit(q.limit).lean(),
     Order.countDocuments(filter)
   ]);
-  const serialized = await withContacts(rows as unknown as Record<string, unknown>[]);
+  const serialized = await withContacts(rows as unknown as Record<string, unknown>[], {
+    includeBuyerPaymentDetails: true
+  });
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({
     orders: serialized,
@@ -1691,14 +1695,18 @@ export const refundAdminOrderPaystack = asyncHandler(async (req: Request, res: R
         o.paystackRefundRemoteStatus = "";
       }
       await o.save();
-      const [fixed] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+      const [fixed] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
+        includeBuyerPaymentDetails: true
+      });
       return res.json({
         order: fixed,
         refundMessage:
           "This order was stored as refunded before Paystack confirmed funds — status was corrected. Use Refund buyer again to start or refresh the Paystack refund."
       });
     }
-    const [already] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+    const [already] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
+      includeBuyerPaymentDetails: true
+    });
     return res.json({
       order: already,
       refundMessage: "Already fully refunded (Paystack reports processed)."
@@ -1733,7 +1741,9 @@ export const refundAdminOrderPaystack = asyncHandler(async (req: Request, res: R
     detail: `status ${o.refundStatus} · remote ${o.paystackRefundRemoteStatus || "—"} · id ${o.paystackRefundId ?? "—"}`
   });
 
-  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: true
+  });
   res.json({ order: out });
 });
 
@@ -1794,7 +1804,9 @@ export const markAdminOrderPaid = asyncHandler(async (req: Request, res: Respons
     detail: `${prevStatus} → paid · stock adjusted for ${o.items.length} line(s)`
   });
 
-  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: true
+  });
   res.json({ order: out });
 });
 
@@ -1840,7 +1852,9 @@ export const patchAdminOrder = asyncHandler(async (req: Request, res: Response) 
     title: `Order ${id.slice(-8)} updated`,
     detail: bits.join(" · ")
   });
-  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>]);
+  const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: true
+  });
   res.json({ order: out });
 });
 

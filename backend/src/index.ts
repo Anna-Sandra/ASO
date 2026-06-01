@@ -8,6 +8,7 @@ import { isOtpConsoleLogEnabled } from "./utils/otpLog";
 import { setupDeliverySockets } from "./modules/deliveries/delivery.socket";
 import { warmupOllamaInBackground } from "./config/ollamaWarmup";
 import { runAutoConfirmDeliveredOrders } from "./modules/orders/orderAutoConfirm.job";
+import { getUploadStorageDiagnostics } from "./utils/uploadStorage";
 
 async function main() {
   try {
@@ -34,6 +35,12 @@ async function main() {
     const emailDiag = getEmailTransportDiagnostics();
     console.log(
       `[email] transport=${emailDiag.mode} configured=${isEmailTransportConfigured()}${emailDiag.hints.length ? ` hints=${emailDiag.hints.join(" ")}` : ""}`
+    );
+    const uploadDiag = getUploadStorageDiagnostics();
+    console.log(
+      `[uploads] storage=${uploadDiag.storage} persistent=${uploadDiag.persistent}${
+        uploadDiag.warning ? ` — ${uploadDiag.warning}` : ""
+      }`
     );
     if (isOtpConsoleLogEnabled()) {
       console.log(

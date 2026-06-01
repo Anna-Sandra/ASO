@@ -47,7 +47,9 @@ export const listVendorOrders = asyncHandler(async (req: Request, res: Response)
   const sid = req.user!.id;
   const sidOid = new mongoose.Types.ObjectId(sid);
   const rows = await Order.find({ "items.sellerId": sidOid }).sort({ createdAt: -1 }).lean();
-  const serialized = await withContacts(rows as unknown as Record<string, unknown>[]);
+  const serialized = await withContacts(rows as unknown as Record<string, unknown>[], {
+    includeBuyerPaymentDetails: false
+  });
   /** Only this seller's line items + per-vendor totals so the dashboard always matches JWT user. */
   const orders = serialized.map((o) => {
     const items = (
@@ -140,7 +142,9 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
     if (order.buyerId) void notifyBuyerOrderStatus(orderId, order.buyerId, label);
   }
 
-  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: false
+  });
   res.json({ order: serialized });
 });
 
@@ -217,7 +221,9 @@ export const confirmVendorPaymentReceived = asyncHandler(async (req: Request, re
   } catch {
     /* analytics must never block order updates */
   }
-  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: false
+  });
   res.json({ order: serialized });
 });
 

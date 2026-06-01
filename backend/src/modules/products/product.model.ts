@@ -47,6 +47,8 @@ export interface ProductDoc {
   /** Admin moderation. */
   flagged?: boolean;
   tags: string[];
+  /** Groq-generated search keywords (merged with vendor tags for discovery). */
+  aiTags?: string[];
   imageUrls: string[];
   createdAt: Date;
   updatedAt: Date;
@@ -81,6 +83,7 @@ const productSchema = new Schema<ProductDoc>(
     rejectionReason: { type: String, default: null, maxlength: 2000 },
     flagged: { type: Boolean, default: false, index: true },
     tags: { type: [String], default: [] },
+    aiTags: { type: [String], default: [] },
     imageUrls: { type: [String], default: [] }
   },
   { timestamps: true }
@@ -89,6 +92,6 @@ const productSchema = new Schema<ProductDoc>(
 productSchema.index({ category: 1, status: 1 });
 productSchema.index({ businessId: 1, status: 1 });
 /** Full-text on listings — `listingSearchAssist` carries Marketplace subcategory keywords without polluting storefront badge tags. */
-productSchema.index({ name: "text", description: "text", tags: "text", listingSearchAssist: "text" });
+productSchema.index({ name: "text", description: "text", tags: "text", aiTags: "text", listingSearchAssist: "text" });
 
 export const Product = mongoose.model<ProductDoc>("Product", productSchema);

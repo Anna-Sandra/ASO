@@ -1,19 +1,11 @@
 import type { Request } from "express";
 import { env } from "../../config/env";
-import { Product, type ProductCategory } from "../products/product.model";
+import type { ProductCategory } from "../products/product.model";
 import { Business } from "../businesses/business.model";
-import {
-  activeStoreBusinessIds,
-  enrichPublicProducts,
-  foodMenuStoreFilter
-} from "../products/product.publicSerialize";
+import { searchProductsForAssistant } from "./assistantSearch";
 
 const FOOD_KEYWORDS =
   /\b(food|eat|eating|hungry|menu|dish|dishes|restaurant|cafeteria|canteen|waakye|banku|fufu|kenkey|jollof|lunch|dinner|breakfast|brunch|snack|order food|what.?s good)\b/i;
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function userWantsFoodSuggestions(message: string): boolean {
   return FOOD_KEYWORDS.test(String(message || ""));
@@ -113,66 +105,21 @@ export async function findProductsForFallback(
   limit = 6,
   options?: { noCategoryFallback?: boolean }
 ): Promise<Record<string, unknown>[]> {
+  const rows = await searchProductsForAssistant(message, limit);
+  if (rows.length > 0) return rows;
+
   const noCategoryFallback = Boolean(options?.noCategoryFallback);
-  const activeIds = await activeStoreBusinessIds();
+  if (noCategoryFallback) return [];
+
   const trimmed = String(message || "").trim();
-  const detectedCategory = detectCategoryFromMessage(trimmed);
   const priceConstraint = parseGhsPriceConstraint(trimmed);
-
-  const base: Record<string, unknown> = {
-    status: "active",
-    $or: [{ category: "services" }, { stock: { $gt: 0 } }, { category: "food_drinks" }],
-    ...foodMenuStoreFilter(activeIds)
-  };
-  if (detectedCategory) {
-    base.category = detectedCategory;
-  }
-
   const preferFood = userWantsFoodSuggestions(trimmed);
-
-  let rows: Record<string, unknown>[] = [];
-
-  if (trimmed.length >= 2) {
-    try {
-      rows = (await Product.find({
-        ...base,
-        $text: { $search: trimmed }
-      })
-        .sort({ score: { $meta: "textScore" } })
-        .limit(limit * 2)
-        .lean()) as unknown as Record<string, unknown>[];
-    } catch {
-      /* no text index or bad query */
-    }
-    if (!rows.length) {
-      const re = new RegExp(escapeRegex(trimmed.slice(0, 80)), "i");
-      rows = (await Product.find({
-        ...base,
-        $or: [{ name: re }, { description: re }, { tags: re }]
-      })
-        .sort({ updatedAt: -1 })
-        .limit(limit * 2)
-        .lean()) as unknown as Record<string, unknown>[];
-    }
-  }
-
-  rows = filterByPriceConstraint(rows, priceConstraint).slice(0, limit);
-
-  if (!rows.length && !noCategoryFallback) {
-    const catFilter =
-      detectedCategory != null
-        ? {}
-        : preferFood
-          ? { category: "food_drinks" as const }
-          : {};
-    const broad = (await Product.find({ ...base, ...catFilter })
-      .sort({ updatedAt: -1 })
-      .limit(limit * 2)
-      .lean()) as unknown as Record<string, unknown>[];
-    rows = filterByPriceConstraint(broad, priceConstraint).slice(0, limit);
-  }
-
-  return enrichPublicProducts(rows);
+  const detectedCategory = detectCategoryFromMessage(trimmed);
+  const broad = await searchProductsForAssistant(
+    preferFood ? "food lunch menu" : detectedCategory ? `${detectedCategory} popular` : "popular marketplace",
+    limit
+  );
+  return filterByPriceConstraint(broad, priceConstraint).slice(0, limit);
 }
 
 function trimAppOrigin(origin: string): string {

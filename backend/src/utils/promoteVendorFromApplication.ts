@@ -3,6 +3,7 @@ import { User, normalizeUserRole } from "../modules/auth/user.model";
 import { VendorApplication } from "../modules/vendorApplications/vendorApplication.model";
 import { getOrCreateSettings } from "../modules/platform/platformSettings.service";
 import { initialVendorSubscriptionOnApproval } from "../modules/vendorSubscription/vendorSubscription.service";
+import { backfillSellerPhoneFromVendorApplication } from "./sellerContactPhone";
 
 type VendorAppFields = {
   _id: mongoose.Types.ObjectId;
@@ -11,6 +12,7 @@ type VendorAppFields = {
   fullName: string;
   shopName: string;
   phone: string;
+  altPhone?: string;
 };
 
 export type PromoteVendorResult =
@@ -53,6 +55,12 @@ export async function promoteBuyerToSellerFromVendorApplication(
   if (role === "seller") {
     if (!app.userId) {
       await VendorApplication.updateOne({ _id: app._id }, { $set: { userId: user._id } });
+    }
+    const appPhone = [app.phone, app.altPhone].map((x) => (x || "").trim()).find(Boolean) || "";
+    if (appPhone && !(user.phone || "").trim()) {
+      await User.updateOne({ _id: user._id }, { $set: { phone: appPhone } });
+    } else {
+      await backfillSellerPhoneFromVendorApplication(user._id);
     }
     return { kind: "already_seller", userId: user._id.toString() };
   }

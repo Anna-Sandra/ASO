@@ -8,6 +8,7 @@ import {
   isPaystackMoneyRailEnabled
 } from "../../config/env";
 import { asyncHandler } from "../../utils/asyncHandler";
+import { getUploadStorageDiagnostics } from "../../utils/uploadStorage";
 import { getEffectiveCommissionPercent, getOrCreateSettings } from "./platformSettings.service";
 import { getPlatformTrialEndsAt, isPlatformLaunchTrialActive } from "../vendorSubscription/vendorSubscription.service";
 
@@ -52,6 +53,7 @@ export const getPublicPlatformConfig = asyncHandler(async (_req: Request, res: R
     email: {
       configured: isEmailTransportConfigured(),
       transport: getEmailTransportMode()
-    }
+    },
+    uploads: getUploadStorageDiagnostics()
   });
 });

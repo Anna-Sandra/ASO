@@ -7,6 +7,7 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { HttpError } from "../../utils/httpError";
 import { tryResolvePublicUploadBaseUrl } from "../../utils/publicMediaUrl";
 import { cloudinary, isCloudinaryConfigured } from "../../config/cloudinary";
+import { assertUploadStorageAvailable } from "../../utils/uploadStorage";
 import { User, normalizeUserRole, publicPhoneForPaymentRole } from "../auth/user.model";
 
 const PUBLIC_UPLOAD_BASE_ERR =
@@ -69,6 +70,7 @@ export const uploadProductImagesMiddleware = multer({
 }).array("images", 8);
 
 export const uploadProductImages = asyncHandler(async (req: Request, res: Response) => {
+  assertUploadStorageAvailable();
   const files = req.files as Express.Multer.File[] | undefined;
   if (!files?.length) throw new HttpError(400, "No image files received");
 
@@ -128,6 +130,7 @@ export const uploadVendorVerificationMiddleware = multer({
 }).single("file");
 
 export const uploadVendorVerification = asyncHandler(async (req: Request, res: Response) => {
+  assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
 
@@ -165,6 +168,7 @@ export const uploadReportEvidenceMiddleware = multer({
 }).single("file");
 
 export const uploadReportEvidence = asyncHandler(async (req: Request, res: Response) => {
+  assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
 
@@ -201,6 +205,7 @@ export const uploadBookPdfMiddleware = multer({
 }).single("file");
 
 export const uploadBookPdf = asyncHandler(async (req: Request, res: Response) => {
+  assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
 
@@ -231,6 +236,7 @@ export const uploadDeliveryProofMiddleware = multer({
 }).single("image");
 
 export const uploadDeliveryProof = asyncHandler(async (req: Request, res: Response) => {
+  assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No image file received");
 
@@ -242,6 +248,7 @@ export const uploadDeliveryProof = asyncHandler(async (req: Request, res: Respon
 });
 
 export const uploadProfileImage = asyncHandler(async (req: Request, res: Response) => {
+  assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No image file received");
 

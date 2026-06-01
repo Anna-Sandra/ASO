@@ -44,6 +44,7 @@ import { useVendorStorePicker } from "hooks/useVendorStorePicker";
 import { resolveMenuSectionIdForStore } from "utils/vendorStore";
 import {
   buildCategoryAttributesPayload,
+  validateCategoryAttributesForPublish,
   emptyAttrsForCategory,
   getListingMeta,
   listingEditPageHeading,
@@ -1405,6 +1406,13 @@ export function VendorAddProductPage() {
       );
       return;
     }
+    if (!asDraft) {
+      const attrErr = validateCategoryAttributesForPublish(category, attrs, { publishing: true });
+      if (attrErr) {
+        setErr(attrErr);
+        return;
+      }
+    }
     setLoading(true);
     try {
       const tagList = buildVendorSubmitTags(m.showTags, {
@@ -1765,6 +1773,14 @@ export function VendorEditProductPage() {
         );
         setSaving(false);
         return;
+      }
+      if (status === "active") {
+        const attrErr = validateCategoryAttributesForPublish(category, attrs, { publishing: true });
+        if (attrErr) {
+          setErr(attrErr);
+          setSaving(false);
+          return;
+        }
       }
       let patchPrice = 0;
       if (!m.hidePrice) {
@@ -3152,11 +3168,20 @@ export function VendorSettingsPage() {
         h(
           "p",
           { className: "mb-4 text-sm text-slate-600 dark:text-slate-400" },
-          "Shoppers see your display name and contact email on listings. MoMo and bank details are for Paystack payouts only — they are not shown on public product pages (admins can view them for support)."
+          "Shoppers see your display name, phone, and email on product pages. The phone below is your buyer contact and your Paystack MoMo number. Bank details are for payouts only and are not shown on listings."
         ),
         h(Field, { label: "Display name" }, h(TextInput, { value: displayName, onChange: (e) => setDisplayName(e.target.value) })),
         h(Field, { label: "Contact email" }, h(TextInput, { type: "email", value: email, disabled: true })),
-        h(Field, { label: "Mobile money number (Paystack payouts)" }, h(TextInput, { value: phone, onChange: (e) => setPhone(e.target.value) })),
+        h(
+          Field,
+          { label: "Phone number (shown to buyers)" },
+          h(TextInput, {
+            type: "tel",
+            value: phone,
+            onChange: (e) => setPhone(e.target.value),
+            placeholder: "e.g. 0241234567"
+          })
+        ),
         h(Field, { label: "Bank name" }, h(TextInput, { value: bankName, onChange: (e) => setBankName(e.target.value) })),
         h(Field, { label: "Account name" }, h(TextInput, { value: bankAccountName, onChange: (e) => setBankAccountName(e.target.value) })),
         h(Field, { label: "Account number" }, h(TextInput, { value: bankAccountNumber, onChange: (e) => setBankAccountNumber(e.target.value) })),

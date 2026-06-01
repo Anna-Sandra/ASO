@@ -29,6 +29,8 @@ import {
   mongoCategoryBrowseFilter,
   normalizeProductCategory
 } from "./productCategories";
+import { generateAiTags } from "./productAiTags";
+import { validateRequiredCategoryAttributesForPublish } from "./categoryAttributes.schema";
 
 /** Subcategory facet for buyer search chips + keyword assist; rejects unknown slugs once category is fixed. */
 function normalizeProductSubcategoryForCategory(cat: ProductCategory, raw: unknown): string | null {
@@ -234,7 +236,15 @@ async function fetchShopProductRows(opts: {
       .filter((t) => t.length > 0);
     const termBlocks = terms.map((term) => {
       const re = new RegExp(escapeRegex(term), "i");
-      return { $or: [{ name: re }, { description: re }, { tags: re }, { listingSearchAssist: re }] };
+      return {
+        $or: [
+          { name: re },
+          { description: re },
+          { tags: re },
+          { aiTags: re },
+          { listingSearchAssist: re }
+        ]
+      };
     });
     /** Smart search expands to many synonyms — OR matches any (“shoes”, “heels”, …), not ALL at once */
     const altFilter = termBlocks.length ? { ...filter, $or: termBlocks } : { ...filter };
@@ -292,7 +302,15 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
         terms.length > 0
           ? terms.map((term) => {
               const re = new RegExp(escapeRegex(term), "i");
-              return { $or: [{ name: re }, { description: re }, { tags: re }, { listingSearchAssist: re }] };
+              return {
+        $or: [
+          { name: re },
+          { description: re },
+          { tags: re },
+          { aiTags: re },
+          { listingSearchAssist: re }
+        ]
+      };
             })
           : [];
       const altFilter =
@@ -759,6 +777,20 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   if (flagged) createPayload.flagged = true;
   if (rejectionReason) createPayload.rejectionReason = rejectionReason;
 
+  const attrsForAi =
+    (createPayload.categoryAttributes as Record<string, unknown> | undefined) ||
+    normalizeCategoryAttributes(catRef, body.categoryAttributes);
+  if (status === "active") {
+    const attrErr = validateRequiredCategoryAttributesForPublish(catRef, attrsForAi);
+    if (attrErr) throw new HttpError(400, attrErr);
+  }
+  createPayload.aiTags = await generateAiTags(
+    String(createPayload.name || ""),
+    catRef,
+    String(createPayload.description || ""),
+    attrsForAi
+  );
+
   const p = await Product.create(createPayload);
   const [out] = await attachSellerPayments([p.toObject() as unknown as Record<string, unknown>], {
     includePayoutDetails: true
@@ -890,6 +922,22 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
     throw new HttpError(400, "Set a price greater than zero for this listing.");
   }
 
+  if (p.status === "active") {
+    const attrErr = validateRequiredCategoryAttributesForPublish(
+      mergedCatResolved,
+      (p.categoryAttributes as Record<string, unknown>) || {}
+    );
+    if (attrErr) throw new HttpError(400, attrErr);
+  }
+
+  const aiTags = await generateAiTags(
+    String(p.name),
+    mergedCatResolved,
+    String(p.description || ""),
+    (p.categoryAttributes as Record<string, unknown>) || {}
+  );
+  p.set("aiTags", aiTags);
+
   await p.save();
   const newPriceN = Number(p.price);
   const oldPriceN = Number(beforeDoc.price);
@@ -906,6 +954,23 @@ export const updateProduct = asyncHandler(async (req: Request, res: Response) =>
     includePayoutDetails: true
   });
   res.json({ product: out });
+});
+
+/** Admin: one-time/backfill Groq aiTags on all active listings. */
+export const autoTagAllProductsAdmin = asyncHandler(async (req: Request, res: Response) => {
+  if (req.user?.role !== "admin") throw new HttpError(403, "Admin only.");
+  const rows = await Product.find({ status: { $in: ["active", "pending_approval", "draft"] } })
+    .select("name category description categoryAttributes")
+    .lean();
+  let updated = 0;
+  for (const row of rows) {
+    const cat = String(row.category || "") as ProductCategory;
+    const attrs = (row.categoryAttributes as Record<string, unknown>) || {};
+    const aiTags = await generateAiTags(String(row.name || ""), cat, String(row.description || ""), attrs);
+    await Product.updateOne({ _id: row._id }, { $set: { aiTags } });
+    updated += 1;
+  }
+  res.json({ ok: true, updated, total: rows.length });
 });
 
 export const deleteProduct = asyncHandler(async (req: Request, res: Response) => {

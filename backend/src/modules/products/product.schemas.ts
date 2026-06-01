@@ -2,7 +2,11 @@ import { z } from "zod";
 import mongoose from "mongoose";
 import { MAX_PRODUCT_GALLERY_IMAGES } from "../../config/productLimits";
 import { LISTING_KINDS, PRODUCT_CATEGORIES } from "./product.model";
-import { normalizeCategoryAttributes, safeParseCategoryAttributes } from "./categoryAttributes.schema";
+import {
+  normalizeCategoryAttributes,
+  safeParseCategoryAttributes,
+  validateRequiredCategoryAttributesForPublish
+} from "./categoryAttributes.schema";
 import { isValidMarketplaceSubcategory } from "./productSubcategories";
 import { normalizeProductCategory } from "./productCategories";
 
@@ -73,6 +77,12 @@ export const createProductSchema = createBody
         message: "Subcategory must match your listing marketplace category.",
         path: ["subcategory"]
       });
+    }
+    if (data.status === "active") {
+      const attrErr = validateRequiredCategoryAttributesForPublish(data.category, data.categoryAttributes);
+      if (attrErr) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: attrErr, path: ["categoryAttributes"] });
+      }
     }
   })
   .transform((d) => ({

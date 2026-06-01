@@ -12,8 +12,8 @@ import { BuyerProductView } from "../products/buyerProductView.model";
 import { ProductSave } from "../products/productSave.model";
 import { Order } from "../orders/order.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
-import { activeStoreBusinessIds, enrichPublicProducts, foodMenuStoreFilter } from "../products/product.publicSerialize";
-import { buildAssistantCatalogReply, buildAssistantIdleReply, findProductsForFallback, formatProductLine, shouldUseNoCategoryFallback } from "./assistantFallback";
+import { buildAssistantCatalogReply, buildAssistantIdleReply, formatProductLine, shouldUseNoCategoryFallback } from "./assistantFallback";
+import { searchProductsForAssistant } from "./assistantSearch";
 import { groqChatStream, groqCompletion, groqConfigured } from "./groqChat";
 
 function resolvePublicApiOrigin(): string {
@@ -137,7 +137,7 @@ type OllamaStreamLine = {
 };
 
 /** Snippets + history sized for OLLAMA_NUM_CTX (default 1024); shrink ASSISTANT_* limits if you lower ctx. */
-const ASSISTANT_PRODUCT_LIMIT = 5;
+const ASSISTANT_PRODUCT_LIMIT = 10;
 const ASSISTANT_BUSINESS_LIMIT = 4;
 const ASSISTANT_DESC_CHARS = 36;
 const HISTORY_LEN = 4;
@@ -173,35 +173,16 @@ async function loadAssistantPrompt(
   const apiOrigin = resolvePublicApiOrigin();
   const appOrigin = env.APP_ORIGIN.replace(/\/$/, "");
 
-  const activeIds = await activeStoreBusinessIds();
   const strictListings = shouldUseNoCategoryFallback(String(message || "").trim());
-  const [settings, queryMatchedProducts, sampleProductsFallback, sampleStores] = await Promise.all([
+  const [settings, sampleProducts, sampleStores] = await Promise.all([
     getOrCreateSettings(),
-    findProductsForFallback(message, ASSISTANT_PRODUCT_LIMIT, {
-      noCategoryFallback: strictListings
-    }),
-    Product.find({
-      status: "active",
-      $or: [{ category: "services" }, { stock: { $gt: 0 } }, { category: "food_drinks" }],
-      ...foodMenuStoreFilter(activeIds)
-    })
-      .sort({ updatedAt: -1 })
-      .limit(ASSISTANT_PRODUCT_LIMIT)
-      .select("_id sellerId name price category stock description tags imageUrls businessId")
-      .lean(),
+    searchProductsForAssistant(message, ASSISTANT_PRODUCT_LIMIT),
     Business.find({ status: "active" })
       .sort({ updatedAt: -1 })
       .limit(ASSISTANT_BUSINESS_LIMIT)
       .select("slug name businessType description tags deliveryAvailable pickupAvailable")
       .lean()
   ]);
-
-  const sampleProducts =
-    queryMatchedProducts.length > 0
-      ? queryMatchedProducts
-      : strictListings
-        ? []
-        : await enrichPublicProducts(sampleProductsFallback as unknown as Record<string, unknown>[]);
 
   const siteName =
     typeof settings?.siteName === "string" && settings.siteName.trim()
@@ -245,6 +226,11 @@ async function loadAssistantPrompt(
       ? `- **No listing lines below** matched this question — the catalog search returned nothing for that product/budget request. Tell the shopper clearly you don’t see matching items on ${siteName} in these results **right now**. Do NOT invent products, brands, specs, or GHS prices. Suggest **Search** or a category hub (e.g. \`/electronics\` for laptops). Then you may add the one-line ordering tip (🛒→🧺→📋→💳 Paystack; 🍽️ food call-to-order; 📩 services quote).\n`
       : "";
 
+  const searchIntel =
+    lines.length > 0
+      ? `- The listings below were **search-matched** to the shopper’s message — show relevant ones first.\n- If they asked for a **color** or **brand**, prioritize lines that match; if unsure, add “(tap to confirm color/brand in photos)”.\n- NEVER say “no products available” when listing lines exist below.\n- NEVER show food when they asked for fashion (or vice versa) unless a line clearly fits.\n`
+      : "";
+
   const system = `You are the ${siteName} shopping assistant — a Ghana marketplace platform. ${userNote}${personalizeBlock}
 
 IDENTITY:
@@ -271,6 +257,8 @@ PRICING RULES — CRITICAL:
 - Services ALWAYS say "request a quote" — never a fixed GHS checkout price unless the listing line shows quote terminology
 - ONLY ordinary physical products (not food_drinks, not services) may show a GHS price, and only when it appears in the listing lines below
 
+SEARCH INTELLIGENCE:
+${searchIntel}
 FACTS:
 ${factsNoMatch}- Only cite products using the listing lines below — never invent items or prices
 - Guest checkout: shoppers can tap Buy and pay without logging in; checkout asks for email and phone. Never tell users they must sign in for cart or Paystack checkout for normal products

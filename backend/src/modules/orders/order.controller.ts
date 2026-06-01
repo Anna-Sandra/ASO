@@ -9,7 +9,12 @@ import type { OrderDoc } from "./order.model";
 import { Order } from "./order.model";
 import { Product, type ProductDoc } from "../products/product.model";
 import { User, normalizeUserRole } from "../auth/user.model";
-import { withContacts } from "./orderSerialize";
+import { withContacts, type WithContactsOpts } from "./orderSerialize";
+
+function buyerPaymentDetailsOpts(req: Request): WithContactsOpts {
+  const role = normalizeUserRole(req.user?.role);
+  return { includeBuyerPaymentDetails: role === "admin" || role === "buyer" };
+}
 import {
   newGuestOrderSecret,
   canActAsOrderBuyer,
@@ -217,7 +222,9 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
 
   void notifySellersNewOrder(order._id.toString());
 
-  const [orderOut] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  const [orderOut] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: true
+  });
   const payload: Record<string, unknown> = { order: orderOut };
   if (guestAccessSecret) payload.guestAccessSecret = guestAccessSecret;
   res.status(201).json(payload);
@@ -228,7 +235,7 @@ export const listMyOrders = asyncHandler(async (req: Request, res: Response) => 
     req.user!.role === "admin"
       ? await Order.find({}).sort({ createdAt: -1 }).limit(200).lean()
       : await Order.find({ buyerId: new mongoose.Types.ObjectId(req.user!.id) }).sort({ createdAt: -1 }).lean();
-  const orders = await withContacts(rows as unknown as Record<string, unknown>[]);
+  const orders = await withContacts(rows as unknown as Record<string, unknown>[], buyerPaymentDetailsOpts(req));
   res.json({ orders });
 });
 
@@ -239,7 +246,7 @@ export const listBuyerVendorInbox = asyncHandler(async (req: Request, res: Respo
   }
   const buyerId = new mongoose.Types.ObjectId(req.user!.id);
   const rows = await Order.find({ buyerId }).sort({ updatedAt: -1 }).limit(80).lean();
-  const serialized = await withContacts(rows as unknown as Record<string, unknown>[]);
+  const serialized = await withContacts(rows as unknown as Record<string, unknown>[], buyerPaymentDetailsOpts(req));
 
   const threads = serialized
     .map((o) => {
@@ -280,7 +287,9 @@ export const listSellerBuyerInbox = asyncHandler(async (req: Request, res: Respo
   }
   const sid = new mongoose.Types.ObjectId(req.user!.id);
   const rows = await Order.find({ "items.sellerId": sid }).sort({ updatedAt: -1 }).limit(80).lean();
-  const serialized = await withContacts(rows as unknown as Record<string, unknown>[]);
+  const serialized = await withContacts(rows as unknown as Record<string, unknown>[], {
+    includeBuyerPaymentDetails: false
+  });
 
   const threads = serialized
     .map((o) => {
@@ -322,23 +331,23 @@ export const getOrder = asyncHandler(async (req: Request, res: Response) => {
   const uid = req.user?.id;
   const secret = readGuestSecretFromRequest(req);
 
-  const stripAndRespond = async (doc: Record<string, unknown>) => {
+  const stripAndRespond = async (doc: Record<string, unknown>, includeBuyerPaymentDetails: boolean) => {
     const plain = { ...doc };
     delete plain.guestAccessSecret;
-    const [order] = await withContacts([plain]);
+    const [order] = await withContacts([plain], { includeBuyerPaymentDetails });
     return res.json({ order });
   };
 
   if (req.user?.role === "admin") {
-    return stripAndRespond(o as unknown as Record<string, unknown>);
+    return stripAndRespond(o as unknown as Record<string, unknown>, true);
   }
 
   if (o.buyerId) {
     if (uid && o.buyerId.toString() === uid) {
-      return stripAndRespond(o as unknown as Record<string, unknown>);
+      return stripAndRespond(o as unknown as Record<string, unknown>, true);
     }
   } else if (canActAsOrderBuyer(req, o as unknown as OrderDoc, secret)) {
-    return stripAndRespond(o as unknown as Record<string, unknown>);
+    return stripAndRespond(o as unknown as Record<string, unknown>, true);
   }
 
   const isSeller =
@@ -346,7 +355,7 @@ export const getOrder = asyncHandler(async (req: Request, res: Response) => {
     req.user?.role === "seller" &&
     (o.items as Array<{ sellerId: mongoose.Types.ObjectId }>).some((it) => it.sellerId.toString() === uid);
   if (isSeller) {
-    return stripAndRespond(o as unknown as Record<string, unknown>);
+    return stripAndRespond(o as unknown as Record<string, unknown>, false);
   }
 
   throw new HttpError(403, "Forbidden");
@@ -373,7 +382,9 @@ export const addOrderMessage = asyncHandler(async (req: Request, res: Response) 
   });
   await order.save();
   void notifyOrderMessageRecipients(id, isBuyer);
-  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: isBuyer
+  });
   res.json({ order: serialized });
 });
 
@@ -485,7 +496,9 @@ export const cancelMyOrder = asyncHandler(async (req: Request, res: Response) =>
 
   void notifyOrderCancelledForCounterparties(id, "buyer");
 
-  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: true
+  });
   res.json({ order: serialized });
 });
 
@@ -506,7 +519,9 @@ export const confirmBuyerReceipt = asyncHandler(async (req: Request, res: Respon
   }
   if (order.status !== "delivered") throw new HttpError(400, "Order must be marked delivered first");
   if (order.buyerConfirmedReceiptAt) {
-    const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+    const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+      includeBuyerPaymentDetails: true
+    });
     res.json({ ok: true, order: serialized, alreadyConfirmed: true });
     return;
   }
@@ -522,7 +537,9 @@ export const confirmBuyerReceipt = asyncHandler(async (req: Request, res: Respon
       orderId: order._id
     });
   }
-  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: true
+  });
   res.json({ ok: true, order: serialized });
 });
 
@@ -587,6 +604,8 @@ export const markManualPayment = asyncHandler(async (req: Request, res: Response
 
   void notifySellersPaymentSubmitted(order._id.toString());
 
-  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>]);
+  const [serialized] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: true
+  });
   res.json({ order: serialized });
 });

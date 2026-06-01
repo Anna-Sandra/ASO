@@ -128,7 +128,7 @@ function buyerVendorPayPanel(sellerPayment, opts) {
         },
         paystackOnly
           ? "This seller has not finished payout registration yet. You still pay with Paystack at checkout; the platform pays the vendor from there after your order succeeds."
-          : "This seller has not added a MoMo number or bank payout details yet. You can still order; use your order messages if you need payment help."
+          : "Seller contact is not on file yet. You can still order; use Messages on your order if you need help reaching them."
       )
     );
   }
@@ -136,16 +136,17 @@ function buyerVendorPayPanel(sellerPayment, opts) {
   const name = String(sp.displayName || "").trim();
   const phone = String(sp.phone || "").trim();
   const email = String(sp.email || "").trim();
-  const bankName = String(sp.bankName || "").trim();
-  const bankAcct = String(sp.bankAccountNumber || "").trim();
-  const bankHolder = String(sp.bankAccountName || "").trim();
   const rows = [];
   if (name) rows.push(h("p", { key: "dn", className: "text-sm font-semibold text-slate-900 dark:text-white" }, name));
   if (phone) {
     rows.push(
       h("div", { key: "ph", className: "mt-2" }, [
-        h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "MoMo"),
-        h("p", { className: "mt-0.5 font-mono text-sm text-slate-800 dark:text-slate-100" }, phone)
+        h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Phone"),
+        h(
+          "a",
+          { href: `tel:${phone}`, className: "mt-0.5 block font-mono text-sm text-sky-700 underline dark:text-sky-300" },
+          phone
+        )
       ])
     );
   }
@@ -153,29 +154,31 @@ function buyerVendorPayPanel(sellerPayment, opts) {
     rows.push(
       h("div", { key: "em", className: "mt-2" }, [
         h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Email"),
-        h("p", { className: "mt-0.5 text-sm text-slate-800 dark:text-slate-100" }, email)
+        h(
+          "a",
+          { href: `mailto:${email}`, className: "mt-0.5 block text-sm text-sky-700 underline dark:text-sky-300" },
+          email
+        )
       ])
     );
   }
-  if (bankName || bankAcct || bankHolder) {
-    rows.push(
-      h("div", { key: "bk", className: "mt-3 border-t border-white/10 pt-3" }, [
-        h("p", { className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" }, "Bank transfer"),
-        h("p", { className: "mt-1 text-sm text-slate-800 dark:text-slate-100" }, [bankName, bankHolder].filter(Boolean).join(" · ") || "—"),
-        bankAcct ? h("p", { className: "mt-1 font-mono text-sm text-slate-800 dark:text-slate-100" }, bankAcct) : null
-      ].filter(Boolean))
+  if (!name && !phone && !email) {
+    return h(
+      GlassPanel,
+      { key: "vend-pay", className: "!border-amber-500/30 !bg-amber-500/10" },
+      h("p", { className: "text-sm text-amber-950 dark:text-amber-100" }, "Seller contact is not on file yet.")
     );
   }
-  return h(GlassPanel, { key: "vend-pay", className: "!border-sky-500/25" }, [
-    h("h3", { className: "text-xs font-bold uppercase tracking-wide text-sky-800 dark:text-sky-200" }, "Seller contact & payout details"),
-    paystackOnly
-      ? h(
-          "p",
-          { className: "mt-1 text-xs text-slate-600 dark:text-slate-400" },
-          "You pay at checkout through Paystack only. The MoMo or bank details here are for seller payouts from the platform — do not pay your order total to these accounts."
-        )
-      : h("p", { className: "mt-1 text-xs text-slate-600 dark:text-slate-400" }, "Use these details to pay the seller if your checkout method asks for them."),
-    ...rows
+  return h(GlassPanel, { key: "vend-pay", className: "!border-white/10" }, [
+    h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Seller contact"),
+    h(
+      "p",
+      { className: "mt-1 text-xs text-slate-500 dark:text-slate-400" },
+      paystackOnly
+        ? "Pay with Paystack at checkout. For questions about this listing, contact the seller below."
+        : "Reach the seller below to coordinate purchase, pickup, or delivery."
+    ),
+    h("div", { className: "mt-3 space-y-1" }, rows)
   ]);
 }
 
@@ -731,16 +734,7 @@ export function ProductDetailPage() {
     ? buyerServicePricingPanel()
     : foodC2O
       ? buyerFoodCallPricingPanel()
-      : h("div", { key: "pr", className: "flex flex-col gap-1" }, [
-          h("span", { className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx)),
-          unitPayTotal != null && Math.abs(unitPayTotal - listPx) > 0.005
-            ? h(
-                "span",
-                { className: "text-xs text-slate-500 dark:text-slate-400" },
-                `Listing ${formatGhc(listPx)} · Total includes estimated service & payment fees`
-              )
-            : null
-        ].filter(Boolean));
+      : h("span", { key: "pr", className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx));
 
   return h(f, null, [
     h(
@@ -899,7 +893,6 @@ export function ProductDetailPage() {
           ]),
           h(RestaurantContextPanel, { key: "store-ctx", product }),
           pricingPanel,
-          !offlineListing ? h("p", { key: "st", className: "text-sm text-slate-600 dark:text-slate-300" }, `${product.stock ?? 0} in stock`) : null,
           (product.tags || []).length > 0 &&
             h(
               "div",
@@ -1167,15 +1160,6 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
                 { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" },
                 formatGhc(listP)
               ),
-              h(
-                "span",
-                {
-                  key: "stkg",
-                  className:
-                    "w-full shrink-0 text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:w-auto sm:translate-y-px"
-                },
-                `${p.stock ?? 0} in stock`
-              )
             ])
       ]),
       h(
@@ -3077,15 +3061,7 @@ export function SavedProductsPage() {
                                     formatGhc(cmpAt)
                                   )
                                 : null,
-                              h("span", { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" }, formatGhc(listP)),
-                              h(
-                                "span",
-                                {
-                                  key: "stkg",
-                                  className: "w-full shrink-0 text-[11px] font-medium text-slate-500 dark:text-slate-400 sm:w-auto sm:translate-y-px"
-                                },
-                                `${p.stock ?? 0} in stock`
-                              )
+                              h("span", { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" }, formatGhc(listP))
                             ]),
                         h(
                           Button,

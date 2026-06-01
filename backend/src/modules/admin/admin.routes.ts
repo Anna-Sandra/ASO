@@ -49,6 +49,7 @@ import {
   rejectProduct,
   resetAdminUserPassword
 } from "./admin.controller";
+import { autoTagAllProductsAdmin } from "../products/product.controller";
 import {
   adminApprovePromotion,
   adminCreatePlatformPromotion,
@@ -163,6 +164,14 @@ router.post(
   approveProductsBulk
 );
 router.post("/products/:id/approve", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, approveProduct);
+router.post(
+  "/products/auto-tag-all",
+  protect,
+  requireActiveAccount,
+  authorize("admin"),
+  requireAdminEnvSecret,
+  autoTagAllProductsAdmin
+);
 router.post(
   "/products/:id/reject",
   protect,
