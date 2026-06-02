@@ -9,6 +9,7 @@ import { Product } from "../products/product.model";
 import { Conversation } from "./conversation.model";
 import { getPrimarySupportAdminId } from "./supportPeer";
 import { fireNotification } from "../notifications/notification.service";
+import { assertNoContactSharing, redactContactSharingInText } from "../../utils/contactSharingGuard";
 
 function resolveMsgInbox(
   accountRole: "buyer" | "seller" | "admin",
@@ -74,7 +75,7 @@ function mapConvMessages(
 ): ThreadRow["messages"] {
   return raw.map((m) => ({
     senderRole: m.senderRole,
-    text: m.text,
+    text: redactContactSharingInText(m.text),
     createdAt: m.createdAt,
     senderLabel:
       role === "buyer"
@@ -325,6 +326,9 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
 
   const supportId = await getPrimarySupportAdminId();
 
+  const trimmedText = String(text).trim();
+  assertNoContactSharing(trimmedText);
+
   if (supportId && peerOid.equals(supportId)) {
     const buyerId = myOid;
     const sellerId = supportId;
@@ -333,7 +337,7 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
     conv.messages.push({
       senderId: myOid,
       senderRole: "buyer",
-      text: String(text).trim(),
+      text: trimmedText,
       createdAt: new Date()
     });
     await conv.save();
@@ -412,12 +416,12 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
   conv.messages.push({
     senderId: myOid,
     senderRole,
-    text: String(text).trim(),
+    text: trimmedText,
     createdAt: new Date()
   });
   await conv.save();
 
-  const previewRaw = String(text).trim();
+  const previewRaw = trimmedText;
   const preview = previewRaw.length > 160 ? `${previewRaw.slice(0, 160)}…` : previewRaw;
   fireNotification(peerOid, {
     type: "message_received",

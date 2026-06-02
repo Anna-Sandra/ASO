@@ -55,6 +55,7 @@ import {
 } from "config/listingCategoryFields";
 import { LISTING_STOCK_WHEN_AVAILABLE } from "config/listingStock";
 import { formatGhc } from "utils/money";
+import { containsContactSharing, CONTACT_SHARING_BLOCKED_MESSAGE } from "utils/contactSharingGuard";
 import { formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
 import { h, f } from "utils/h";
 import {
@@ -76,8 +77,49 @@ import {
 const MAX_PRODUCT_IMAGES = 500;
 /** Must match backend `MAX_PRODUCT_IMAGES_PER_UPLOAD`. */
 const UPLOAD_IMAGES_CHUNK = 40;
-function vendorListingAddonsBlock(h, Field, TextInput, meta, addons, setAddons, addonLabel, setAddonLabel, addonPrice, setAddonPrice) {
+function vendorAddonPriceLabel(kind) {
+  return kind === "remove" ? "Discount when removed (GHS, 0 or negative)" : "Extra charge (GHS)";
+}
+
+function vendorAddonsPayload(addons) {
+  return addons
+    .map((a) => {
+      const kind = a.kind === "remove" ? "remove" : "add";
+      const raw = Number(a.priceDelta) || 0;
+      return {
+        label: String(a.label || "").trim(),
+        kind,
+        priceDelta: kind === "add" ? Math.max(0, raw) : Math.min(0, raw)
+      };
+    })
+    .filter((a) => a.label);
+}
+
+function vendorFormatAddonRow(a) {
+  const kind = a.kind === "remove" ? "remove" : "add";
+  const d = Number(a.priceDelta) || 0;
+  const prefix = kind === "remove" ? "Remove · " : "Add · ";
+  if (d === 0) return `${prefix}${a.label} (no price change)`;
+  if (d > 0) return `${prefix}${a.label} +${formatGhc(d)}`;
+  return `${prefix}${a.label} ${formatGhc(d)}`;
+}
+
+function vendorListingAddonsBlock(
+  h,
+  Field,
+  TextInput,
+  meta,
+  addons,
+  setAddons,
+  addonKind,
+  setAddonKind,
+  addonLabel,
+  setAddonLabel,
+  addonPrice,
+  setAddonPrice
+) {
   if (!meta.showAddons) return null;
+  const isRemove = addonKind === "remove";
   return h(
     "div",
     { key: "addons-section", className: "space-y-3 rounded-2xl border border-slate-200 p-4 dark:border-white/10" },
@@ -87,7 +129,7 @@ function vendorListingAddonsBlock(h, Field, TextInput, meta, addons, setAddons, 
         h(
           "p",
           { key: "addon-hint", className: "mt-1 text-xs text-slate-500 dark:text-slate-400" },
-          meta.addonsHint || "Buyers can select these at checkout."
+          meta.addonsHint || "Buyers tap to add extras or remove ingredients on the product page; price updates automatically."
         )
       ]),
       addons.length > 0
@@ -102,11 +144,7 @@ function vendorListingAddonsBlock(h, Field, TextInput, meta, addons, setAddons, 
                   className: "flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 dark:bg-white/5"
                 },
                 [
-                  h(
-                    "span",
-                    { key: "lbl", className: "text-sm text-slate-800 dark:text-slate-200" },
-                    `${a.label}${Number(a.priceDelta) > 0 ? ` +${formatGhc(Number(a.priceDelta))}` : " (free)"}`
-                  ),
+                  h("span", { key: "lbl", className: "text-sm text-slate-800 dark:text-slate-200" }, vendorFormatAddonRow(a)),
                   h(
                     "button",
                     {
@@ -115,40 +153,69 @@ function vendorListingAddonsBlock(h, Field, TextInput, meta, addons, setAddons, 
                       onClick: () => setAddons((prev) => prev.filter((_, j) => j !== i)),
                       className: "text-xs font-medium text-rose-500 hover:text-rose-700"
                     },
-                    "Remove"
+                    "Delete"
                   )
                 ]
               )
             )
           )
         : null,
+      h("div", { key: "kind-row", className: "flex flex-wrap gap-2" }, [
+        h(
+          "button",
+          {
+            key: "kind-add",
+            type: "button",
+            onClick: () => setAddonKind("add"),
+            className: `rounded-full px-3 py-1.5 text-xs font-semibold ${
+              !isRemove
+                ? "bg-sky-600 text-white"
+                : "border border-slate-200 bg-white text-slate-600 dark:border-white/15 dark:bg-night-900 dark:text-slate-300"
+            }`
+          },
+          "Add extra"
+        ),
+        h(
+          "button",
+          {
+            key: "kind-remove",
+            type: "button",
+            onClick: () => setAddonKind("remove"),
+            className: `rounded-full px-3 py-1.5 text-xs font-semibold ${
+              isRemove
+                ? "bg-rose-600 text-white"
+                : "border border-slate-200 bg-white text-slate-600 dark:border-white/15 dark:bg-night-900 dark:text-slate-300"
+            }`
+          },
+          "Remove ingredient"
+        )
+      ]),
       h("div", { key: "addon-add", className: "flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-2" }, [
         h(
           "div",
           { key: "lbl-w", className: "min-w-0 flex-1" },
           h(
             Field,
-            { key: "addon-lbl-field", label: "Option label" },
+            { key: "addon-lbl-field", label: isRemove ? "Ingredient to remove" : "Extra name" },
             h(TextInput, {
               value: addonLabel,
               onChange: (e) => setAddonLabel(e.target.value),
-              placeholder: "e.g. Chicken, Extra soup"
+              placeholder: isRemove ? "e.g. Wele, Shito, Onions" : "e.g. Extra chicken, Avocado"
             })
           )
         ),
         h(
           "div",
-          { key: "pr-w", className: "w-full sm:w-36" },
+          { key: "pr-w", className: "w-full sm:w-44" },
           h(
             Field,
-            { key: "addon-price-field", label: "Extra (GHS)" },
+            { key: "addon-price-field", label: vendorAddonPriceLabel(addonKind) },
             h(TextInput, {
               type: "number",
               step: "0.01",
-              min: "0",
               value: addonPrice,
               onChange: (e) => setAddonPrice(e.target.value),
-              placeholder: "0"
+              placeholder: isRemove ? "0 or -2" : "0"
             })
           )
         ),
@@ -160,14 +227,16 @@ function vendorListingAddonsBlock(h, Field, TextInput, meta, addons, setAddons, 
             onClick: () => {
               const lbl = addonLabel.trim();
               if (!lbl) return;
-              const delta = Math.max(0, Number(addonPrice) || 0);
-              setAddons((prev) => [...prev, { label: lbl, priceDelta: delta }]);
+              const kind = isRemove ? "remove" : "add";
+              const raw = Number(addonPrice) || 0;
+              const priceDelta = kind === "add" ? Math.max(0, raw) : Math.min(0, raw);
+              setAddons((prev) => [...prev, { label: lbl, kind, priceDelta }]);
               setAddonLabel("");
               setAddonPrice("");
             },
             className: "mb-1 rounded-xl bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 sm:shrink-0"
           },
-          "+ Add"
+          "Add option"
         )
       ])
     ]
@@ -1347,6 +1416,7 @@ export function VendorAddProductPage() {
   const [category, setCategory] = useState("food_drinks");
   const [price, setPrice] = useState("");
   const [addons, setAddons] = useState([]);
+  const [addonKind, setAddonKind] = useState("add");
   const [addonLabel, setAddonLabel] = useState("");
   const [addonPrice, setAddonPrice] = useState("");
   const [inStock, setInStock] = useState(true);
@@ -1426,12 +1496,7 @@ export function VendorAddProductPage() {
       const urls = imageList.slice(0, MAX_PRODUCT_IMAGES);
       const nextStatus = asDraft ? "draft" : "active";
       const attrsPayload = buildCategoryAttributesPayload(category, attrs);
-      const addonsPayload = (m.showAddons ? addons : [])
-        .map((a) => ({
-          label: String(a.label || "").trim(),
-          priceDelta: Math.max(0, Number(a.priceDelta) || 0)
-        }))
-        .filter((a) => a.label);
+      const addonsPayload = m.showAddons ? vendorAddonsPayload(addons) : [];
       const body = {
         name: trimmedName,
         description: description.trim(),
@@ -1556,6 +1621,8 @@ export function VendorAddProductPage() {
     meta,
     addons,
     setAddons,
+    addonKind,
+    setAddonKind,
     addonLabel,
     setAddonLabel,
     addonPrice,
@@ -1664,6 +1731,7 @@ export function VendorEditProductPage() {
   const [category, setCategory] = useState("food_drinks");
   const [price, setPrice] = useState("");
   const [addons, setAddons] = useState([]);
+  const [addonKind, setAddonKind] = useState("add");
   const [addonLabel, setAddonLabel] = useState("");
   const [addonPrice, setAddonPrice] = useState("");
   const [inStock, setInStock] = useState(true);
@@ -1722,11 +1790,7 @@ export function VendorEditProductPage() {
         setTagSale(promo.tagSale);
         setTagExtras(promo.tagExtras);
         setAttrs(mergeAttrsFromServer(cat, p.categoryAttributes));
-        setAddons(
-          Array.isArray(p.addons)
-            ? p.addons.map((a) => ({ label: String(a.label || "").trim(), priceDelta: Math.max(0, Number(a.priceDelta) || 0) })).filter((a) => a.label)
-            : []
-        );
+        setAddons(Array.isArray(p.addons) ? vendorAddonsPayload(p.addons) : []);
         setImageList(Array.isArray(p.imageUrls) ? [...p.imageUrls] : []);
         if (p.businessId) setBusinessId(String(p.businessId));
         if (p.menuSectionId) setMenuSectionId(String(p.menuSectionId));
@@ -1793,12 +1857,7 @@ export function VendorEditProductPage() {
           return;
         }
       }
-      const addonsPayload = (m.showAddons ? addons : [])
-        .map((a) => ({
-          label: String(a.label || "").trim(),
-          priceDelta: Math.max(0, Number(a.priceDelta) || 0)
-        }))
-        .filter((a) => a.label);
+      const addonsPayload = m.showAddons ? vendorAddonsPayload(addons) : [];
       await apiFetch(`/api/products/${productId}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -1910,6 +1969,8 @@ export function VendorEditProductPage() {
     meta,
     addons,
     setAddons,
+    addonKind,
+    setAddonKind,
     addonLabel,
     setAddonLabel,
     addonPrice,
@@ -2541,6 +2602,10 @@ export function VendorMessagesPage() {
     const pid = String(peerUserId || "");
     const text = String(replyByPeer[pid] || "").trim();
     if (!text || !accessToken) return;
+    if (containsContactSharing(text)) {
+      setErr(CONTACT_SHARING_BLOCKED_MESSAGE);
+      return;
+    }
     setErr("");
     setSending(pid);
     try {
@@ -3237,13 +3302,13 @@ export function VendorSettingsPage() {
         h(
           "p",
           { className: "mb-4 text-sm text-slate-600 dark:text-slate-400" },
-          "Shoppers see your display name, phone, and email on product pages. Payout account details (MoMo or bank) are configured in the Paystack section below — not shown on listings."
+          "Shoppers only see your display name on listings. Messages stay in-app — phone and email are not shown to buyers. Payout details are configured in the Paystack section below."
         ),
         h(Field, { label: "Display name" }, h(TextInput, { value: displayName, onChange: (e) => setDisplayName(e.target.value) })),
-        h(Field, { label: "Contact email" }, h(TextInput, { type: "email", value: email, disabled: true })),
+        h(Field, { label: "Account email" }, h(TextInput, { type: "email", value: email, disabled: true })),
         h(
           Field,
-          { label: "Phone number (shown to buyers for MoMo / calls)" },
+          { label: "Phone (your account — not shared with buyers)" },
           h(TextInput, {
             type: "tel",
             value: phone,

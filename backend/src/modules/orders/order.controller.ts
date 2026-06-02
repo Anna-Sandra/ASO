@@ -25,6 +25,7 @@ import {
 import { notifyOrderCancelledForCounterparties, notifyOrderMessageRecipients, notifySellersNewOrder, notifySellersPaymentSubmitted, fireNotification } from "../notifications/notification.service";
 import { maybeReleaseVendorPayoutAfterConfirm } from "./orderPaymentSideEffects";
 import { checkoutListingUnitBeforeAddons } from "../promotions/promotionDeal.service";
+import { assertNoContactSharing } from "../../utils/contactSharingGuard";
 
 type InboxMsg = { senderRole: string; text: string; createdAt: Date; senderId: mongoose.Types.ObjectId | string };
 
@@ -107,12 +108,18 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     if (!p || p.status !== "active") throw new HttpError(400, `Product unavailable: ${row.productId}`);
     const baseList = await checkoutListingUnitBeforeAddons(p._id, Number(p.price));
     const addonExtra = addonDeltaForProduct(p.toObject() as ProductDoc, row.selectedAddonLabels);
-    const listUnit = roundMoney(baseList + addonExtra);
+    const listUnit = roundMoney(Math.max(0, baseList + addonExtra));
     if (!(listUnit > 0)) {
       throw new HttpError(400, `Listing has no checkout price: ${p.name}`);
     }
     if (p.stock < row.quantity) throw new HttpError(400, `Insufficient stock for ${p.name}`);
-    const note = typeof row.customization === "string" ? row.customization.trim().slice(0, 280) : "";
+    const noteRaw = typeof row.customization === "string" ? row.customization.trim() : "";
+    const addonLabels = Array.isArray(row.selectedAddonLabels)
+      ? row.selectedAddonLabels.map((l) => String(l).trim()).filter(Boolean)
+      : [];
+    const addonLine = addonLabels.length ? `Options: ${addonLabels.join(", ")}` : "";
+    const note = [noteRaw, addonLine].filter(Boolean).join("\n").slice(0, 280);
+    if (note) assertNoContactSharing(note, "Customization note");
     const merged = { ...(p.toObject() as ProductDoc), price: listUnit };
     validated.push({ p: merged, qty: row.quantity, note });
   }
@@ -340,7 +347,13 @@ export const getOrder = asyncHandler(async (req: Request, res: Response) => {
   };
 
   if (req.user?.role === "admin") {
-    return stripAndRespond(o as unknown as Record<string, unknown>, true);
+    const plain = { ...(o as unknown as Record<string, unknown>) };
+    delete plain.guestAccessSecret;
+    const [order] = await withContacts([plain], {
+      includeBuyerPaymentDetails: true,
+      includePrivateContactDetails: true
+    });
+    return res.json({ order });
   }
 
   if (o.buyerId) {
@@ -375,10 +388,12 @@ export const addOrderMessage = asyncHandler(async (req: Request, res: Response) 
   const isSeller = order.items.some((it) => it.sellerId.toString() === uid);
   if (!isBuyer && !isSeller) throw new HttpError(403, "Forbidden");
 
+  const body = text.trim();
+  assertNoContactSharing(body);
   order.messages.push({
     senderId: new mongoose.Types.ObjectId(uid),
     senderRole: isBuyer ? "buyer" : "seller",
-    text: text.trim(),
+    text: body,
     createdAt: new Date()
   });
   await order.save();
@@ -469,6 +484,7 @@ export const cancelMyOrder = asyncHandler(async (req: Request, res: Response) =>
   const reason = typeof (req.body as { reason?: unknown })?.reason === "string"
     ? String((req.body as { reason: string }).reason).trim().slice(0, 500)
     : "";
+  if (reason) assertNoContactSharing(reason, "Cancellation reason");
 
   order.status = "cancelled";
   order.confirmedSellerIds = [];

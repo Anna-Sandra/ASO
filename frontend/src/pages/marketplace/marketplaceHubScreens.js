@@ -966,9 +966,9 @@ export function BusinessStorefrontPage() {
     business?.deliveryFee != null &&
     Number.isFinite(Number(business.deliveryFee)) &&
     Number(business.deliveryFee) > 0
-      ? `${formatGhc(Number(business.deliveryFee))} delivery fee`
+      ? `${formatGhc(Number(business.deliveryFee))} delivery`
       : deliveryOk
-        ? "Delivery fees — confirm at checkout / with seller"
+        ? "Delivery cost — confirm with seller"
         : pickupOk
           ? "Pickup — arrange with seller"
           : "Contact seller";
@@ -1246,7 +1246,7 @@ export function BusinessStorefrontPage() {
                               "Service",
                               storefrontServiceSnippet
                             ),
-                            infoTile(h(Sparkles, { className: "h-5 w-5" }), "Fees", feeLine)
+                            infoTile(h(Sparkles, { className: "h-5 w-5" }), "Delivery", feeLine)
                           ]
                         ),
                         h(

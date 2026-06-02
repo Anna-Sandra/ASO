@@ -52,7 +52,7 @@ export function BuyerWalletPage() {
             h(
               "p",
               { key: "p", className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
-              "Complete checkout with card or supported mobile money on the Paystack screen. Fees are estimated in your cart before you confirm."
+              "Complete checkout with card or supported mobile money on the Paystack screen."
             )
           ]
         ),

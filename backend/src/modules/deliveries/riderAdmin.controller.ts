@@ -8,6 +8,7 @@ import { RiderProfile } from "./riderProfile.model";
 import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import { adminCreateRiderSchema } from "./delivery.schemas";
 import { adminRidersQuerySchema } from "../admin/admin.schemas";
+import { recordAdminAuditEvent } from "../admin/adminAuditEvent.model";
 
 const SALT_ROUNDS = 12;
 
@@ -102,6 +103,12 @@ export const postAdminCreateRider = asyncHandler(async (req: Request, res: Respo
   await RiderProfile.create({
     userId: user._id,
     vehicleType: body.vehicleType.trim()
+  });
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "rider.create",
+    title: `Rider added — ${(body.displayName?.trim() || email).slice(0, 60)}`,
+    detail: email
   });
   res.status(201).json({
     ok: true,

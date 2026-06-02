@@ -3,6 +3,7 @@ import { protect, authorize, requireSuperAdmin } from "../../middleware/auth";
 import { requireAdminEnvSecret } from "../../middleware/adminSecret";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody, validateQuery } from "../../middleware/validate";
+import { attachAdminPermissions, requireAdminPermission } from "../../middleware/adminPermissions";
 import {
   adminBadges,
   adminBulkCleanup,
@@ -27,6 +28,7 @@ import {
   getAdminConversation,
   getAdminConversationWithUser,
   getAdminPlatformSettings,
+  getAdminMyPermissions,
   getAdminRevenue,
   getAdminSellerBalances,
   getAdminUserSummary,
@@ -82,6 +84,7 @@ import {
   adminResetPasswordSchema,
   adminUsersQuerySchema,
   adminRidersQuerySchema,
+  adminCreateVendorSchema,
   grantAdminBodySchema
 } from "./admin.schemas";
 import { conversationMessageSchema } from "../conversations/conversation.schemas";
@@ -89,356 +92,184 @@ import { adminVendorApplicationsQuerySchema, patchVendorApplicationSchema } from
 import { adminCourierApplicationsQuerySchema, patchCourierApplicationSchema } from "../courierApplications/courierApplication.schemas";
 import { adminCreateRiderSchema } from "../deliveries/delivery.schemas";
 import { listAdminRiders, postAdminCreateRider } from "../deliveries/riderAdmin.controller";
+import { postAdminCreateVendor } from "./vendorAdmin.controller";
 
 const router = Router();
 
-router.get(
-  "/riders",
+const adminBase = [
   protect,
   requireActiveAccount,
   authorize("admin"),
   requireAdminEnvSecret,
-  validateQuery(adminRidersQuerySchema),
-  listAdminRiders
-);
+  attachAdminPermissions
+] as const;
 
+const p = requireAdminPermission;
+
+router.get("/permissions", ...adminBase, getAdminMyPermissions);
+
+router.use(...adminBase);
+
+router.get("/riders", p("riders"), validateQuery(adminRidersQuerySchema), listAdminRiders);
 router.post(
   "/riders",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  requireSuperAdmin,
   validateBody(adminCreateRiderSchema),
   postAdminCreateRider
 );
+router.post("/vendors", requireSuperAdmin, validateBody(adminCreateVendorSchema), postAdminCreateVendor);
 
-router.get("/dashboard", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, adminDashboard);
-router.get("/badges", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, adminBadges);
-router.get("/users", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminUsersQuerySchema), listAdminUsers);
-router.post(
-  "/users/grant-admin",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  validateBody(grantAdminBodySchema),
-  grantAdmin
-);
-router.post(
-  "/users/revoke-admin",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  validateBody(grantAdminBodySchema),
-  revokeAdmin
-);
-router.patch("/users/:id", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateBody(adminPatchUserSchema), patchAdminUser);
+router.get("/dashboard", p("dashboard"), adminDashboard);
+router.get("/badges", p("dashboard"), adminBadges);
+router.get("/users", p("users"), validateQuery(adminUsersQuerySchema), listAdminUsers);
+router.post("/users/grant-admin", requireSuperAdmin, validateBody(grantAdminBodySchema), grantAdmin);
+router.post("/users/revoke-admin", requireSuperAdmin, validateBody(grantAdminBodySchema), revokeAdmin);
+router.patch("/users/:id", p("users", "users_manage"), validateBody(adminPatchUserSchema), patchAdminUser);
 router.post(
   "/sellers/:id/reactivate-listings",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("sellers", "sellers_manage"),
   reactivateSellerListings
 );
 router.get(
   "/businesses",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("stores"),
   validateQuery(adminBusinessesQuerySchema),
   listAdminBusinesses
 );
-router.post("/businesses/:id/approve", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, approveAdminBusiness);
+router.post("/businesses/:id/approve", p("stores", "stores_manage"), approveAdminBusiness);
 router.post(
   "/businesses/:id/reject",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("stores", "stores_manage"),
   validateBody(adminRejectBusinessSchema),
   rejectAdminBusiness
 );
-router.get("/products", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminProductsQuerySchema), listAdminProducts);
+router.get("/products", p("listings"), validateQuery(adminProductsQuerySchema), listAdminProducts);
 router.post(
   "/products/bulk-approve",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("listings", "listings_manage"),
   validateBody(adminApproveProductsBulkSchema),
   approveProductsBulk
 );
-router.post("/products/:id/approve", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, approveProduct);
-router.post(
-  "/products/auto-tag-all",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  autoTagAllProductsAdmin
-);
+router.post("/products/:id/approve", p("listings", "listings_manage"), approveProduct);
+router.post("/products/auto-tag-all", p("listings", "listings_manage"), autoTagAllProductsAdmin);
 router.post(
   "/products/:id/reject",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("listings", "listings_manage"),
   validateBody(adminRejectProductSchema),
   rejectProduct
 );
-router.get("/orders", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminOrdersQuerySchema), listAdminOrders);
-router.get("/revenue", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminRevenue);
-router.get("/sellers/balances", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminSellerBalances);
+router.get("/orders", p("orders"), validateQuery(adminOrdersQuerySchema), listAdminOrders);
+router.get("/revenue", p("payments"), getAdminRevenue);
+router.get("/sellers/balances", p("payments"), getAdminSellerBalances);
 router.get(
   "/vendor-applications",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("vendor_apps"),
   validateQuery(adminVendorApplicationsQuerySchema),
   listVendorApplications
 );
 router.patch(
   "/vendor-applications/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("vendor_apps", "vendor_apps_manage"),
   validateBody(patchVendorApplicationSchema),
   patchAdminVendorApplication
 );
 router.post(
   "/vendor-applications/:id/resend-activation",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("vendor_apps", "vendor_apps_manage"),
   resendVendorApplicationActivation
 );
 router.post(
   "/vendor-applications/:id/sync-seller-role",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("vendor_apps", "vendor_apps_manage"),
   syncVendorApplicationSellerRole
 );
 router.get(
   "/courier-applications",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("courier_apps"),
   validateQuery(adminCourierApplicationsQuerySchema),
   listCourierApplications
 );
 router.patch(
   "/courier-applications/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("courier_apps", "courier_apps_manage"),
   validateBody(patchCourierApplicationSchema),
   patchAdminCourierApplication
 );
-router.get("/settings", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminPlatformSettings);
+router.get("/settings", requireSuperAdmin, getAdminPlatformSettings);
 router.patch(
   "/settings",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
   requireSuperAdmin,
   validateBody(adminPlatformSettingsSchema),
   patchAdminPlatformSettings
 );
 router.post(
   "/settings/email-test",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
   requireSuperAdmin,
   validateBody(adminEmailTestSchema),
   postAdminSettingsEmailTest
 );
-router.get(
-  "/email-logs",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  validateQuery(adminEmailLogsQuerySchema),
-  listAdminEmailLogs
-);
-router.get("/reports", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminReportsQuerySchema), listAdminReports);
+router.get("/email-logs", p("logs"), validateQuery(adminEmailLogsQuerySchema), listAdminEmailLogs);
+router.get("/reports", p("reports"), validateQuery(adminReportsQuerySchema), listAdminReports);
 router.patch(
   "/reports/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("reports", "reports_manage"),
   validateBody(adminReportPatchSchema),
   patchAdminReport
 );
-router.get("/conversations", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, validateQuery(adminListQuerySchema), listAdminConversations);
-router.get("/conversations/with-user/:userId", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminConversationWithUser);
+router.get("/conversations", p("messages"), validateQuery(adminListQuerySchema), listAdminConversations);
+router.get("/conversations/with-user/:userId", p("messages"), getAdminConversationWithUser);
 router.post(
   "/conversations/with-user/:userId/messages",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("messages", "messages_reply"),
   validateBody(conversationMessageSchema),
   postAdminMessageToUser
 );
-router.get("/conversations/:id", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminConversation);
-router.get("/users/:id/summary", protect, requireActiveAccount, authorize("admin"), requireAdminEnvSecret, getAdminUserSummary);
+router.get("/conversations/:id", p("messages"), getAdminConversation);
+router.get("/users/:id/summary", p("users"), getAdminUserSummary);
 router.post(
   "/users/:id/reset-password",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
+  p("users_reset_password"),
   validateBody(adminResetPasswordSchema),
   resetAdminUserPassword
 );
-router.post(
-  "/orders/:id/refund-paystack",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  refundAdminOrderPaystack
-);
-router.post(
-  "/orders/:id/mark-paid",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  markAdminOrderPaid
-);
+router.post("/orders/:id/refund-paystack", p("orders", "orders_refund"), refundAdminOrderPaystack);
+router.post("/orders/:id/mark-paid", p("orders", "orders_mark_paid"), markAdminOrderPaid);
 router.patch(
   "/orders/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("orders", "orders_manage"),
   validateBody(adminOrderPatchSchema),
   patchAdminOrder
 );
 router.patch(
   "/products/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("listings", "listings_manage"),
   validateBody(adminProductPatchSchema),
   patchAdminProduct
 );
-router.delete(
-  "/products/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  deleteAdminProduct
-);
-router.delete(
-  "/reports/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  deleteAdminReport
-);
-router.delete(
-  "/orders/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  deleteAdminOrder
-);
-router.delete(
-  "/vendor-applications/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  deleteAdminVendorApplication
-);
-router.delete(
-  "/courier-applications/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  deleteAdminCourierApplication
-);
-router.delete(
-  "/users/:id",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  deleteAdminUser
-);
-router.post(
-  "/cleanup",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  requireSuperAdmin,
-  adminBulkCleanup
-);
+router.delete("/products/:id", requireSuperAdmin, deleteAdminProduct);
+router.delete("/reports/:id", requireSuperAdmin, deleteAdminReport);
+router.delete("/orders/:id", requireSuperAdmin, deleteAdminOrder);
+router.delete("/vendor-applications/:id", requireSuperAdmin, deleteAdminVendorApplication);
+router.delete("/courier-applications/:id", requireSuperAdmin, deleteAdminCourierApplication);
+router.delete("/users/:id", requireSuperAdmin, deleteAdminUser);
+router.post("/cleanup", requireSuperAdmin, adminBulkCleanup);
 
 router.get(
   "/promotions",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("promotions"),
   validateQuery(adminPromotionsQuerySchema),
   adminListPromotions
 );
 router.post(
   "/promotions",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("promotions", "promotions_manage"),
   validateBody(adminCreatePromotionSchema),
   adminCreatePlatformPromotion
 );
-router.post(
-  "/promotions/:id/approve",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
-  adminApprovePromotion
-);
+router.post("/promotions/:id/approve", p("promotions", "promotions_manage"), adminApprovePromotion);
 router.post(
   "/promotions/:id/reject",
-  protect,
-  requireActiveAccount,
-  authorize("admin"),
-  requireAdminEnvSecret,
+  p("promotions", "promotions_manage"),
   validateBody(adminRejectPromotionSchema),
   adminRejectPromotion
 );

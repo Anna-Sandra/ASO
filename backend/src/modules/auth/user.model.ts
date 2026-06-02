@@ -11,9 +11,9 @@ export function normalizeUserRole(role: unknown): UserRole {
   return "buyer";
 }
 
-/** Expose phone for sellers (MoMo / buyer payment contact) and riders (delivery contact). Hidden for buyers and admins. */
+/** Expose phone only for riders (delivery contact). Buyers and sellers communicate in-app — no public phone. */
 export function publicPhoneForPaymentRole(role: UserRole, phone?: string | null): string {
-  if (role !== "seller" && role !== "rider") return "";
+  if (role !== "rider") return "";
   return typeof phone === "string" ? phone.trim() : "";
 }
 

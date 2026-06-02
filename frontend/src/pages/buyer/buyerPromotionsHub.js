@@ -496,11 +496,7 @@ export function BuyerDealsPage() {
               { className: "grid gap-5 sm:grid-cols-2 lg:grid-cols-3" },
               vendors.map((p) => h(VendorPromoCard, { key: p.id, promo: p }))
             )
-          ]),
-        h(InlineNotice, { key: "fee", variant: "info", className: "mt-10" }, [
-          h(Percent, { className: "mr-2 inline h-4 w-4 shrink-0", "aria-hidden": true }),
-          "Totals at checkout include platform and payment fees where applicable — see the cart breakdown."
-        ])
+          ])
       ])
     ),
     h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })

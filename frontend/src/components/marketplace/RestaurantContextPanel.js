@@ -63,8 +63,8 @@ export function RestaurantContextPanel({ product }) {
             { className: "mt-1 text-xs text-slate-600 dark:text-slate-400" },
             store.sellerOnly
               ? store.isRestaurant || product?.category === "food_drinks"
-                ? "This seller has not set up a store menu yet. Use Message seller below or Place order for this dish."
-                : "This seller lists on SHOPIQGH without a storefront — message them below to buy."
+                ? "This seller has not set up a store menu yet. Use Place order for this dish."
+                : "This seller lists on SHOPIQGH without a storefront — use Place order or checkout to buy."
               : store.isRestaurant
                 ? "This dish is on their menu. Order here or browse everything they serve."
                 : "Browse all listings from this store."

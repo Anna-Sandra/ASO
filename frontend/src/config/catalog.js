@@ -8,7 +8,7 @@ export const CATEGORIES = [
   { id: "beauty_personal_care", label: "Beauty & Personal Care" },
   { id: "babies_infants", label: "Babies & Infants" },
   { id: "services", label: "Services" },
-  { id: "books_academic", label: "Books & Academic Materials" },
+  { id: "books_academic", label: "Books & Academics" },
   { id: "groceries_essentials", label: "Groceries & Essentials" }
 ];
 
@@ -28,6 +28,7 @@ export function withAllCategoryFirst(rows) {
 
 export const FILTERS = [
   { id: "all", label: "All" },
+  { id: "sales", label: "Sales" },
   { id: "new", label: "New" },
   { id: "popular", label: "Popular" }
 ];
@@ -50,7 +51,7 @@ export const CATEGORY_LABELS = {
   beauty_personal_care: "Beauty & Personal Care",
   babies_infants: "Babies & Infants",
   services: "Services",
-  books_academic: "Books & Academic Materials",
+  books_academic: "Books & Academics",
   groceries_essentials: "Groceries & Essentials"
 };
 
@@ -101,6 +102,30 @@ export function isOfflineQuoteCategory() {
 }
 
 /**
+ * Food / service listings with no list price — buyers use the request form instead of cart.
+ * @param {{ category?: string, price?: number } | null | undefined} entity
+ */
+export function usesRequestInsteadOfCart(entity) {
+  if (!entity || typeof entity !== "object") return false;
+  if (isOfflineQuoteCategory(entity)) return true;
+  const listPx = Number(entity.price) || 0;
+  if (listPx > 0) return false;
+  return isServicesCategory(entity) || isFoodCallToOrderCategory(entity);
+}
+
+/**
+ * Whether shoppers (including guests) can add this listing to cart and check out.
+ * @param {{ category?: string, price?: number, stock?: number } | null | undefined} entity
+ */
+export function canAddProductToCart(entity) {
+  if (!entity || typeof entity !== "object") return false;
+  if (usesRequestInsteadOfCart(entity)) return false;
+  const listPx = Number(entity.price) || 0;
+  if (!(listPx > 0)) return false;
+  return (Number(entity.stock) || 0) > 0;
+}
+
+/**
  * Per-order buyer notes in cart — food, services, or any listing with vendor-defined add-ons.
  * @param {{ category?: string, addons?: unknown[] } | null | undefined} entity
  */
@@ -112,14 +137,127 @@ export function supportsCartCustomizationNotes(entity) {
 }
 
 
+/** Listings with an active deal, compare-at markdown, or `sale` tag. */
+export function productHasSale(p) {
+  if (!p || typeof p !== "object") return false;
+  const tags = /** @type {string[]} */ ((p.tags || []).map((t) => String(t || "").toLowerCase()));
+  if (tags.includes("sale")) return true;
+  if (p.activeDeal && typeof p.activeDeal === "object") return true;
+  const list = Number(p.price);
+  const cmp = Number(p.compareAtPrice);
+  return Number.isFinite(cmp) && Number.isFinite(list) && cmp > list && list > 0;
+}
+
+const NEW_LISTING_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** `new` tag or first published within the last 30 days. */
+export function productIsNewListing(p) {
+  if (!p || typeof p !== "object") return false;
+  const tags = /** @type {string[]} */ ((p.tags || []).map((t) => String(t || "").toLowerCase()));
+  if (tags.includes("new")) return true;
+  const created = p.createdAt ? new Date(String(p.createdAt)).getTime() : NaN;
+  return Number.isFinite(created) && Date.now() - created <= NEW_LISTING_MS;
+}
+
+/** `popular` tag, recent sales/views, or strong review volume. */
+export function productIsPopularListing(p) {
+  if (!p || typeof p !== "object") return false;
+  const tags = /** @type {string[]} */ ((p.tags || []).map((t) => String(t || "").toLowerCase()));
+  if (tags.includes("popular")) return true;
+  if (Math.floor(Number(p.soldLast7Days) || 0) >= 1) return true;
+  if (Math.floor(Number(p.recentViewers) || 0) >= 5) return true;
+  if (Math.floor(Number(p.reviewCount) || 0) >= 3) return true;
+  return false;
+}
+
 /** @param {Record<string, unknown>} p */
+function saleDiscountPercent(p) {
+  const list = Number(p.price);
+  const cmp = Number(p.compareAtPrice);
+  if (Number.isFinite(cmp) && Number.isFinite(list) && cmp > list && list > 0) {
+    return Math.round(((cmp - list) / cmp) * 100);
+  }
+  return p.activeDeal ? 10 : 0;
+}
+
+/** @param {Record<string, unknown>} p */
+function popularListingScore(p) {
+  return (
+    Math.floor(Number(p.soldLast7Days) || 0) * 10 +
+    Math.floor(Number(p.reviewCount) || 0) * 3 +
+    Math.floor(Number(p.recentViewers) || 0)
+  );
+}
+
+/** Sidebar browse filter: all | sales | new | popular */
 export function productMatchesFilter(p, filId) {
-  const tags = /** @type {string[]} */ (p.tags || []);
-  if (filId === "all") return true;
-  if (filId === "new") return tags.includes("new");
-  if (filId === "popular") return tags.includes("popular");
-  
+  const id = String(filId || "all");
+  if (id === "all") return true;
+  if (id === "sales") return productHasSale(p);
+  if (id === "new") return productIsNewListing(p);
+  if (id === "popular") return productIsPopularListing(p);
   return true;
+}
+
+/** @param {Record<string, unknown>[]} products @param {string} filId */
+export function sortProductsByBrowseFilter(products, filId) {
+  const id = String(filId || "all");
+  const list = Array.isArray(products) ? [...products] : [];
+  if (id === "all") return list;
+  if (id === "sales") {
+    return list.sort((a, b) => saleDiscountPercent(b) - saleDiscountPercent(a));
+  }
+  if (id === "new") {
+    return list.sort(
+      (a, b) => new Date(String(b.createdAt || 0)).getTime() - new Date(String(a.createdAt || 0)).getTime()
+    );
+  }
+  if (id === "popular") {
+    return list.sort((a, b) => popularListingScore(b) - popularListingScore(a));
+  }
+  return list;
+}
+
+/** @param {string} filId */
+export function browseFilterLabel(filId) {
+  switch (String(filId || "all")) {
+    case "sales":
+      return "Sales";
+    case "new":
+      return "New";
+    case "popular":
+      return "Popular";
+    default:
+      return "All";
+  }
+}
+
+/** @param {string} filId */
+export function browseFilterSectionTitle(filId) {
+  switch (String(filId || "all")) {
+    case "sales":
+      return "On sale now";
+    case "new":
+      return "New arrivals";
+    case "popular":
+      return "Popular right now";
+    default:
+      return "Browse menu items";
+  }
+}
+
+/** @param {string} filId */
+export function browseFilterEmptyHint(filId) {
+  switch (String(filId || "all")) {
+    case "sales":
+      return "No discounted listings in this view yet. Try All, or check back when vendors run promos.";
+    case "new":
+      return "No new listings in the last 30 days here. Try All or another category.";
+    case "popular":
+      return "Nothing trending in this category yet. Try All to see everything.";
+    default:
+      return "No menu items match your filters.";
+  }
 }
 
 /**

@@ -2,7 +2,10 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { Heart, ShoppingCart, Star, Store, User, AlarmClock } from "lucide-react";
 import { h } from "utils/h";
-import { isFoodCallToOrderCategory, isOfflineQuoteCategory } from "config/catalog";
+import { canAddProductToCart, usesRequestInsteadOfCart } from "config/catalog";
+import { productShowsCustomizationUi } from "components/products/ProductCustomizationPanel";
+import { productAddonDefs } from "utils/productAddons";
+import { useNavigate } from "react-router-dom";
 import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
 import {
   productFeedPriceLabel,
@@ -47,6 +50,7 @@ export function MenuItemFeedCard({
   const { add } = useCart();
   const { isSaved, toggleSaved } = useSavedProducts();
   const pricingOpts = useCheckoutPricingOptions();
+  const nav = useNavigate();
 
   if (!product?.id) return null;
 
@@ -59,7 +63,7 @@ export function MenuItemFeedCard({
   const avg = Number(product.reviewAvg);
   const hasRating = showRating && Number.isFinite(avg) && (Number(product.reviewCount) || 0) > 0;
   const saved = isSaved(product.id);
-  const quote = isOfflineQuoteCategory(product) || isFoodCallToOrderCategory(product);
+  const quote = usesRequestInsteadOfCart(product);
 
   const strikeDisplay =
     !quote &&
@@ -77,7 +81,9 @@ export function MenuItemFeedCard({
 
   const itemTo = `/products/${product.id}`;
   const VendorIcon = store.sellerOnly ? User : Store;
-  const canBuy = !quote && (Number(product.stock) || 0) > 0;
+  const canBuy = canAddProductToCart(product);
+  const showsCustomize = productShowsCustomizationUi(product);
+  const hasAddons = productAddonDefs(product).length > 0;
   const hints = showDeliveryHints ? productTileDeliveryHints(product) : [];
   const socialLines = productSocialProofLines(product);
 
@@ -104,6 +110,10 @@ export function MenuItemFeedCard({
     e.preventDefault();
     e.stopPropagation();
     if (!canBuy) return;
+    if (showsCustomize || hasAddons) {
+      nav(itemTo);
+      return;
+    }
     add(product, 1);
   };
 

@@ -1,4 +1,12 @@
 import { z } from "zod";
+import { PRODUCT_CATEGORIES } from "../products/product.model";
+import { ADMIN_PERMISSION_KEYS } from "./adminPermissions";
+
+const adminPermissionKeySchema = z.enum(ADMIN_PERMISSION_KEYS);
+
+export const adminPermissionsPatchSchema = z
+  .record(adminPermissionKeySchema, z.boolean())
+  .optional();
 
 export const adminPatchUserSchema = z.object({
   accountStatus: z.enum(["active", "suspended", "banned"]).optional(),
@@ -52,7 +60,8 @@ export const adminPlatformSettingsSchema = z.object({
   vendorTrialMonths: z.coerce.number().int().min(0).max(24).optional(),
   vendorSubscriptionBillingEnabled: z.boolean().optional(),
   vendorSubscriptionPriceGhs: z.coerce.number().min(0).max(100000).optional(),
-  vendorSubscriptionPeriodMonths: z.coerce.number().int().min(1).max(36).optional()
+  vendorSubscriptionPeriodMonths: z.coerce.number().int().min(1).max(36).optional(),
+  adminPermissions: adminPermissionsPatchSchema
 });
 
 export const adminEmailTestSchema = z.object({
@@ -167,6 +176,22 @@ export const adminRidersQuerySchema = adminListQuerySchema.extend({
     (v) => (firstQueryString(v) ?? "").trim(),
     z.string().max(200)
   )
+});
+
+/** Super admin: create vendor directly or send activation email for guest email. */
+export const adminCreateVendorSchema = z.object({
+  email: z.string().trim().email(),
+  password: z
+    .union([z.literal(""), z.string().min(8).max(200)])
+    .optional()
+    .transform((p) => (typeof p === "string" ? p.trim() : "")),
+  fullName: z.string().trim().min(2).max(120),
+  shopName: z.string().trim().min(2).max(120),
+  phone: z.string().trim().min(8).max(40),
+  altPhone: z.string().trim().max(40).optional().default(""),
+  category: z.enum(PRODUCT_CATEGORIES).optional().default("food_drinks"),
+  shopDescription: z.string().trim().max(300).optional(),
+  sellsDescription: z.string().trim().max(200).optional()
 });
 
 export const adminProductsQuerySchema = adminListQuerySchema.extend({

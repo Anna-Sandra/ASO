@@ -44,6 +44,8 @@ export interface PlatformSettingsDoc {
   vendorSubscriptionPriceGhs: number;
   /** How long a paid seller subscription lasts (months). */
   vendorSubscriptionPeriodMonths: number;
+  /** What limited (non–super) admins may do — see adminPermissions.ts for keys. */
+  adminPermissions: Record<string, boolean>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -96,7 +98,8 @@ const platformSettingsSchema = new Schema<PlatformSettingsDoc>(
     vendorTrialMonths: { type: Number, default: 2, min: 0, max: 24 },
     vendorSubscriptionBillingEnabled: { type: Boolean, default: true },
     vendorSubscriptionPriceGhs: { type: Number, default: 49, min: 0 },
-    vendorSubscriptionPeriodMonths: { type: Number, default: 12, min: 1, max: 36 }
+    vendorSubscriptionPeriodMonths: { type: Number, default: 12, min: 1, max: 36 },
+    adminPermissions: { type: Schema.Types.Mixed, default: () => ({}) }
   },
   { timestamps: true }
 );

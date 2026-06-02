@@ -1138,28 +1138,35 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                           className: "mt-1 max-h-36 w-full rounded-lg border border-white/80 object-cover shadow-sm dark:border-white/10"
                         })
                       ])
-                    : null,
-                  delivery.receivedByName
-                    ? el("p", { key: "recv", className: "mt-2 text-[11px] text-slate-700 dark:text-slate-200" }, [
-                        el("span", { className: "font-semibold" }, "Received by: "),
-                        delivery.receivedByName
-                      ])
-                    : null,
-                  delivery.customerSignatureUrl
-                    ? el("div", { key: "sig", className: "mt-2" }, [
-                        el("p", { className: "text-[10px] font-semibold text-slate-600 dark:text-slate-300" }, "Signature:"),
-                        el("img", {
-                          src: delivery.customerSignatureUrl,
-                          alt: "Customer signature",
-                          className: "mt-1 max-h-20 w-full rounded-lg border border-white/80 bg-white object-contain dark:border-white/10"
-                        })
-                      ])
-                    : null,
-                  delivery.deliveryNote
-                    ? el("p", { key: "note", className: "mt-2 text-[11px] text-slate-700 dark:text-slate-200" }, [
-                        el("span", { className: "font-semibold" }, "Note: "),
-                        delivery.deliveryNote
-                      ])
+                    : null
+                ].filter(Boolean)
+              ),
+
+            mode === "buyer" &&
+              delivery?.currentStage === "on_the_way" &&
+              !isDeliveredFinal &&
+              el(
+                "div",
+                {
+                  key: "buyer-otp",
+                  className:
+                    "rounded-lg border border-amber-200/90 bg-amber-50/90 p-2.5 dark:border-amber-900/50 dark:bg-amber-950/30"
+                },
+                [
+                  el("p", { className: "text-[9px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-100" }, "Delivery code"),
+                  el(
+                    "p",
+                    { className: "mt-1 text-[11px] leading-relaxed text-amber-950 dark:text-amber-50" },
+                    delivery.deliveryOtpSentAt
+                      ? "We sent a 6-digit code to your phone and/or email. Do not share it until you have your order. Only give it to the rider when they arrive."
+                      : "Your rider is on the way. You will receive a 6-digit code by SMS or email shortly — keep it private until you have your items."
+                  ),
+                  delivery.deliveryOtpSentAt
+                    ? el(
+                        "p",
+                        { key: "sent-at", className: "mt-1 text-[10px] text-amber-800/90 dark:text-amber-200/80" },
+                        `Sent ${formatDeliveredAt(delivery.deliveryOtpSentAt)} · expires in 30 minutes`
+                      )
                     : null
                 ].filter(Boolean)
               ),
@@ -1255,35 +1262,44 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                           geoSharing ? "Stop GPS share" : "Share my GPS"
                         )
                       ])
-                    : el("div", { key: "proof-form", className: "mt-3 space-y-3" }, [
-                        el("p", { className: "text-xs font-semibold text-amber-950 dark:text-amber-100" }, "Proof of delivery (required)"),
-                        el("input", {
-                          key: "file",
-                          ref: proofInputRef,
-                          type: "file",
-                          accept: "image/jpeg,image/png,image/webp",
-                          className: "hidden",
-                          onChange: onProofPhotoPick
-                        }),
+                    : el("div", { key: "otp-form", className: "mt-3 space-y-3" }, [
+                        el(
+                          "p",
+                          { className: "text-xs leading-relaxed text-amber-950 dark:text-amber-100" },
+                          "Ask the customer for the 6-digit code we sent by SMS/email when you went on the way. They should only share it when they have the order."
+                        ),
+                        delivery.deliveryOtpSentAt
+                          ? el(
+                              "p",
+                              { key: "sent", className: "text-[11px] text-emerald-800 dark:text-emerald-200" },
+                              `Code sent ${formatDeliveredAt(delivery.deliveryOtpSentAt)}`
+                            )
+                          : null,
+                        el("label", { key: "otp-l", className: "block text-[11px] font-semibold text-slate-700 dark:text-slate-200" }, [
+                          "Customer code",
+                          el("input", {
+                            type: "text",
+                            inputMode: "numeric",
+                            pattern: "[0-9]*",
+                            maxLength: 6,
+                            value: deliveryOtp,
+                            onChange: (e) => setDeliveryOtp(e.target.value.replace(/\D/g, "").slice(0, 6)),
+                            placeholder: "6-digit code",
+                            className:
+                              "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-center text-lg font-bold tracking-[0.35em] dark:border-white/15 dark:bg-night-950 dark:text-white"
+                          })
+                        ]),
                         el(
                           "button",
                           {
-                            key: "pick",
+                            key: "resend",
                             type: "button",
-                            className:
-                              "flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-sky-300 bg-white px-3 py-3 text-sm font-semibold text-sky-700 dark:border-sky-700 dark:bg-night-950 dark:text-sky-200",
-                            onClick: () => proofInputRef.current?.click()
+                            disabled: resendingOtp || Boolean(busyStage),
+                            className: "text-[11px] font-semibold text-sky-700 underline dark:text-sky-300",
+                            onClick: () => void resendCustomerOtp()
                           },
-                          [el(Camera, { className: "h-4 w-4" }), proofPhotoFile ? "Change photo" : "Take / upload delivery photo"]
+                          resendingOtp ? "Resending code…" : "Resend code to customer"
                         ),
-                        proofPhotoPreview
-                          ? el("img", {
-                              key: "prev",
-                              src: proofPhotoPreview,
-                              alt: "Preview",
-                              className: "max-h-32 w-full rounded-lg object-cover ring-1 ring-slate-200 dark:ring-white/10"
-                            })
-                          : null,
                         el("label", { key: "recv-l", className: "block text-[11px] font-semibold text-slate-700 dark:text-slate-200" }, [
                           "Received by (optional)",
                           el("input", {
@@ -1295,32 +1311,6 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                             className:
                               "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-night-950 dark:text-white"
                           })
-                        ]),
-                        el("div", { key: "sig-wrap", className: "space-y-1" }, [
-                          el("p", { className: "text-[11px] font-semibold text-slate-700 dark:text-slate-200" }, "Customer signature (optional)"),
-                          el("canvas", {
-                            ref: signatureCanvasRef,
-                            width: 320,
-                            height: 96,
-                            className:
-                              "w-full touch-none rounded-lg border border-slate-200 bg-white dark:border-white/15 dark:bg-night-950",
-                            onMouseDown: startSignature,
-                            onMouseMove: drawSignature,
-                            onMouseUp: endSignature,
-                            onMouseLeave: endSignature,
-                            onTouchStart: startSignature,
-                            onTouchMove: drawSignature,
-                            onTouchEnd: endSignature
-                          }),
-                          el(
-                            "button",
-                            {
-                              type: "button",
-                              className: "text-[10px] font-semibold text-sky-600 dark:text-sky-400",
-                              onClick: clearSignature
-                            },
-                            "Clear signature"
-                          )
                         ]),
                         el("label", { key: "note-l", className: "block text-[11px] font-semibold text-slate-700 dark:text-slate-200" }, [
                           "Delivery note (optional)",
@@ -1342,7 +1332,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               disabled: Boolean(busyStage),
                               className:
                                 "flex-1 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
-                              onClick: submitDeliverProof
+                              onClick: submitDeliveryOtp
                             },
                             busyStage === "delivered" ? "Submitting…" : "Complete delivery"
                           ),
@@ -1354,7 +1344,8 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               className:
                                 "rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 dark:border-white/15 dark:bg-night-950 dark:text-slate-200",
                               onClick: () => {
-                                setShowDeliverProof(false);
+                                setShowDeliverOtp(false);
+                                setDeliveryOtp("");
                                 setGeoErr("");
                               }
                             },

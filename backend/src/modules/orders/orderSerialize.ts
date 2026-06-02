@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { User } from "../auth/user.model";
 import { roundMoney, splitLineGross } from "../../utils/commission";
 import { isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
+import { redactContactSharingInText } from "../../utils/contactSharingGuard";
 
 export function serializePaymentDetails(p: unknown): Record<string, unknown> | null {
   if (!p || typeof p !== "object") return null;
@@ -99,7 +100,12 @@ function serializeLineItem(it: Record<string, unknown>) {
   };
 }
 
-export function serializeOrder(o: Record<string, unknown>) {
+export type SerializeOrderOpts = {
+  /** When true, redact phone/email patterns in order thread messages. */
+  redactMessageContacts?: boolean;
+};
+
+export function serializeOrder(o: Record<string, unknown>, opts?: SerializeOrderOpts) {
   const items = ((o.items as Array<Record<string, unknown>>) || []).map(serializeLineItem);
   const platformFeeTotal = roundMoney(items.reduce((s, it) => s + it.platformFee, 0));
   const sellerProceedsTotal = roundMoney(items.reduce((s, it) => s + it.sellerProceeds, 0));
@@ -134,12 +140,15 @@ export function serializeOrder(o: Record<string, unknown>) {
     confirmedSellerIds: (
       (o.confirmedSellerIds as mongoose.Types.ObjectId[] | undefined) || []
     ).map((id) => id.toString()),
-    messages: ((o.messages as Array<Record<string, unknown>>) || []).map((m) => ({
-      senderId: (m.senderId as mongoose.Types.ObjectId).toString(),
-      senderRole: m.senderRole,
-      text: m.text,
-      createdAt: m.createdAt
-    })),
+    messages: ((o.messages as Array<Record<string, unknown>>) || []).map((m) => {
+      const rawText = String(m.text ?? "");
+      return {
+        senderId: (m.senderId as mongoose.Types.ObjectId).toString(),
+        senderRole: m.senderRole,
+        text: opts?.redactMessageContacts ? redactContactSharingInText(rawText) : rawText,
+        createdAt: m.createdAt
+      };
+    }),
     stripeCheckoutSessionId: o.stripeCheckoutSessionId,
     paystackReference: (o as { paystackReference?: string | null }).paystackReference ?? null,
     paystackTransactionId: (o as { paystackTransactionId?: number | null }).paystackTransactionId ?? null,
@@ -180,10 +189,14 @@ export type SellerContactSerialized = {
 export type WithContactsOpts = {
   /** MoMo/card fields the buyer submitted for off-platform payment — admin + buyer only. */
   includeBuyerPaymentDetails?: boolean;
+  /** Admin-only: include raw buyer/seller email and phone on orders. */
+  includePrivateContactDetails?: boolean;
 };
 
 export async function withContacts(rows: Record<string, unknown>[], opts?: WithContactsOpts) {
   const includeBuyerPaymentDetails = Boolean(opts?.includeBuyerPaymentDetails);
+  const includePrivateContactDetails = Boolean(opts?.includePrivateContactDetails);
+  const redactMessageContacts = !includePrivateContactDetails;
   const buyerIds = new Set<string>();
   const sellerIds = new Set<string>();
   for (const o of rows) {
@@ -202,7 +215,7 @@ export async function withContacts(rows: Record<string, unknown>[], opts?: WithC
   const byId = new Map(users.map((u) => [u._id.toString(), u]));
 
   return rows.map((o) => {
-    const base = serializeOrder(o);
+    const base = serializeOrder(o, { redactMessageContacts });
     const rawBuyerId = o.buyerId as mongoose.Types.ObjectId | null | undefined;
     const buyerId = rawBuyerId ? rawBuyerId.toString() : "";
     const guestContact = (o as { guestContact?: { displayName?: string; email?: string; phone?: string } }).guestContact;
@@ -211,15 +224,25 @@ export async function withContacts(rows: Record<string, unknown>[], opts?: WithC
       const sid = (it.sellerId as mongoose.Types.ObjectId).toString();
       const su = byId.get(sid);
       if (!sellerContactById[sid]) {
-        sellerContactById[sid] = {
-          id: sid,
-          email: su?.email ?? "",
-          phone: su?.phone ?? "",
-          displayName: su?.displayName ?? "",
-          bankName: (su as { bankName?: string } | undefined)?.bankName ?? "",
-          bankAccountNumber: (su as { bankAccountNumber?: string } | undefined)?.bankAccountNumber ?? "",
-          bankAccountName: (su as { bankAccountName?: string } | undefined)?.bankAccountName ?? ""
-        };
+        sellerContactById[sid] = includePrivateContactDetails
+          ? {
+              id: sid,
+              email: su?.email ?? "",
+              phone: su?.phone ?? "",
+              displayName: su?.displayName ?? "",
+              bankName: (su as { bankName?: string } | undefined)?.bankName ?? "",
+              bankAccountNumber: (su as { bankAccountNumber?: string } | undefined)?.bankAccountNumber ?? "",
+              bankAccountName: (su as { bankAccountName?: string } | undefined)?.bankAccountName ?? ""
+            }
+          : {
+              id: sid,
+              email: "",
+              phone: "",
+              displayName: su?.displayName ?? "",
+              bankName: "",
+              bankAccountNumber: "",
+              bankAccountName: ""
+            };
       }
     }
     const bu = buyerId ? byId.get(buyerId) : null;
@@ -231,14 +254,14 @@ export async function withContacts(rows: Record<string, unknown>[], opts?: WithC
       buyerContact: buyerId
         ? {
             id: buyerId,
-            email: bu?.email ?? "",
-            phone: "",
+            email: includePrivateContactDetails ? bu?.email ?? "" : "",
+            phone: includePrivateContactDetails ? bu?.phone ?? "" : "",
             displayName: bu?.displayName ?? ""
           }
         : {
             id: "",
-            email: String(guestContact?.email ?? "").trim(),
-            phone: String(guestContact?.phone ?? "").trim(),
+            email: includePrivateContactDetails ? String(guestContact?.email ?? "").trim() : "",
+            phone: includePrivateContactDetails ? String(guestContact?.phone ?? "").trim() : "",
             displayName: String(guestContact?.displayName ?? "").trim()
           },
       sellerContacts: Object.values(sellerContactById)

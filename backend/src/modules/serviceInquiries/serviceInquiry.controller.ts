@@ -10,6 +10,7 @@ import {
   isOfflineInquiryProductCategory,
   sellerEligibleForOfflineInquiries
 } from "./offlineInquiry";
+import { assertNoContactSharing, redactContactSharingInText } from "../../utils/contactSharingGuard";
 
 function serializeInquiry(
   doc: {
@@ -31,7 +32,7 @@ function serializeInquiry(
     sellerId: doc.sellerId.toString(),
     productId: doc.productId.toString(),
     productName: doc.productName,
-    message: doc.message,
+    message: redactContactSharingInText(doc.message),
     preferredTime: doc.preferredTime || "",
     status: doc.status,
     createdAt: doc.createdAt,
@@ -78,13 +79,18 @@ export const createServiceInquiry = asyncHandler(async (req: Request, res: Respo
     );
   }
 
+  const msg = message.trim().slice(0, 4000);
+  const when = (preferredTime || "").trim().slice(0, 500);
+  assertNoContactSharing(msg, "Message");
+  if (when) assertNoContactSharing(when, "Preferred timing");
+
   const doc = await ServiceInquiry.create({
     buyerId,
     sellerId,
     productId: new mongoose.Types.ObjectId(productId),
     productName: String(p.name || "Service").trim().slice(0, 220),
-    message: message.trim().slice(0, 4000),
-    preferredTime: (preferredTime || "").trim().slice(0, 500),
+    message: msg,
+    preferredTime: when,
     status: "pending"
   });
 

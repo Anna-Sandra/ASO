@@ -8,6 +8,7 @@ import { Order } from "../orders/order.model";
 import { canActAsOrderBuyer, readGuestSecretFromRequest } from "../orders/orderAccess";
 import { Product } from "../products/product.model";
 import { Review } from "./review.model";
+import { assertNoContactSharing } from "../../utils/contactSharingGuard";
 
 const ELIGIBLE_ORDER_STATUSES = ["paid", "processing", "sent_for_delivery", "delivered"] as const;
 
@@ -205,6 +206,8 @@ export const createReview = asyncHandler(async (req: Request, res: Response) => 
   if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid product id");
   const { rating, comment, orderId: orderIdRaw } = req.body as { rating: number; comment: string; orderId?: string };
   const orderId = String(orderIdRaw || "").trim();
+  const commentTrim = String(comment || "").trim();
+  if (commentTrim) assertNoContactSharing(commentTrim, "Review comment");
 
   const product = await Product.findById(id);
   if (!product || product.status !== "active") throw new HttpError(404, "Product not found");

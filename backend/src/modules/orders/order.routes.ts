@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { protect, authorize, optionalProtect } from "../../middleware/auth";
 import { requireAdminEnvSecret } from "../../middleware/adminSecret";
+import { attachAdminPermissions, requireAdminPermission } from "../../middleware/adminPermissions";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import { markAdminOrderPaid } from "../admin/admin.controller";
@@ -32,6 +33,8 @@ router.post(
   requireActiveAccount,
   authorize("admin"),
   requireAdminEnvSecret,
+  attachAdminPermissions,
+  requireAdminPermission("orders", "orders_mark_paid"),
   markAdminOrderPaid
 );
 router.get("/", protect, requireActiveAccount, authorize(...shopRoles), listMyOrders);

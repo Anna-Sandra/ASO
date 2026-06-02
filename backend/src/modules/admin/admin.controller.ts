@@ -58,6 +58,11 @@ import {
 } from "./admin.schemas";
 import { EmailLog } from "../emailLog/emailLog.model";
 import { AdminAuditEvent, recordAdminAuditEvent } from "./adminAuditEvent.model";
+import {
+  ADMIN_PERMISSION_CATALOG,
+  loadAdminPermissionsForRequest,
+  resolveAdminPermissions
+} from "./adminPermissions";
 import { createPaystackRefund, getPaystackRefundById } from "../payments/payments.controller";
 import { applyProcessedPaystackRefundToOrder, isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
 import { conversationMessageSchema } from "../conversations/conversation.schemas";
@@ -269,7 +274,8 @@ export const adminDashboard = asyncHandler(async (_req: Request, res: Response) 
     .limit(RECENT_LOG_EACH)
     .lean();
   const recentSerialized = await withContacts(recentOrders as unknown as Record<string, unknown>[], {
-    includeBuyerPaymentDetails: true
+    includeBuyerPaymentDetails: true,
+    includePrivateContactDetails: true
   });
 
   const recentSignups = await User.find()
@@ -902,7 +908,8 @@ export const listAdminOrders = asyncHandler(async (req: Request, res: Response) 
     Order.countDocuments(filter)
   ]);
   const serialized = await withContacts(rows as unknown as Record<string, unknown>[], {
-    includeBuyerPaymentDetails: true
+    includeBuyerPaymentDetails: true,
+    includePrivateContactDetails: true
   });
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({
@@ -954,9 +961,20 @@ function serializePlatformSettingsDoc(doc: Awaited<ReturnType<typeof getOrCreate
     vendorTrialMonths: doc.vendorTrialMonths ?? 2,
     vendorSubscriptionBillingEnabled: doc.vendorSubscriptionBillingEnabled !== false,
     vendorSubscriptionPriceGhs: doc.vendorSubscriptionPriceGhs ?? 49,
-    vendorSubscriptionPeriodMonths: doc.vendorSubscriptionPeriodMonths ?? 12
+    vendorSubscriptionPeriodMonths: doc.vendorSubscriptionPeriodMonths ?? 12,
+    adminPermissions: resolveAdminPermissions(doc.adminPermissions as Record<string, unknown> | undefined)
   };
 }
+
+export const getAdminMyPermissions = asyncHandler(async (req: Request, res: Response) => {
+  const permissions = await loadAdminPermissionsForRequest(req);
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.json({
+    permissions,
+    catalog: ADMIN_PERMISSION_CATALOG,
+    isSuperAdmin: req.user?.adminLevel === "super"
+  });
+});
 
 export const getAdminPlatformSettings = asyncHandler(async (_req: Request, res: Response) => {
   const doc = await getOrCreateSettings();
@@ -1075,6 +1093,15 @@ export const patchAdminPlatformSettings = asyncHandler(async (req: Request, res:
     parts.push(`seller billing ${body.vendorSubscriptionBillingEnabled ? "on" : "off"}`);
   }
   if (body.vendorSubscriptionPriceGhs !== undefined) parts.push(`seller fee GHS ${body.vendorSubscriptionPriceGhs}`);
+  if (body.adminPermissions !== undefined) {
+    const merged = resolveAdminPermissions(doc.adminPermissions as Record<string, unknown> | undefined);
+    for (const [k, v] of Object.entries(body.adminPermissions)) {
+      if (typeof v === "boolean") (merged as Record<string, boolean>)[k] = v;
+    }
+    doc.adminPermissions = merged;
+    doc.markModified("adminPermissions");
+    parts.push("admin access rules updated");
+  }
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "settings.platform",
@@ -1729,7 +1756,8 @@ export const refundAdminOrderPaystack = asyncHandler(async (req: Request, res: R
       }
       await o.save();
       const [fixed] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
-        includeBuyerPaymentDetails: true
+        includeBuyerPaymentDetails: true,
+        includePrivateContactDetails: true
       });
       return res.json({
         order: fixed,
@@ -1775,7 +1803,8 @@ export const refundAdminOrderPaystack = asyncHandler(async (req: Request, res: R
   });
 
   const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
-    includeBuyerPaymentDetails: true
+    includeBuyerPaymentDetails: true,
+    includePrivateContactDetails: true
   });
   res.json({ order: out });
 });
@@ -1838,7 +1867,8 @@ export const markAdminOrderPaid = asyncHandler(async (req: Request, res: Respons
   });
 
   const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
-    includeBuyerPaymentDetails: true
+    includeBuyerPaymentDetails: true,
+    includePrivateContactDetails: true
   });
   res.json({ order: out });
 });
@@ -1886,7 +1916,8 @@ export const patchAdminOrder = asyncHandler(async (req: Request, res: Response) 
     detail: bits.join(" · ")
   });
   const [out] = await withContacts([o.toObject() as unknown as Record<string, unknown>], {
-    includeBuyerPaymentDetails: true
+    includeBuyerPaymentDetails: true,
+    includePrivateContactDetails: true
   });
   res.json({ order: out });
 });

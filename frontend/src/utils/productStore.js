@@ -1,5 +1,5 @@
 import { formatGhc } from "utils/money";
-import { isFoodCallToOrderCategory, isOfflineQuoteCategory } from "config/catalog";
+import { isFoodCallToOrderCategory, usesRequestInsteadOfCart } from "config/catalog";
 import { buyerDisplayPrice } from "utils/checkoutPricing";
 
 /** Parent storefront for a menu item / listing (restaurant-first when a store exists). */
@@ -42,7 +42,7 @@ export function productStoreContext(product) {
 /** @param {Record<string, unknown> | null | undefined} [pricingOpts] From {@link useCheckoutPricingOptions}. */
 export function productFeedPriceLabel(product, pricingOpts) {
   if (!product) return "";
-  if (isOfflineQuoteCategory(product) || isFoodCallToOrderCategory(product)) {
+  if (usesRequestInsteadOfCart(product)) {
     return isFoodCallToOrderCategory(product) ? "Buy" : "Quote";
   }
   return formatGhc(buyerDisplayPrice(Number(product.price), pricingOpts, 1));

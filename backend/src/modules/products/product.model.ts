@@ -17,7 +17,9 @@ export type ProductStatus = "draft" | "pending_approval" | "active" | "rejected"
 export const LISTING_KINDS = ["catalog", "menu", "service"] as const;
 export type ListingKind = (typeof LISTING_KINDS)[number];
 
-export type ProductAddonDoc = { label: string; priceDelta: number };
+export type ProductAddonKind = "add" | "remove";
+
+export type ProductAddonDoc = { label: string; priceDelta: number; kind?: ProductAddonKind };
 
 export interface ProductDoc {
   _id: mongoose.Types.ObjectId;
@@ -57,7 +59,8 @@ export interface ProductDoc {
 const productAddonSchema = new Schema<ProductAddonDoc>(
   {
     label: { type: String, required: true, trim: true, maxlength: 80 },
-    priceDelta: { type: Number, required: true, min: 0, default: 0 }
+    kind: { type: String, enum: ["add", "remove"], default: "add" },
+    priceDelta: { type: Number, required: true, default: 0 }
   },
   { _id: false }
 );

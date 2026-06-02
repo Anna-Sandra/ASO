@@ -9,6 +9,7 @@ import {
 } from "./categoryAttributes.schema";
 import { isValidMarketplaceSubcategory } from "./productSubcategories";
 import { normalizeProductCategory } from "./productCategories";
+import { containsContactSharing } from "../../utils/contactSharingGuard";
 
 const categoryEnum = z.enum(PRODUCT_CATEGORIES);
 
@@ -25,10 +26,26 @@ const optionalObjectId = (message: string) =>
     z.union([z.string().refine((s) => mongoose.isValidObjectId(s), message), z.null()]).optional()
   );
 
-const productAddonSchema = z.object({
-  label: z.string().min(1).max(80),
-  priceDelta: z.coerce.number().min(0).optional().default(0)
-});
+const productAddonSchema = z
+  .object({
+    label: z.string().min(1).max(80),
+    kind: z.enum(["add", "remove"]).optional().default("add"),
+    priceDelta: z.coerce.number().optional().default(0)
+  })
+  .superRefine((a, ctx) => {
+    const kind = a.kind === "remove" ? "remove" : "add";
+    const delta = Number(a.priceDelta) || 0;
+    if (kind === "add" && delta < 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Extras cannot have a negative price.", path: ["priceDelta"] });
+    }
+    if (kind === "remove" && delta > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Removals use zero or a negative amount (discount when removed).",
+        path: ["priceDelta"]
+      });
+    }
+  });
 
 const productCore = {
   name: z.string().min(1).max(200),
@@ -55,6 +72,14 @@ const createBody = z.object(productCore);
 
 export const createProductSchema = createBody
   .superRefine((data, ctx) => {
+    const desc = String(data.description || "").trim();
+    if (desc && containsContactSharing(desc)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Listings cannot include phone numbers or email addresses. Buyers will contact you in-app.",
+        path: ["description"]
+      });
+    }
     if (data.category !== "services" && data.category !== "food_drinks") {
       if (!Number.isFinite(data.price) || data.price <= 0) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Price must be greater than zero.", path: ["price"] });

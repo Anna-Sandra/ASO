@@ -17,11 +17,15 @@ const STATUS_FALLBACKS = {
 
 /** [regex, replacement] — backend phrases → what happened + what to do */
 const KNOWN_ACTIONABLE = [
-  [/delivery photo is required/i, "Add a clear photo of the delivery (package at the door or with the recipient), then tap Complete delivery again."],
+  [/delivery photo is required/i, "Ask the customer for the 6-digit code we sent them, enter it, then tap Complete delivery again."],
+  [/delivery code|6-digit code|deliveryOtp/i, "Ask the customer for the 6-digit code from their SMS or email. They should only share it when they have the order."],
+  [/could not send a delivery code/i, "Add the customer’s phone or email on the order before marking On the way, so we can send the delivery code."],
+  [/phone numbers and email addresses cannot be shared/i, "Keep chat on SHOPIQGH — do not send phone numbers, emails, or WhatsApp links."],
+  [/listings cannot include phone/i, "Remove phone numbers and emails from your listing description. Buyers reach you through in-app messages."],
   [/assign a rider before/i, "Ask the vendor to assign a courier first: on the order, open Assign rider and pick someone from the list."],
   [/only assigned rider/i, "Only the courier assigned to this order can update this step. Sign in as that rider, or ask the vendor to assign you."],
-  [/follow the rider sequence/i, "Update delivery in order: tap Mark picked up, then On the way, then Mark delivered (with a photo)."],
-  [/proof photo/i, "Take or upload a delivery photo, fill in any optional details, then submit."],
+  [/follow the rider sequence/i, "Update delivery in order: tap Mark picked up, then On the way, then Mark delivered (with the customer’s code)."],
+  [/proof photo/i, "Enter the customer’s 6-digit delivery code and optional details, then submit."],
   [/dropoffLatitude|dropoffLongitude|delivery location/i, "At checkout, enter your delivery address and tap Use my location so the courier can find you on the map."],
   [/Use my location|GPS/i, "Tap Use my location on checkout and allow location access in your browser, or move to an open area and try again."],
   [/sign in|Unauthorized/i, "Sign in with your email and password, then try again."],

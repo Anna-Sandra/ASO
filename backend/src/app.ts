@@ -10,6 +10,7 @@ import rateLimit from "express-rate-limit";
 import { env } from "./config/env";
 import { authorize, optionalProtect, protect } from "./middleware/auth";
 import { requireAdminEnvSecret } from "./middleware/adminSecret";
+import { attachAdminPermissions, requireAdminPermission } from "./middleware/adminPermissions";
 import { requireActiveAccount } from "./middleware/requireActiveAccount";
 import { errorHandler, notFound } from "./middleware/errorHandler";
 import { mongoSanitize } from "./middleware/sanitize";
@@ -229,6 +230,8 @@ export function createApp() {
     requireActiveAccount,
     authorize("admin"),
     requireAdminEnvSecret,
+    attachAdminPermissions,
+    requireAdminPermission("orders", "orders_mark_paid"),
     markAdminOrderPaid
   );
   /** Same handler; registered before `orderRoutes` so deployments always expose this POST even if dist/router is stale. */
@@ -238,6 +241,8 @@ export function createApp() {
     requireActiveAccount,
     authorize("admin"),
     requireAdminEnvSecret,
+    attachAdminPermissions,
+    requireAdminPermission("orders", "orders_mark_paid"),
     markAdminOrderPaid
   );
   /**
@@ -250,6 +255,8 @@ export function createApp() {
     requireActiveAccount,
     authorize("admin"),
     requireAdminEnvSecret,
+    attachAdminPermissions,
+    requireAdminPermission("riders"),
     validateQuery(adminRidersQuerySchema),
     listAdminRiders
   );

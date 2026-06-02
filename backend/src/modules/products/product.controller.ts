@@ -331,7 +331,7 @@ const REC_CATEGORY_LABEL: Record<string, string> = {
   beauty_personal_care: "Beauty & Personal Care",
   babies_infants: "Babies & Infants",
   services: "Services",
-  books_academic: "Books & Academic Materials",
+  books_academic: "Books & Academics",
   groceries_essentials: "Groceries & Essentials"
 };
 

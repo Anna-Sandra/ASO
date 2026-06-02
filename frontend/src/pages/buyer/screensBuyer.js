@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Baby,
   BookOpen,
+  ChevronDown,
   ChevronRight,
   Copy,
   Cpu,
@@ -58,16 +59,28 @@ import {
   groupCartItemsBySeller,
   isFoodCallToOrderCategory,
   isOfflineQuoteCategory,
+  canAddProductToCart,
+  usesRequestInsteadOfCart,
   isServicesCategory,
   supportsCartCustomizationNotes,
   productBadge,
+  browseFilterEmptyHint,
+  browseFilterSectionTitle,
   productMatchesFilter,
+  sortProductsByBrowseFilter,
   productStorefrontBadges,
   refFromId,
   sellerGroupGross,
   withAllCategoryFirst
 } from "config/catalog";
 import { normalizeProductCategoryId } from "config/productCategories";
+import {
+  ProductCustomizationPanel,
+  productShowsCustomizationUi,
+  productSupportsMealCustomization
+} from "components/products/ProductCustomizationPanel";
+import { cartLineSellerUnit, effectiveListUnitPrice, productAddonDefs } from "utils/productAddons";
+import { containsContactSharing, CONTACT_SHARING_BLOCKED_MESSAGE } from "utils/contactSharingGuard";
 import { SITE_NAME, SUPPORT_LABEL } from "config/brand";
 import { formatGhc } from "utils/money";
 import { TrackOrderModal } from "components/features/TrackOrderModal";
@@ -101,7 +114,7 @@ function buyerServicePricingPanel() {
     h(
       "p",
       { className: "mt-1 text-xs leading-relaxed text-amber-950/90 dark:text-amber-100/90" },
-      "Contact the vendor in-app — tap Message seller below to ask about scope and payment."
+      "No fixed online price — use the request form on this page. Sign in to send a request, or buy other priced items as a guest."
     )
   ]);
 }
@@ -115,53 +128,6 @@ function buyerFoodCallPricingPanel() {
       "Tap Place order to send your request to the seller."
     )
   ]);
-}
-
-/** @param {{ sellerId?: string, sellerDisplayName?: string, productId?: string, productName?: string, accessToken?: string | null, paystackOnly?: boolean, onSignIn?: () => void }} opts */
-function buyerVendorMessagePanel(opts) {
-  const sellerId = String(opts?.sellerId || "").trim();
-  const sellerName = String(opts?.sellerDisplayName || "").trim();
-  const productId = String(opts?.productId || "").trim();
-  const productName = String(opts?.productName || "").trim();
-  const paystackOnly = Boolean(opts?.paystackOnly);
-  const signedIn = Boolean(opts?.accessToken);
-  const msgQs = new URLSearchParams();
-  if (sellerId) msgQs.set("peer", sellerId);
-  if (productId) msgQs.set("product", productId);
-  if (productName) msgQs.set("productName", productName);
-  const msgTo = sellerId ? `/messages?${msgQs.toString()}` : "/messages";
-
-  return h(GlassPanel, { key: "vend-msg", className: "!border-white/10" }, [
-    h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Questions for the seller?"),
-    h(
-      "p",
-      { className: "mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400" },
-      paystackOnly
-        ? "Pay with Paystack at checkout. Message the seller in the app if you need details about this listing."
-        : "Message the seller in the app to ask about pickup, delivery, or the item before you buy."
-    ),
-    sellerName ? h("p", { className: "mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100" }, sellerName) : null,
-    signedIn
-      ? h(
-          Link,
-          { key: "msg", to: msgTo, className: "mt-4 inline-block" },
-          h(
-            Button,
-            { type: "button", className: "w-full gap-2 !rounded-xl sm:w-auto" },
-            [h(MessageSquare, { className: "h-4 w-4", "aria-hidden": true }), "Message seller"]
-          )
-        )
-      : h(
-          Button,
-          {
-            key: "msg-guest",
-            type: "button",
-            className: "mt-4 w-full gap-2 !rounded-xl sm:w-auto",
-            onClick: () => (typeof opts?.onSignIn === "function" ? opts.onSignIn() : null)
-          },
-          [h(MessageSquare, { className: "h-4 w-4", "aria-hidden": true }), "Sign in to message seller"]
-        )
-  ].filter(Boolean));
 }
 
 export function ReviewStars({ value, className = "" }) {
@@ -487,6 +453,8 @@ export function ProductDetailPage() {
   const [relatedExploreTitle, setRelatedExploreTitle] = useState("Explore your interests");
   const [relatedSimilarTitle, setRelatedSimilarTitle] = useState("More you may like");
   const [relatedTogetherTitle, setRelatedTogetherTitle] = useState("Frequently bought together");
+  const [selectedAddonLabels, setSelectedAddonLabels] = useState([]);
+  const [orderNotes, setOrderNotes] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
   const guestReviewSecret =
     orderIdFromUrl && typeof sessionStorage !== "undefined"
@@ -590,14 +558,40 @@ export function ProductDetailPage() {
     };
   }, [productId]);
 
+  useEffect(() => {
+    setSelectedAddonLabels([]);
+    setOrderNotes("");
+  }, [productId]);
+
   const tryAdd = () => {
-    if (!product || isOfflineQuoteCategory(product) || (product.stock ?? 0) <= 0) return;
-    add(product, 1);
+    if (!product || !canAddProductToCart(product)) return;
+    const baseList = Number(product.price) || 0;
+    const labels = Array.isArray(selectedAddonLabels) ? selectedAddonLabels : [];
+    const listUnit = effectiveListUnitPrice(product, labels);
+    if (!(listUnit > 0)) {
+      toast("This combination has no checkout price. Change your add-ons.", { variant: "error" });
+      return;
+    }
+    const note = String(orderNotes || "").trim();
+    if (note && containsContactSharing(note)) {
+      toast(CONTACT_SHARING_BLOCKED_MESSAGE, { variant: "error" });
+      return;
+    }
+    add(
+      {
+        ...product,
+        baseListPrice: baseList,
+        price: listUnit,
+        selectedAddonLabels: labels
+      },
+      1,
+      note
+    );
     setCartOpen(true);
   };
 
   const submitOfflineInquiry = async () => {
-    if (!productId || !product || !isOfflineQuoteCategory(product)) return;
+    if (!productId || !product || !usesRequestInsteadOfCart(product)) return;
     if (!accessToken) {
       nav("/login", { state: { from: loc.pathname } });
       return;
@@ -605,6 +599,10 @@ export function ProductDetailPage() {
     const msg = svcMessage.trim();
     if (msg.length < 10) {
       toast("Please describe what you need (at least 10 characters).", { variant: "error" });
+      return;
+    }
+    if (containsContactSharing(msg) || (svcPreferredTime.trim() && containsContactSharing(svcPreferredTime))) {
+      toast(CONTACT_SHARING_BLOCKED_MESSAGE, { variant: "error" });
       return;
     }
     setSvcSubmitting(true);
@@ -636,6 +634,11 @@ export function ProductDetailPage() {
   const submitReview = async () => {
     setReviewMsg("");
     if (!productId || !reviewStatus?.canSubmit) return;
+    const commentTrim = comment.trim();
+    if (commentTrim && containsContactSharing(commentTrim)) {
+      setReviewMsg(CONTACT_SHARING_BLOCKED_MESSAGE);
+      return;
+    }
     const hasGuestReviewAccess = Boolean(orderIdFromUrl && guestReviewSecret);
     if (!accessToken && !hasGuestReviewAccess) return;
     const oid = reviewStatus.orderId != null && String(reviewStatus.orderId).trim() ? String(reviewStatus.orderId).trim() : "";
@@ -725,15 +728,23 @@ export function ProductDetailPage() {
   const titleShort = product.name.length > 28 ? `${product.name.slice(0, 26)}…` : product.name;
   const svc = isServicesCategory(product);
   const foodC2O = isFoodCallToOrderCategory(product);
-  const offlineListing = svc || foodC2O;
+  const offlineListing = usesRequestInsteadOfCart(product);
   const listPx = Number(product.price) || 0;
-  const unitPayTotal = !offlineListing ? buyerDisplayPrice(listPx, pricingOpts, 1) : null;
+  const canBuy = canAddProductToCart(product);
+  const showsCustomizeUi = productShowsCustomizationUi(product);
+  const mealCustomization = productSupportsMealCustomization(product);
+  const customizedListPx =
+    mealCustomization || showsCustomizeUi ? effectiveListUnitPrice(product, selectedAddonLabels) : listPx;
+  const unitPayTotal = !offlineListing ? buyerDisplayPrice(customizedListPx, pricingOpts, 1) : null;
 
-  const pricingPanel = svc
-    ? buyerServicePricingPanel()
-    : foodC2O
-      ? buyerFoodCallPricingPanel()
-      : h("span", { key: "pr", className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx));
+  const pricingPanel =
+    svc || foodC2O
+      ? svc
+        ? buyerServicePricingPanel()
+        : buyerFoodCallPricingPanel()
+      : showsCustomizeUi
+        ? null
+        : h("span", { key: "pr", className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx));
 
   return h(f, null, [
     h(
@@ -905,6 +916,17 @@ export function ProductDetailPage() {
           ]),
           h(RestaurantContextPanel, { key: "store-ctx", product }),
           pricingPanel,
+          !offlineListing &&
+            showsCustomizeUi &&
+            h(ProductCustomizationPanel, {
+              key: "customize",
+              product,
+              selectedLabels: selectedAddonLabels,
+              onChange: setSelectedAddonLabels,
+              orderNotes,
+              onOrderNotesChange: setOrderNotes,
+              pricingOpts
+            }),
           (product.tags || []).length > 0 &&
             h(
               "div",
@@ -924,18 +946,6 @@ export function ProductDetailPage() {
             h("h2", { className: "text-lg font-semibold text-slate-900 dark:text-white" }, "Description"),
             h("p", { className: "mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200" }, product.description || "No description provided.")
           ]),
-          buyerVendorMessagePanel({
-            sellerId: product.sellerId,
-            sellerDisplayName:
-              product.sellerPayment && typeof product.sellerPayment === "object"
-                ? String(product.sellerPayment.displayName || "").trim()
-                : "",
-            productId: product.id,
-            productName: product.name,
-            accessToken,
-            paystackOnly: pricingOpts?.paystackOnly,
-            onSignIn: () => nav("/login", { state: { from: loc.pathname + loc.search } })
-          }),
           offlineListing &&
             h(GlassPanel, { key: "offline-inq", className: "!mt-4 !border-sky-500/25" }, [
               h(
@@ -1019,20 +1029,24 @@ export function ProductDetailPage() {
               variant: offlineListing ? "ghost" : "primary",
               className: `w-full !rounded-2xl !py-3 sm:w-auto sm:!px-10 ${offlineListing ? "!border-slate-300/60 dark:!border-white/20" : ""}`,
               type: "button",
-              disabled: offlineListing || (product.stock ?? 0) <= 0,
+              disabled: !canBuy,
               onClick: tryAdd
             },
             [
-              offlineListing ? null : h(ShoppingCart, { key: "ic", className: "h-5 w-5" }),
+              canBuy ? h(ShoppingCart, { key: "ic", className: "h-5 w-5" }) : null,
               h(
                 "span",
                 { key: "tx" },
-                svc
-                  ? "Use the request form above"
-                  : foodC2O
-                    ? "Use the form above to place your order"
-                    : (product.stock ?? 0) <= 0
-                      ? "Out of stock"
+                offlineListing
+                  ? svc
+                    ? "Use the request form above"
+                    : foodC2O
+                      ? "Use the form above to place your order"
+                      : "Contact seller from listing"
+                  : !canBuy
+                    ? "Out of stock"
+                    : showsCustomizeUi && unitPayTotal != null
+                      ? `Buy · ${formatGhc(unitPayTotal)}`
                       : "Buy"
               )
             ].filter(Boolean)
@@ -1077,8 +1091,9 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
   const p = product;
   const pricingOpts = useCheckoutPricingOptions();
   const detailTo = `/products/${p.id}`;
-  const quoteCard = isOfflineQuoteCategory(p);
+  const quoteCard = usesRequestInsteadOfCart(p);
   const foodCard = isFoodCallToOrderCategory(p);
+  const showsCustomize = productShowsCustomizationUi(p);
   const listP = Number(p.price) || 0;
   const displayP = quoteCard || foodCard ? listP : buyerDisplayPrice(listP, pricingOpts, 1);
   const cmpAt = Number(p.compareAtPrice);
@@ -1211,9 +1226,9 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
           className:
             "mt-2 w-full !justify-center !rounded-xl border border-sky-500/60 !bg-transparent !text-xs !font-semibold !text-sky-700 hover:!bg-sky-50 sm:mt-4 sm:!text-sm dark:border-sky-400/45 dark:!text-sky-100 dark:hover:!bg-sky-950/35",
           type: "button",
-          disabled: !quoteCard && (p.stock ?? 0) <= 0,
+          disabled: !quoteCard && !canAddProductToCart(p),
           onClick: () => {
-            if (quoteCard) {
+            if (quoteCard || showsCustomize || productAddonDefs(p).length > 0) {
               onNavigate(detailTo);
               return;
             }
@@ -1229,9 +1244,11 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
               ? foodCard
                 ? "Place Order"
                 : "View listing"
-              : (p.stock ?? 0) <= 0
+              : !canAddProductToCart(p)
                 ? "Out of stock"
-                : "Buy"
+                : showsCustomize || productAddonDefs(p).length > 0
+                  ? "Customize & buy"
+                  : "Buy"
           )
         ].filter(Boolean)
       )
@@ -1248,6 +1265,7 @@ function ShopHomeRecommendationRow({ row, className = "mb-7" }) {
   const railRef = useRef(null);
   const trackRef = useRef(null);
   const cards = Array.isArray(row.products) ? row.products : [];
+  if (!cards.length) return null;
   const marqueeCards = cards.length > 1 ? [...cards, ...cards] : cards;
 
   useEffect(() => {
@@ -1495,8 +1513,122 @@ function buyerTabsScrollWrap(pillNodes) {
   );
 }
 
-/** Storefront sidebar: Browse (All / New / Popular), discover links, apply links, price filters — category chips stay in the main column. */
+/** Short labels for category dropdown in the sidebar. */
+const STOREFRONT_CATEGORY_SHORT = {
+  all: "All",
+  food_drinks: "Food",
+  fashion_accessories: "Fashion",
+  electronics_gadgets: "Electronics",
+  beauty_personal_care: "Beauty",
+  babies_infants: "Babies",
+  services: "Services",
+  books_academic: "Books",
+  groceries_essentials: "Groceries"
+};
+
+const STOREFRONT_CATEGORY_ICONS = {
+  all: LayoutGrid,
+  food_drinks: Utensils,
+  fashion_accessories: Shirt,
+  electronics_gadgets: Cpu,
+  beauty_personal_care: Sparkles,
+  babies_infants: Baby,
+  services: Wrench,
+  books_academic: BookOpen,
+  groceries_essentials: ShoppingBasket
+};
+
+/** Sidebar: Categories toggle reveals the marketplace category list. */
+function SidebarCategoriesDropdown({ active, onSelect, onItemClick }) {
+  const [open, setOpen] = useState(false);
+  const activeShort = STOREFRONT_CATEGORY_SHORT[active] ?? CATEGORY_LABELS[active] ?? "All";
+
+  const pick = (id) => {
+    onSelect(id);
+    setOpen(false);
+    onItemClick?.();
+    const grid = document.getElementById("buyer-shop-grid");
+    if (grid) grid.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return h("div", { key: "cat-dd", className: `mb-3 ${open ? "relative z-30" : ""}` }, [
+    h(
+      "button",
+      {
+        key: "toggle",
+        type: "button",
+        "aria-expanded": open,
+        "aria-controls": "storefront-category-list",
+        onClick: () => setOpen((o) => !o),
+        className: `flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left text-[13px] font-semibold leading-snug transition ${
+          open
+            ? "border-sky-300 bg-sky-50 text-sky-950 dark:border-sky-500/45 dark:bg-sky-950/40 dark:text-sky-100"
+            : "border-slate-200/90 bg-white text-slate-800 shadow-sm hover:border-sky-200 hover:bg-sky-50/70 dark:border-white/10 dark:bg-night-900/50 dark:text-slate-100 dark:hover:border-sky-500/30"
+        }`
+      },
+      [
+        h(LayoutGrid, {
+          key: "ic",
+          className: "h-4 w-4 shrink-0 text-sky-600 dark:text-sky-300",
+          strokeWidth: 2
+        }),
+        h("span", { key: "lb", className: "min-w-0 flex-1" }, "Categories"),
+        h("span", { key: "cur", className: "truncate text-[11px] font-medium text-slate-500 dark:text-slate-400" }, activeShort),
+        h(ChevronDown, {
+          key: "ch",
+          className: `h-4 w-4 shrink-0 text-slate-500 transition-transform dark:text-slate-400 ${open ? "rotate-180" : ""}`,
+          strokeWidth: 2
+        })
+      ]
+    ),
+    open
+      ? h(
+          "div",
+          {
+            key: "list",
+            id: "storefront-category-list",
+            role: "listbox",
+            "aria-label": "Product categories",
+            className:
+              "mt-1.5 rounded-lg border border-slate-200/90 bg-white py-1 shadow-lg dark:border-white/10 dark:bg-night-900/95"
+          },
+          withAllCategoryFirst(CATEGORIES).map((c) => {
+            const Icon = STOREFRONT_CATEGORY_ICONS[c.id] || LayoutGrid;
+            const isOn = active === c.id;
+            const label = c.id === "all" ? "All categories" : c.label;
+            return h(
+              "button",
+              {
+                key: c.id,
+                type: "button",
+                role: "option",
+                "aria-selected": isOn,
+                onClick: () => pick(c.id),
+                className: `flex w-full items-start gap-2 px-2.5 py-2 text-left text-[12px] font-medium leading-snug transition sm:text-[13px] ${
+                  isOn
+                    ? "bg-sky-50 text-sky-950 dark:bg-sky-950/50 dark:text-sky-100"
+                    : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-white/5"
+                }`
+              },
+              [
+                h(Icon, {
+                  key: "ic",
+                  className: `mt-0.5 h-4 w-4 shrink-0 ${isOn ? "text-sky-600 dark:text-sky-300" : "text-slate-500 dark:text-slate-400"}`,
+                  strokeWidth: 2
+                }),
+                h("span", { key: "tx", className: "min-w-0 flex-1 whitespace-normal" }, label)
+              ]
+            );
+          })
+        )
+      : null
+  ]);
+}
+
+/** Storefront sidebar: categories dropdown, browse filters, discover links, price filters. */
 function BuyerStorefrontAside({
+  cat,
+  setCat,
   fil,
   setFil,
   minPriceIn,
@@ -1509,8 +1641,6 @@ function BuyerStorefrontAside({
   onItemClick,
   navigate
 }) {
-  const { accessToken, user } = useAuth();
-
   const row = (key, Icon, label, opts) => {
     const active = opts?.active;
     return h(
@@ -1558,27 +1688,23 @@ function BuyerStorefrontAside({
       ]
     );
 
-  const divider = (k) => h("div", { key: k, className: "my-2.5 border-t border-slate-200 dark:border-white/10" });
-
-  const showVendorApply =
-    accessToken && user?.role === "buyer" && !["pending", "approved"].includes(String(user?.vendorStatus ?? ""));
-  const showCourierApply =
-    accessToken && user?.role === "buyer" && String(user?.riderApplicationStatus || "") !== "pending";
-  const showVendorNavLink = !accessToken || showVendorApply;
-  const showCourierNavLink = !accessToken || showCourierApply;
-
   return h(
     "div",
     { className: "flex h-full min-h-0 flex-col gap-0 overflow-y-auto p-2.5 lg:p-3" },
     [
-      h("p", { key: "br-h", className: "mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400" }, "Browse"),
+      h(SidebarCategoriesDropdown, {
+        key: "categories",
+        active: cat,
+        onSelect: setCat,
+        onItemClick
+      }),
       h(
         "div",
         {
           key: "browse-filters",
-          className: "mb-3 flex flex-col gap-1.5",
+          className: "mb-2 flex flex-col gap-0.5",
           role: "group",
-          "aria-label": "Browse: All, New, or Popular"
+          "aria-label": "Browse: all listings, sales, new, or popular"
         },
         withAllCategoryFirst(FILTERS).map((fitem) =>
           h(
@@ -1590,7 +1716,7 @@ function BuyerStorefrontAside({
                 setFil(fitem.id);
                 onItemClick?.();
               },
-              className: `w-full rounded-lg px-2 py-2 text-left text-[13px] font-semibold leading-snug transition ${
+              className: `w-full rounded-md px-2 py-1.5 text-left text-[13px] font-semibold leading-tight transition ${
                 fil === fitem.id
                   ? "border border-sky-200 bg-sky-50 text-sky-950 shadow-sm dark:border-sky-500/35 dark:bg-sky-950/40 dark:text-sky-100"
                   : "border border-transparent text-slate-700 hover:bg-sky-50/70 dark:text-slate-200 dark:hover:bg-white/5"
@@ -1616,9 +1742,6 @@ function BuyerStorefrontAside({
         }
       }),
       linkRow("help", Headphones, "Help & support", "/support"),
-      divider("dv-sell"),
-      showVendorNavLink ? linkRow("vend-side", Store, "Become a vendor", "/apply-vendor") : null,
-      showCourierNavLink ? linkRow("cour-side", Truck, "Become a rider", "/apply-courier") : null,
       h(
         "div",
         {
@@ -1792,13 +1915,7 @@ export function BuyerLayout({
     h(BuyerNavbarNavLink, { key: "ord", to: "/orders", icon: Package, label: "Orders" }),
     accessToken && h(BuyerNavbarNavLink, { key: "msg", to: "/messages", icon: MessageSquare, label: "Messages" }),
     accessToken && h(BuyerNavbarNavLink, { key: "rep", to: "/reports", icon: AlertTriangle, label: "Reports" }),
-    h(BuyerNavbarNavLink, { key: "prof", to: "/profile", icon: User, label: "Profile" }),
-    (!accessToken ||
-      (accessToken && user?.role === "buyer" && !["pending", "approved"].includes(String(user?.vendorStatus ?? "")))) &&
-      h(BuyerNavbarNavLink, { key: "apply", to: "/apply-vendor", icon: Store, label: "Become a vendor" }),
-    (!accessToken ||
-      (accessToken && user?.role === "buyer" && String(user?.riderApplicationStatus || "") !== "pending")) &&
-      h(BuyerNavbarNavLink, { key: "cour", to: "/apply-courier", icon: Truck, label: "Become a rider" })
+    h(BuyerNavbarNavLink, { key: "prof", to: "/profile", icon: User, label: "Profile" })
   ].filter(Boolean);
 
   const vendorPendingBanner =
@@ -2262,77 +2379,27 @@ function storefrontBadgeStack(p) {
   );
 }
 
-/** Short labels so the chip row fits on one line; full name in title for hover/tooltip. */
-const STOREFRONT_CHIP_LABEL = {
-  all: "All",
-  food_drinks: "Food",
-  fashion_accessories: "Fashion",
-  electronics_gadgets: "Electronics",
-  beauty_personal_care: "Beauty",
-  babies_infants: "Babies",
-  services: "Services",
-  books_academic: "Books",
-  groceries_essentials: "Groceries"
-};
-
-/** Horizontal category chips — single row, horizontal scroll, compact. */
-function StorefrontCategoryChips({ active, onSelect }) {
-  const icons = {
-    all: LayoutGrid,
-    food_drinks: Utensils,
-    fashion_accessories: Shirt,
-    electronics_gadgets: Cpu,
-    beauty_personal_care: Sparkles,
-    babies_infants: Baby,
-    services: Wrench,
-    books_academic: BookOpen,
-    groceries_essentials: ShoppingBasket
-  };
-  return h(
-    "div",
-    {
-      className:
-        "no-scrollbar -mx-4 flex max-w-full flex-nowrap gap-1.5 overflow-x-auto overscroll-x-contain px-4 pb-0.5 sm:-mx-0 sm:gap-2 sm:px-0",
-      role: "tablist",
-      "aria-label": "Product categories"
-    },
-    withAllCategoryFirst(CATEGORIES).map((c) => {
-      const Icon = icons[c.id] || LayoutGrid;
-      const isOn = active === c.id;
-      const full = c.label;
-      const short = STOREFRONT_CHIP_LABEL[c.id] ?? c.label;
-      return h(
-        "button",
-        {
-          key: c.id,
-          type: "button",
-          role: "tab",
-          "aria-selected": isOn,
-          title: full,
-          "aria-label": full,
-          onClick: () => onSelect(c.id),
-          className: `inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border px-2 py-1.5 text-[11px] font-semibold leading-none transition sm:gap-1.5 sm:rounded-xl sm:px-2.5 sm:py-2 sm:text-xs ${
-            isOn
-              ? "border-sky-500 bg-sky-50 text-sky-950 shadow-sm dark:border-sky-400/45 dark:bg-sky-950/40 dark:text-sky-50"
-              : "border-slate-200/90 bg-white text-slate-700 shadow-sm hover:border-sky-200 hover:bg-sky-50/50 dark:border-white/10 dark:bg-night-900/40 dark:text-slate-200 dark:hover:border-sky-500/30"
-          }`
-        },
-        [
-          h(Icon, {
-            key: "ic",
-            className: `h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4 ${isOn ? "text-sky-600 dark:text-sky-300" : "text-slate-500 dark:text-slate-400"}`
-          }),
-          h("span", { key: "lb" }, short)
-        ]
-      );
-    })
-  );
-}
-
 function MarketplaceFooter() {
+  const { accessToken, user } = useAuth();
+  const showVendorApply =
+    accessToken && user?.role === "buyer" && !["pending", "approved"].includes(String(user?.vendorStatus ?? ""));
+  const showCourierApply =
+    accessToken && user?.role === "buyer" && String(user?.riderApplicationStatus || "") !== "pending";
+  const showVendorNavLink = !accessToken || showVendorApply;
+  const showCourierNavLink = !accessToken || showCourierApply;
+
   const linkCls =
     "block text-[11px] leading-snug text-slate-400 transition hover:text-slate-100 sm:text-xs";
   const headCls = "mb-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 sm:text-[11px]";
+
+  const companyLinks = [
+    { to: "/about", label: "About Us" },
+    { to: "/support", label: "Contact Us" },
+    ...(showVendorNavLink ? [{ to: "/apply-vendor", label: "Become a vendor" }] : []),
+    ...(showCourierNavLink ? [{ to: "/apply-courier", label: "Become a rider" }] : []),
+    { to: "/terms", label: "Terms & Conditions" },
+    { to: "/terms", label: "Privacy Policy" }
+  ];
 
   const linkCol = (key, title, items) =>
     h("nav", { key, className: "min-w-0", "aria-label": title }, [
@@ -2377,13 +2444,7 @@ function MarketplaceFooter() {
           className: "grid gap-8 sm:grid-cols-2 lg:grid-cols-3 lg:gap-12"
         },
         [
-          linkCol("co", "Company", [
-            { to: "/about", label: "About Us" },
-            { to: "/support", label: "Contact Us" },
-            { to: "/apply-vendor", label: "Become a Seller / Vendor" },
-            { to: "/terms", label: "Terms & Conditions" },
-            { to: "/terms", label: "Privacy Policy" }
-          ]),
+          linkCol("co", "Company", companyLinks),
           linkCol("cs", "Customer Support", [
             { to: "/support", label: "Help Center" },
             { to: "/support#faq", label: "FAQs" },
@@ -2427,7 +2488,7 @@ export function CartDrawer({ open, onClose }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const hasBlockedLine = items.some((p) => isOfflineQuoteCategory(p));
+  const hasBlockedLine = items.some((p) => usesRequestInsteadOfCart(p));
 
   const breakdown =
     pricingOpts && subtotal > 0
@@ -2487,7 +2548,7 @@ export function CartDrawer({ open, onClose }) {
               h("p", { key: "empty", className: "text-sm text-slate-500 dark:text-slate-400" }, "Your cart is empty."),
             items.map((p) => {
               const lk = p._lineKey || `${p.id}::`;
-              const blocked = isOfflineQuoteCategory(p);
+              const blocked = usesRequestInsteadOfCart(p);
               return h(GlassCard, { key: lk, className: "!p-3" }, [
                 h("div", { key: "row", className: "flex gap-3" }, [
                   h(RefImage, {
@@ -2510,8 +2571,21 @@ export function CartDrawer({ open, onClose }) {
                         ? isFoodCallToOrderCategory(p)
                           ? "Food: buy from the listing — remove to check out other items"
                           : "Services: contact vendor — remove to check out other items"
-                        : formatGhc(buyerDisplayPrice(Number(p.price) || 0, pricingOpts, Number(p.qty) || 1))
+                        : formatGhc(
+                            buyerDisplayPrice(cartLineSellerUnit(p), pricingOpts, Number(p.qty) || 1)
+                          )
                     ),
+                    !blocked &&
+                      Array.isArray(p.selectedAddonLabels) &&
+                      p.selectedAddonLabels.length > 0 &&
+                      h(
+                        "p",
+                        { key: "addons", className: "mt-1 text-[11px] text-violet-800 dark:text-violet-200" },
+                        [
+                          h("span", { className: "font-semibold" }, "Options: "),
+                          p.selectedAddonLabels.join(", ")
+                        ]
+                      ),
                     !blocked && supportsCartCustomizationNotes(p)
                       ? h("div", { key: "cust", className: "mt-2" }, [
                           h(
@@ -2649,7 +2723,7 @@ export function CheckoutPage() {
   const [locatingDropoff, setLocatingDropoff] = useState(false);
   const [dropoffHint, setDropoffHint] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
-  const hasBlockedLine = items.some((p) => isOfflineQuoteCategory(p));
+  const hasBlockedLine = items.some((p) => usesRequestInsteadOfCart(p));
 
   const breakdown =
     pricingOpts && subtotal > 0
@@ -2699,7 +2773,7 @@ export function CheckoutPage() {
     if (hasBlockedLine || !(subtotal > 0)) {
       setErr(
         hasBlockedLine
-          ? "Food or services can’t use cart checkout together with other items until you remove them — call/message those vendors separately."
+          ? "Request-only food or service items can’t use cart checkout — remove them or open each listing to send a request."
           : "Your cart has nothing to bill."
       );
       return;
@@ -2733,7 +2807,10 @@ export function CheckoutPage() {
         items: items.map((p) => ({
           productId: p.id,
           quantity: p.qty,
-          customization: supportsCartCustomizationNotes(p) ? String(p.customization || "").trim().slice(0, 280) : ""
+          customization: supportsCartCustomizationNotes(p) ? String(p.customization || "").trim().slice(0, 280) : "",
+          ...(Array.isArray(p.selectedAddonLabels) && p.selectedAddonLabels.length
+            ? { selectedAddonLabels: p.selectedAddonLabels }
+            : {})
         })),
         dropoffLabel: dropLabel,
         dropoffLatitude: dropoffLat,
@@ -2889,8 +2966,8 @@ export function CheckoutPage() {
       [
         h("p", { key: "lab", className: "text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, "Your items"),
         ...items.map((p) => {
-          const blocked = isOfflineQuoteCategory(p);
-          const lineTotal = blocked ? 0 : buyerDisplayPrice(Number(p.price) || 0, pricingOpts, Number(p.qty) || 1);
+          const blocked = usesRequestInsteadOfCart(p);
+          const lineTotal = blocked ? 0 : buyerDisplayPrice(cartLineSellerUnit(p), pricingOpts, Number(p.qty) || 1);
           return h(
             "div",
             {
@@ -2900,6 +2977,13 @@ export function CheckoutPage() {
             [
               h("div", { key: "meta", className: "min-w-0 flex-1" }, [
                 h("span", { className: "text-slate-800 dark:text-slate-200" }, [p.name || "Item", " ×", String(p.qty)]),
+                Array.isArray(p.selectedAddonLabels) && p.selectedAddonLabels.length > 0
+                  ? h(
+                      "span",
+                      { className: "mt-0.5 block text-xs text-violet-800 dark:text-violet-200" },
+                      `Options: ${p.selectedAddonLabels.join(", ")}`
+                    )
+                  : null,
                 String(p.customization || "").trim() && supportsCartCustomizationNotes(p)
                   ? h("span", { className: "mt-0.5 block text-xs text-violet-800 dark:text-violet-200" }, `Preferences: ${String(p.customization).trim()}`)
                   : null
@@ -3062,7 +3146,11 @@ export function SavedProductsPage() {
   const pricingOpts = useCheckoutPricingOptions();
 
   const tryAddToCart = (p) => {
-    if (isOfflineQuoteCategory(p) || (p.stock ?? 0) <= 0) return;
+    if (!canAddProductToCart(p)) return;
+    if (productShowsCustomizationUi(p) || productAddonDefs(p).length > 0) {
+      nav(`/products/${p.id}`);
+      return;
+    }
     add(p, 1);
     setCartOpen(true);
   };
@@ -3138,7 +3226,7 @@ export function SavedProductsPage() {
                 },
                 products.map((p) => {
                   const detailTo = `/products/${p.id}`;
-                  const quoteCard = isOfflineQuoteCategory(p);
+                  const quoteCard = usesRequestInsteadOfCart(p);
                   const foodCard = isFoodCallToOrderCategory(p);
                   const listP = Number(p.price) || 0;
                   const cmpAt = Number(p.compareAtPrice);
@@ -3285,7 +3373,7 @@ export function SavedProductsPage() {
 }
 
 export function ShopPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [cat, setCat] = useState("all");
   const [fil, setFil] = useState("all");
   const [cartOpen, setCartOpen] = useState(false);
@@ -3314,8 +3402,18 @@ export function ShopPage() {
     if (CATEGORIES.some((c) => c.id === raw)) setCat(raw);
   }, [searchParams]);
 
+  useEffect(() => {
+    const raw = (searchParams.get("fil") || "").trim().toLowerCase();
+    if (!raw) return;
+    if (FILTERS.some((f) => f.id === raw)) setFil(raw);
+  }, [searchParams]);
+
   const tryAddToCart = (p) => {
-    if (isOfflineQuoteCategory(p) || (p.stock ?? 0) <= 0) return;
+    if (!canAddProductToCart(p)) return;
+    if (productShowsCustomizationUi(p) || productAddonDefs(p).length > 0) {
+      nav(`/products/${p.id}`);
+      return;
+    }
     add(p, 1);
     setCartOpen(true);
   };
@@ -3436,17 +3534,28 @@ export function ShopPage() {
           .join(" · ")
       : "";
 
-  const filtered = useMemo(() => {
-    return products.filter((p) => productMatchesFilter(p, fil));
-  }, [products, fil]);
+  const applyBrowseFilters = useCallback(
+    (list) => sortProductsByBrowseFilter((list || []).filter((p) => productMatchesFilter(p, fil)), fil),
+    [fil]
+  );
 
-  const filterRecRowByCategory = (row, categoryId) => {
-    if (!row || categoryId === "all") return row;
-    const products = (row.products || []).filter(
-      (p) => normalizeProductCategoryId(p.category) === categoryId
-    );
-    return products.length ? { ...row, products } : null;
-  };
+  const filtered = useMemo(() => applyBrowseFilters(products), [products, applyBrowseFilters]);
+
+  const filterRecRow = useCallback(
+    (row, categoryId, browseFil) => {
+      if (!row) return null;
+      let rowProducts = Array.isArray(row.products) ? row.products : [];
+      if (categoryId && categoryId !== "all") {
+        rowProducts = rowProducts.filter((p) => normalizeProductCategoryId(p.category) === categoryId);
+      }
+      rowProducts = sortProductsByBrowseFilter(
+        rowProducts.filter((p) => productMatchesFilter(p, browseFil)),
+        browseFil
+      );
+      return rowProducts.length ? { ...row, products: rowProducts } : null;
+    },
+    []
+  );
 
   const { topRecRows, greatValueRow } = useMemo(() => {
     const rows = Array.isArray(recRows) ? recRows : [];
@@ -3456,12 +3565,37 @@ export function ShopPage() {
       if (row.id === "great_value" || row.title === "Great value") greatValue = row;
       else top.push(row);
     }
-    if (cat === "all") return { topRecRows: top, greatValueRow: greatValue };
+    const catId = cat === "all" ? "all" : cat;
     return {
-      topRecRows: top.map((r) => filterRecRowByCategory(r, cat)).filter(Boolean),
-      greatValueRow: filterRecRowByCategory(greatValue, cat)
+      topRecRows: top.map((r) => filterRecRow(r, catId, fil)).filter(Boolean),
+      greatValueRow: filterRecRow(greatValue, catId, fil)
     };
-  }, [recRows, cat]);
+  }, [recRows, cat, fil, filterRecRow]);
+
+  const recentFiltered = useMemo(() => applyBrowseFilters(recentProducts), [recentProducts, applyBrowseFilters]);
+
+  const setFilAndUrl = useCallback(
+    (next) => {
+      const id = String(next || "all");
+      setFil(id);
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          if (!id || id === "all") p.delete("fil");
+          else p.set("fil", id);
+          return p;
+        },
+        { replace: true }
+      );
+      if (id !== "all") {
+        requestAnimationFrame(() => {
+          const grid = document.getElementById("buyer-shop-grid");
+          if (grid) grid.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+    },
+    [setSearchParams]
+  );
 
   const { browseLead, browseRest } = useMemo(() => {
     const lead = filtered.slice(0, BROWSE_ROWS_BEFORE_GREAT_VALUE);
@@ -3486,8 +3620,10 @@ export function ShopPage() {
         hideSearch: true,
         storefront: true,
         storefrontAsideProps: {
+          cat,
+          setCat,
           fil,
-          setFil,
+          setFil: setFilAndUrl,
           minPriceIn,
           maxPriceIn,
           setMinPriceIn,
@@ -3544,8 +3680,7 @@ export function ShopPage() {
         ]),
         h(ShopHomePromoCarousel, { key: "shop-promo" })
       ]),
-      h("section", { key: "quick-cats", className: "mb-5", "aria-label": "Categories" }, h(StorefrontCategoryChips, { active: cat, onSelect: setCat })),
-      accessToken && (recentLoading || recentProducts.length > 0)
+      accessToken && (recentLoading || recentFiltered.length > 0)
         ? h(
             "section",
             {
@@ -3555,11 +3690,11 @@ export function ShopPage() {
               "aria-label": "Recently viewed"
             },
             [
-              recentLoading && !recentProducts.length
+              recentLoading && !recentFiltered.length
                 ? h("p", { key: "rv-load", className: "mb-3 text-sm text-slate-500 dark:text-slate-400" }, "Loading recently viewed…")
                 : h(ShopHomeRecommendationRow, {
                     key: "rv-row",
-                    row: { id: "recently_viewed", title: "Recently viewed", products: recentProducts }
+                    row: { id: "recently_viewed", title: "Recently viewed", products: recentFiltered }
                   })
             ]
           )
@@ -3580,14 +3715,24 @@ export function ShopPage() {
           h(
             "h2",
             { key: "feat-h2", className: "mb-1 font-display text-xl font-bold text-slate-900 dark:text-white sm:text-2xl" },
-            cat === "all" ? "Browse menu items" : CATEGORY_LABELS[cat] || "Browse listings"
+            fil !== "all"
+              ? browseFilterSectionTitle(fil)
+              : cat === "all"
+                ? "Browse menu items"
+                : CATEGORY_LABELS[cat] || "Browse listings"
           ),
           h(
             "p",
             { key: "feat-sub", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" },
-            cat === "all"
-              ? "From local restaurants and stores — tap a name for the full menu, or open a dish to order."
-              : `Active listings in ${CATEGORY_LABELS[cat] || cat} — open an item to view details or add to cart.`
+            fil === "sales"
+              ? "Deals, flash sales, and compare-at markdowns — biggest discounts first."
+              : fil === "new"
+                ? "New tags and listings added in the last 30 days."
+                : fil === "popular"
+                  ? "Trending from sales, views, and reviews this week."
+                  : cat === "all"
+                    ? "From local restaurants and stores — tap a name for the full menu, or open a dish to order."
+                    : `Active listings in ${CATEGORY_LABELS[cat] || cat} — open an item to view details or add to cart.`
           ),
           listLoading &&
             h("p", { key: "list-load", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" }, "Loading products…"),
@@ -3616,9 +3761,11 @@ export function ShopPage() {
             ? h(
                 "p",
                 { key: "empty", className: "mb-4 text-sm text-slate-500 dark:text-slate-400" },
-                cat !== "all"
-                  ? `No active listings in ${CATEGORY_LABELS[cat] || cat} yet. Sellers must publish with that category (e.g. baby items under Groceries won’t appear here until recategorized). Try All or another category.`
-                  : "No menu items match your filters."
+                fil !== "all"
+                  ? browseFilterEmptyHint(fil)
+                  : cat !== "all"
+                    ? `No active listings in ${CATEGORY_LABELS[cat] || cat} yet. Sellers must publish with that category (e.g. baby items under Groceries won’t appear here until recategorized). Try All or another category.`
+                    : browseFilterEmptyHint("all")
               )
             : null,
           h(MarketplaceFooter, { key: "site-footer" })
@@ -4315,6 +4462,10 @@ export function BuyerMessagesPage() {
     const pid = String(peerUserId || "");
     const text = String(replyByPeer[pid] || "").trim();
     if (!text || !accessToken) return;
+    if (containsContactSharing(text)) {
+      setErr(CONTACT_SHARING_BLOCKED_MESSAGE);
+      return;
+    }
     setErr("");
     setSending(pid);
     const thread = threads.find((t) => String(t.peerUserId) === pid);

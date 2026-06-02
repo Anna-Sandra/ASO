@@ -48,7 +48,8 @@ import {
 } from "lucide-react";
 import { useAuth, useNotice, useTheme } from "context";
 import { apiFetch, getApiBase, apiErrorMessage } from "services/api";
-import { CATEGORY_LABELS, withAllCategoryFirst } from "config/catalog";
+import { CATEGORY_LABELS, PRODUCT_CATEGORY_VALUES, withAllCategoryFirst } from "config/catalog";
+import { adminTabToPermissionKey, ADMIN_PERMISSION_GROUPS } from "config/adminPermissions";
 import { LISTING_STOCK_WHEN_AVAILABLE } from "config/listingStock";
 import { formatGhc } from "utils/money";
 import { adminOrderFulfillmentBadgeTone, formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
@@ -217,6 +218,7 @@ const REPORT_PRIORITY_OPTS = [
 
 const SETTINGS_TABS = [
   { id: "general", label: "General" },
+  { id: "admin-access", label: "Admin access" },
   { id: "vendor-billing", label: "Seller billing" },
   { id: "commission", label: "Commission" },
   { id: "payments", label: "Payment methods" },
@@ -771,7 +773,42 @@ export function AdminPage() {
     [accessToken]
   );
   const isSuperAdmin = user?.adminLevel === "super";
-  const visibleSidebarItems = isSuperAdmin ? SIDEBAR_ITEMS : SIDEBAR_ITEMS.filter((it) => it.id !== "settings");
+  const [adminPermissions, setAdminPermissions] = useState(null);
+  const [adminPermCatalog, setAdminPermCatalog] = useState([]);
+
+  const canAdmin = useCallback(
+    (key) => {
+      if (isSuperAdmin) return true;
+      if (!key) return false;
+      return adminPermissions?.[key] === true;
+    },
+    [isSuperAdmin, adminPermissions]
+  );
+
+  const loadAdminPermissions = useCallback(async () => {
+    if (!auth) return;
+    try {
+      const d = await apiFetch("/api/admin/permissions", auth);
+      setAdminPermissions(d.permissions || {});
+      setAdminPermCatalog(Array.isArray(d.catalog) ? d.catalog : []);
+    } catch {
+      setAdminPermissions({});
+      setAdminPermCatalog([]);
+    }
+  }, [auth]);
+
+  useEffect(() => {
+    void loadAdminPermissions();
+  }, [loadAdminPermissions]);
+
+  const visibleSidebarItems = useMemo(() => {
+    return SIDEBAR_ITEMS.filter((it) => {
+      if (it.id === "settings") return isSuperAdmin;
+      const perm = adminTabToPermissionKey(it.id);
+      if (!perm) return true;
+      return canAdmin(perm);
+    });
+  }, [isSuperAdmin, canAdmin]);
 
   useEffect(() => {
     if (tab === "settings" && !isSuperAdmin) {
@@ -784,8 +821,23 @@ export function AdminPage() {
         },
         { replace: true }
       );
+      return;
     }
-  }, [tab, isSuperAdmin, setSearchParams]);
+    if (!adminPermissions && !isSuperAdmin) return;
+    const perm = adminTabToPermissionKey(tab);
+    if (perm && !canAdmin(perm)) {
+      const fallback = visibleSidebarItems[0]?.id;
+      setSearchParams(
+        (prev) => {
+          const n = new URLSearchParams(prev);
+          if (fallback) n.set("tab", fallback);
+          else n.delete("tab");
+          return n;
+        },
+        { replace: true }
+      );
+    }
+  }, [tab, isSuperAdmin, adminPermissions, canAdmin, setSearchParams, visibleSidebarItems]);
 
   /* Dashboard */
   const [dashboard, setDashboard] = useState(null);
@@ -894,6 +946,20 @@ export function AdminPage() {
     displayName: "",
     phone: "",
     vehicleType: ""
+  });
+
+  const [addVendorOpen, setAddVendorOpen] = useState(false);
+  const [addVendorBusy, setAddVendorBusy] = useState(false);
+  const [addVendorForm, setAddVendorForm] = useState({
+    email: "",
+    password: "",
+    fullName: "",
+    shopName: "",
+    phone: "",
+    altPhone: "",
+    category: "food_drinks",
+    shopDescription: "",
+    sellsDescription: ""
   });
 
   /* Sellers verification */
@@ -1018,7 +1084,8 @@ export function AdminPage() {
     vendorTrialMonths: 2,
     vendorSubscriptionBillingEnabled: true,
     vendorSubscriptionPriceGhs: 49,
-    vendorSubscriptionPeriodMonths: 12
+    vendorSubscriptionPeriodMonths: 12,
+    adminPermissions: {}
   });
   const [savingSettings, setSavingSettings] = useState(false);
   const [emailTestTo, setEmailTestTo] = useState("");
@@ -1461,7 +1528,11 @@ export function AdminPage() {
         vendorTrialMonths: d.settings.vendorTrialMonths ?? 2,
         vendorSubscriptionBillingEnabled: d.settings.vendorSubscriptionBillingEnabled !== false,
         vendorSubscriptionPriceGhs: d.settings.vendorSubscriptionPriceGhs ?? 49,
-        vendorSubscriptionPeriodMonths: d.settings.vendorSubscriptionPeriodMonths ?? 12
+        vendorSubscriptionPeriodMonths: d.settings.vendorSubscriptionPeriodMonths ?? 12,
+        adminPermissions:
+          d.settings.adminPermissions && typeof d.settings.adminPermissions === "object"
+            ? { ...d.settings.adminPermissions }
+            : s.adminPermissions
       }));
     }
   }, [accessToken]);
@@ -1628,6 +1699,10 @@ export function AdminPage() {
   /* ---------------- Actions ---------------- */
 
   const patchUser = async (id, body, reloadFn = loadUsers) => {
+    if (!canAdmin("users_manage")) {
+      await alert("You do not have permission to edit user accounts.", { variant: "error" });
+      return;
+    }
     try {
       await apiFetch(`/api/admin/users/${id}`, { method: "PATCH", ...auth, json: body });
       toast("User updated", { variant: "success" });
@@ -1798,6 +1873,10 @@ export function AdminPage() {
   };
 
   const onVendorAppDecision = async (row, action) => {
+    if (!canAdmin("vendor_apps_manage")) {
+      await alert("You do not have permission to approve or reject vendor applications.", { variant: "error" });
+      return;
+    }
     if (action === "approve") {
       const ok = await confirm(`Approve "${row.shopName}" and grant this user seller access?`, {
         title: "Approve vendor?",
@@ -1835,6 +1914,10 @@ export function AdminPage() {
   };
 
   const onCourierApplicationDecision = async (row, action) => {
+    if (!canAdmin("courier_apps_manage")) {
+      await alert("You do not have permission to approve or reject courier applications.", { variant: "error" });
+      return;
+    }
     if (action === "approve") {
       const ok = await confirm(
         `Approve courier application for ${row.fullName}? They become a rider with access to /rider and can be assigned to deliveries.`,
@@ -1902,6 +1985,10 @@ export function AdminPage() {
 
   /* Listings */
   const approveListing = async (id) => {
+    if (!canAdmin("listings_manage")) {
+      await alert("You do not have permission to moderate listings.", { variant: "error" });
+      return;
+    }
     try {
       await apiFetch(`/api/admin/products/${id}/approve`, { method: "POST", ...auth, json: {} });
       toast("Listing approved", { variant: "success" });
@@ -1916,6 +2003,10 @@ export function AdminPage() {
 
   const approveAllPendingListings = async () => {
     if (!auth) return;
+    if (!canAdmin("listings_manage")) {
+      await alert("You do not have permission to moderate listings.", { variant: "error" });
+      return;
+    }
     if (listingsTab !== "pending_approval") return;
     const searchHint = (listingsSearch || "").trim();
     const cap = ADMIN_BULK_APPROVE_PENDING_CAP;
@@ -1961,6 +2052,10 @@ export function AdminPage() {
 
   const submitReject = async () => {
     if (!rejectProduct) return;
+    if (!canAdmin("listings_manage")) {
+      await alert("You do not have permission to moderate listings.", { variant: "error" });
+      return;
+    }
     const parts = [rejectReasonSel];
     if (rejectNote.trim()) parts.push(rejectNote.trim());
     const reason = parts.join(" — ").slice(0, 2000);
@@ -2051,6 +2146,10 @@ export function AdminPage() {
 
   /* Orders */
   const quickRefund = async (o) => {
+    if (!canAdmin("orders_refund")) {
+      await alert("You do not have permission to issue Paystack refunds.", { variant: "error" });
+      return;
+    }
     if (o.paymentMethod !== "paystack") {
       await alert(
         "This order was not paid with Paystack. Refund the buyer manually (for example mobile money or bank), and keep your own records.",
@@ -2076,6 +2175,10 @@ export function AdminPage() {
   /** Off-platform pay or Paystack success that did not update the order — marks paid and reduces stock (same as all vendors confirming). */
   const markOrderPaymentReceived = async (o) => {
     if (!auth) return;
+    if (!canAdmin("orders_mark_paid")) {
+      await alert("You do not have permission to mark orders as paid.", { variant: "error" });
+      return;
+    }
     const ok = await confirm(
       `Mark order ${shortId(o.id)} as paid? Stock will be reduced and the order will move to Paid. Use this only when payment is verified (for example MoMo or bank received, or Paystack succeeded but the order stayed on “pending”).`,
       { title: "Payment received", confirmLabel: "Mark as paid" }
@@ -2095,6 +2198,10 @@ export function AdminPage() {
 
   /* Reports */
   const patchReport = async (r, body) => {
+    if (!canAdmin("reports_manage")) {
+      await alert("You do not have permission to update reports.", { variant: "error" });
+      return;
+    }
     try {
       await apiFetch(`/api/admin/reports/${r.id}`, {
         method: "PATCH",
@@ -2213,6 +2320,10 @@ export function AdminPage() {
 
   const submitCreateRider = async () => {
     if (!auth) return;
+    if (!isSuperAdmin) {
+      await alert("Only the platform super admin can create rider accounts.", { variant: "error" });
+      return;
+    }
     const email = addRiderForm.email.trim().toLowerCase();
     const password = addRiderForm.password;
     const vt = addRiderForm.vehicleType.trim();
@@ -2250,6 +2361,78 @@ export function AdminPage() {
       await alert(apiErrorMessage(ex, "Could not create rider"), { variant: "error" });
     } finally {
       setAddRiderBusy(false);
+    }
+  };
+
+  const submitCreateVendor = async () => {
+    if (!auth) return;
+    if (!isSuperAdmin) {
+      await alert("Only the platform super admin can add vendor accounts.", { variant: "error" });
+      return;
+    }
+    const email = addVendorForm.email.trim().toLowerCase();
+    const password = addVendorForm.password;
+    const fullName = addVendorForm.fullName.trim();
+    const shopName = addVendorForm.shopName.trim();
+    const phone = addVendorForm.phone.trim();
+    if (!email || !email.includes("@")) {
+      await alert("Enter a valid email.", { variant: "error" });
+      return;
+    }
+    if (!fullName || fullName.length < 2) {
+      await alert("Contact name is required (at least 2 characters).", { variant: "error" });
+      return;
+    }
+    if (!shopName || shopName.length < 2) {
+      await alert("Shop name is required.", { variant: "error" });
+      return;
+    }
+    if (!phone || phone.length < 8) {
+      await alert("Phone number is required.", { variant: "error" });
+      return;
+    }
+    if (password && password.length < 8) {
+      await alert("Password must be at least 8 characters, or leave blank to email an activation link.", {
+        variant: "error"
+      });
+      return;
+    }
+    setAddVendorBusy(true);
+    try {
+      const data = await apiFetch("/api/admin/vendors", {
+        method: "POST",
+        ...auth,
+        json: {
+          email,
+          password: password || "",
+          fullName,
+          shopName,
+          phone,
+          altPhone: addVendorForm.altPhone.trim() || undefined,
+          category: addVendorForm.category,
+          shopDescription: addVendorForm.shopDescription.trim() || undefined,
+          sellsDescription: addVendorForm.sellsDescription.trim() || undefined
+        }
+      });
+      toast(data?.message || "Vendor created.", { variant: "success" });
+      setAddVendorOpen(false);
+      setAddVendorForm({
+        email: "",
+        password: "",
+        fullName: "",
+        shopName: "",
+        phone: "",
+        altPhone: "",
+        category: "food_drinks",
+        shopDescription: "",
+        sellsDescription: ""
+      });
+      await loadVendorApps();
+      await loadDashboard();
+    } catch (ex) {
+      await alert(apiErrorMessage(ex, "Could not create vendor"), { variant: "error" });
+    } finally {
+      setAddVendorBusy(false);
     }
   };
 
@@ -2292,17 +2475,25 @@ export function AdminPage() {
           vendorTrialMonths: settingsForm.vendorTrialMonths,
           vendorSubscriptionBillingEnabled: settingsForm.vendorSubscriptionBillingEnabled,
           vendorSubscriptionPriceGhs: settingsForm.vendorSubscriptionPriceGhs,
-          vendorSubscriptionPeriodMonths: settingsForm.vendorSubscriptionPeriodMonths
+          vendorSubscriptionPeriodMonths: settingsForm.vendorSubscriptionPeriodMonths,
+          adminPermissions: settingsForm.adminPermissions
         }
       });
       toast("Settings saved", { variant: "success" });
       await loadSettings();
+      await loadAdminPermissions();
     } catch (ex) {
       await alert(apiErrorMessage(ex, "Save failed"), { variant: "error" });
     } finally {
       setSavingSettings(false);
     }
   };
+
+  useEffect(() => {
+    if (tab === "settings" && settingsTab === "admin-access" && isSuperAdmin && auth) {
+      void loadAdminPermissions();
+    }
+  }, [tab, settingsTab, isSuperAdmin, auth, loadAdminPermissions]);
 
   useEffect(() => {
     if (tab !== "settings" || settingsTab !== "email") return;
@@ -2592,7 +2783,11 @@ export function AdminPage() {
                   {
                     className: "mt-0.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400"
                   },
-                  isSuperAdmin ? "Super admin" : "Admin (limited)"
+                  isSuperAdmin
+                    ? "Super admin"
+                    : adminPermissions
+                      ? `Limited admin · ${Object.values(adminPermissions).filter(Boolean).length} permissions`
+                      : "Admin (limited)"
                 )
               ])
             ]
@@ -3152,17 +3347,19 @@ export function AdminPage() {
         "div",
         { key: "bar", className: "flex flex-wrap items-center justify-between gap-3" },
         [
-          h(
-            "button",
-            {
-              key: "add-r",
-              type: "button",
-              onClick: () => setAddRiderOpen(true),
-              className:
-                "inline-flex shrink-0 items-center gap-1.5 rounded-2xl border border-sky-300/50 bg-sky-500/15 px-3 py-2 text-sm font-semibold text-sky-800 shadow-sm hover:bg-sky-500/25 dark:border-sky-500/30 dark:text-sky-100 dark:hover:bg-sky-500/20"
-            },
-            [h(Bike, { className: "h-4 w-4" }), "Add rider"]
-          ),
+          isSuperAdmin
+            ? h(
+                "button",
+                {
+                  key: "add-r",
+                  type: "button",
+                  onClick: () => setAddRiderOpen(true),
+                  className:
+                    "inline-flex shrink-0 items-center gap-1.5 rounded-2xl border border-sky-300/50 bg-sky-500/15 px-3 py-2 text-sm font-semibold text-sky-800 shadow-sm hover:bg-sky-500/25 dark:border-sky-500/30 dark:text-sky-100 dark:hover:bg-sky-500/20"
+                },
+                [h(Bike, { className: "h-4 w-4" }), "Add rider"]
+              )
+            : null,
           h(
             "form",
             {
@@ -3429,7 +3626,22 @@ export function AdminPage() {
     return h("div", { className: "space-y-4" }, [
       h("p", { key: "hd", className: "text-sm text-slate-500 dark:text-slate-400" }, "Review applications from shoppers who want to sell on SHOPIQGH."),
       h("div", { key: "bar", className: "flex flex-wrap items-center justify-between gap-3" }, [
-        h(TabBar, { key: "tabs", tabs: VENDOR_APP_TABS, value: vendorAppsStatus, onChange: setVendorAppsStatus }),
+        h("div", { key: "left", className: "flex flex-wrap items-center gap-2" }, [
+          h(TabBar, { key: "tabs", tabs: VENDOR_APP_TABS, value: vendorAppsStatus, onChange: setVendorAppsStatus }),
+          isSuperAdmin
+            ? h(
+                "button",
+                {
+                  key: "add-v",
+                  type: "button",
+                  onClick: () => setAddVendorOpen(true),
+                  className:
+                    "inline-flex shrink-0 items-center gap-1.5 rounded-2xl border border-emerald-300/50 bg-emerald-500/15 px-3 py-2 text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-500/25 dark:border-emerald-500/30 dark:text-emerald-100 dark:hover:bg-emerald-500/20"
+                },
+                [h(Store, { className: "h-4 w-4" }), "Add vendor"]
+              )
+            : null
+        ]),
         h(
           "form",
           {
@@ -3624,7 +3836,7 @@ export function AdminPage() {
                           "Open map pin"
                         )
                       : null,
-                    vendorAppsStatus === "pending" && row.status === "pending"
+                    vendorAppsStatus === "pending" && row.status === "pending" && canAdmin("vendor_apps_manage")
                       ? [
                           h(
                             Button,
@@ -3695,7 +3907,82 @@ export function AdminPage() {
         total: vendorAppsTotal,
         limit: vendorAppsLimit,
         onPage: setVendorAppsPage
-      })
+      }),
+      h(Modal, {
+        key: "addVendorModal",
+        open: addVendorOpen,
+        title: "Add vendor account",
+        size: "sm",
+        onClose: () => {
+          if (!addVendorBusy) setAddVendorOpen(false);
+        }
+      }, [
+        h(
+          "p",
+          { key: "h", className: "mb-3 text-xs text-slate-600 dark:text-slate-300" },
+          "Creates an approved vendor. Set a password to hand them login details, or leave password empty to email an activation link (new email only)."
+        ),
+        h(Field, { key: "em", label: "Email" }, h(TextInput, {
+          type: "email",
+          value: addVendorForm.email,
+          disabled: addVendorBusy,
+          onChange: (e) => setAddVendorForm((f) => ({ ...f, email: e.target.value }))
+        })),
+        h(Field, { key: "pw", label: "Password (optional, min 8)" }, h(TextInput, {
+          type: "password",
+          value: addVendorForm.password,
+          disabled: addVendorBusy,
+          autoComplete: "new-password",
+          onChange: (e) => setAddVendorForm((f) => ({ ...f, password: e.target.value }))
+        })),
+        h(Field, { key: "fn", label: "Contact name" }, h(TextInput, {
+          value: addVendorForm.fullName,
+          disabled: addVendorBusy,
+          onChange: (e) => setAddVendorForm((f) => ({ ...f, fullName: e.target.value }))
+        })),
+        h(Field, { key: "sn", label: "Shop name" }, h(TextInput, {
+          value: addVendorForm.shopName,
+          disabled: addVendorBusy,
+          onChange: (e) => setAddVendorForm((f) => ({ ...f, shopName: e.target.value }))
+        })),
+        h(Field, { key: "ph", label: "Phone" }, h(TextInput, {
+          value: addVendorForm.phone,
+          disabled: addVendorBusy,
+          onChange: (e) => setAddVendorForm((f) => ({ ...f, phone: e.target.value }))
+        })),
+        h(Field, { key: "alt", label: "Alt phone (optional)" }, h(TextInput, {
+          value: addVendorForm.altPhone,
+          disabled: addVendorBusy,
+          onChange: (e) => setAddVendorForm((f) => ({ ...f, altPhone: e.target.value }))
+        })),
+        h(Field, { key: "cat", label: "Category" }, h(SelectInput, {
+          value: addVendorForm.category,
+          disabled: addVendorBusy,
+          onChange: (e) => setAddVendorForm((f) => ({ ...f, category: e.target.value }))
+        }, PRODUCT_CATEGORY_VALUES.map((id) => h("option", { key: id, value: id }, CATEGORY_LABELS[id] || id)))),
+        h(Field, { key: "sd", label: "Shop description (optional)" }, h(TextInput, {
+          value: addVendorForm.shopDescription,
+          disabled: addVendorBusy,
+          onChange: (e) => setAddVendorForm((f) => ({ ...f, shopDescription: e.target.value }))
+        })),
+        h("div", { key: "row-btn", className: "mt-4 flex justify-end gap-2" }, [
+          h(
+            Button,
+            {
+              key: "cx",
+              variant: "ghost",
+              disabled: addVendorBusy,
+              onClick: () => !addVendorBusy && setAddVendorOpen(false)
+            },
+            "Cancel"
+          ),
+          h(Button, {
+            key: "ok",
+            loading: addVendorBusy,
+            onClick: () => void submitCreateVendor()
+          }, "Create vendor")
+        ])
+      ])
     ]);
   };
 
@@ -3857,7 +4144,7 @@ export function AdminPage() {
                           "Open map pin"
                         )
                       : null,
-                    courierAppsStatus === "pending" && row.status === "pending"
+                    courierAppsStatus === "pending" && row.status === "pending" && canAdmin("courier_apps_manage")
                       ? [
                           h(
                             Button,
@@ -5296,6 +5583,77 @@ export function AdminPage() {
         ]
       );
 
+    if (settingsTab === "admin-access") {
+      const catalog = adminPermCatalog.length
+        ? adminPermCatalog
+        : Object.entries(settingsForm.adminPermissions || {}).map(([key, enabled]) => ({
+            key,
+            label: key,
+            description: "",
+            group: "Permissions"
+          }));
+      const groups = ADMIN_PERMISSION_GROUPS.map((group) => ({
+        group,
+        items: catalog.filter((c) => c.group === group)
+      })).filter((g) => g.items.length);
+
+      const setPerm = (key, checked) =>
+        setSettingsForm((s) => ({
+          ...s,
+          adminPermissions: { ...(s.adminPermissions || {}), [key]: checked }
+        }));
+
+      const setAllPerms = (checked) => {
+        const next = { ...(settingsForm.adminPermissions || {}) };
+        for (const item of catalog) next[item.key] = checked;
+        setSettingsForm((s) => ({ ...s, adminPermissions: next }));
+      };
+
+      return h("div", { className: "space-y-4" }, [
+        h("h3", { key: "t", className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "Admin access"),
+        h(
+          "p",
+          { key: "intro", className: "text-sm text-slate-500 dark:text-slate-400" },
+          "Control what limited admins (non–super) can open in the sidebar and which actions they can perform. Changes apply on their next request; ask them to refresh if they are already signed in."
+        ),
+        h("div", { key: "bulk", className: "flex flex-wrap gap-2" }, [
+          h(
+            Button,
+            { key: "all-on", type: "button", variant: "ghost", onClick: () => setAllPerms(true) },
+            "Enable all"
+          ),
+          h(
+            Button,
+            { key: "all-off", type: "button", variant: "ghost", onClick: () => setAllPerms(false) },
+            "Disable all"
+          )
+        ]),
+        ...groups.map((g) =>
+          h(GlassCard, { key: g.group, className: "!p-4" }, [
+            h("p", { className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, g.group),
+            h(
+              "div",
+              { className: "mt-3 space-y-2" },
+              g.items.map((item) =>
+                toggleRow(
+                  `perm-${item.key}`,
+                  item.label,
+                  item.description || "",
+                  settingsForm.adminPermissions?.[item.key] === true,
+                  (checked) => setPerm(item.key, checked)
+                )
+              )
+            )
+          ])
+        ),
+        h(
+          "div",
+          { key: "save-row", className: "flex justify-end border-t border-white/10 pt-4 dark:border-white/5" },
+          h(Button, { type: "button", loading: savingSettings, onClick: () => void saveSettings() }, "Save access rules")
+        )
+      ]);
+    }
+
     if (settingsTab === "general") {
       return h("div", { className: "space-y-4" }, [
         h("h3", { key: "t", className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "General"),
@@ -6181,6 +6539,20 @@ export function AdminPage() {
   /* ---------------- Content switch ---------------- */
 
   const content = (() => {
+    if (!isSuperAdmin && adminPermissions && visibleSidebarItems.length === 0) {
+      return h(
+        "div",
+        { className: "mx-auto max-w-md space-y-3 py-16 text-center" },
+        [
+          h("h2", { className: "font-display text-xl font-bold text-slate-900 dark:text-white" }, "No admin access"),
+          h(
+            "p",
+            { className: "text-sm text-slate-600 dark:text-slate-300" },
+            "Your account has no admin permissions enabled. Ask the platform super admin to update Settings → Admin access."
+          )
+        ]
+      );
+    }
     if (loading && !err) {
       return h(
         "div",

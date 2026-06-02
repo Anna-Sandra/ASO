@@ -3,6 +3,7 @@ import { h } from "utils/h";
 import { storageGetJSON, storageSetJSON, StorageKeys } from "utils/storage";
 import { useAuth } from "./AuthContext";
 import { apiFetch } from "services/api";
+import { cartLineSellerUnit } from "utils/productAddons";
 
 const CartContext = createContext({
   items: [],
@@ -84,11 +85,27 @@ export function CartProvider({ children }) {
     const q = Number(qty) || 1;
     const cust = normalizeCustomization(customization);
     const lk = stableLineKey(product, cust);
+    const baseListPrice =
+      product.baseListPrice != null ? Number(product.baseListPrice) : Number(product.price) || 0;
+    const row = {
+      ...product,
+      baseListPrice,
+      qty: q,
+      customization: cust,
+      _lineKey: lk,
+      selectedAddonLabels: Array.isArray(product.selectedAddonLabels) ? [...product.selectedAddonLabels] : []
+    };
     setItems((prev) => {
-      const i = prev.findIndex((row) => row._lineKey === lk || (row.id === product.id && normalizeCustomization(row.customization) === cust && addonKeyFromProduct(row) === addonKeyFromProduct(product)));
-      if (i === -1) return [...prev, { ...product, qty: q, customization: cust, _lineKey: lk }];
+      const i = prev.findIndex(
+        (r) =>
+          r._lineKey === lk ||
+          (r.id === product.id &&
+            normalizeCustomization(r.customization) === cust &&
+            addonKeyFromProduct(r) === addonKeyFromProduct(product))
+      );
+      if (i === -1) return [...prev, row];
       const next = [...prev];
-      next[i] = { ...next[i], qty: next[i].qty + q, customization: cust, _lineKey: lk, ...product };
+      next[i] = { ...next[i], ...row, qty: next[i].qty + q };
       return next;
     });
   }, []);
@@ -131,7 +148,7 @@ export function CartProvider({ children }) {
 
   const clear = useCallback(() => setItems([]), []);
 
-  const subtotal = items.reduce((s, p) => s + (Number(p.price) || 0) * (Number(p.qty) || 0), 0);
+  const subtotal = items.reduce((s, p) => s + cartLineSellerUnit(p) * (Number(p.qty) || 0), 0);
   const count = items.reduce((s, p) => s + p.qty, 0);
 
   const value = useMemo(

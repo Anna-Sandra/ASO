@@ -19,6 +19,7 @@ const FIELD_LABELS: Record<string, string> = {
   phone: "Phone number",
   displayName: "Name",
   proofPhotoUrl: "Delivery photo",
+  deliveryOtp: "Delivery code",
   dropoffLatitude: "Delivery location",
   dropoffLongitude: "Delivery location",
   dropoffLabel: "Delivery address",

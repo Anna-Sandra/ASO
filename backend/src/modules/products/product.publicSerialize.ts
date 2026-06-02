@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import { User } from "../auth/user.model";
 import { Business } from "../businesses/business.model";
-import { buildSellerPublicPhoneMap } from "../../utils/sellerContactPhone";
 import { Review } from "../reviews/review.model";
 import { BuyerProductView } from "./buyerProductView.model";
 import { Order } from "../orders/order.model";
@@ -144,27 +143,6 @@ export async function attachSellerPayments(
     }
   }
 
-  const businessIdsBySeller = new Map<string, string>();
-  for (const p of visibleProducts) {
-    const raw = p.sellerId;
-    const sellerKey =
-      raw instanceof mongoose.Types.ObjectId
-        ? raw.toString()
-        : raw != null && raw !== ""
-          ? String(raw)
-          : "";
-    if (!sellerKey || businessIdsBySeller.has(sellerKey)) continue;
-    const bidRaw = p.businessId;
-    const bid =
-      bidRaw instanceof mongoose.Types.ObjectId
-        ? bidRaw.toString()
-        : bidRaw != null && String(bidRaw).trim()
-          ? String(bidRaw).trim()
-          : "";
-    if (bid) businessIdsBySeller.set(sellerKey, bid);
-  }
-  const sellerPhones = await buildSellerPublicPhoneMap(sellerIds, byId, businessIdsBySeller);
-
   return visibleProducts.map((p) => {
     const base = toPublicProduct(p);
     const raw = p.sellerId;
@@ -185,11 +163,8 @@ export async function attachSellerPayments(
       bankAccountNumber?: string;
       bankAccountName?: string;
     };
-    const contactPhone = sellerPhones.get(sellerKey) || "";
     const contactOnly = {
-      displayName: String(su.displayName ?? ""),
-      email: String(su.email ?? "").trim(),
-      phone: contactPhone
+      displayName: String(su.displayName ?? "")
     };
     const full = {
       ...contactOnly,
