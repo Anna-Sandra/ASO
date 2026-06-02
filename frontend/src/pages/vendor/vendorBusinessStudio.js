@@ -5,23 +5,12 @@ import { storeStatusLabel } from "utils/storeStatus";
 import { apiFetch, apiUploadProductImages , apiErrorMessage} from "services/api";
 import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
-import { Button, Field, GlassPanel, InlineNotice, SelectInput, TextArea, TextInput } from "components/ui";
+import { GlassPanel, InlineNotice } from "components/ui";
 
 const QUIET_BRAND_LINK =
   "text-[10px] font-medium text-slate-500 underline-offset-2 hover:text-sky-600 hover:underline disabled:pointer-events-none disabled:opacity-40 dark:text-slate-400 dark:hover:text-sky-400";
 const QUIET_BRAND_REMOVE =
   "text-[10px] font-medium text-slate-400 underline-offset-2 hover:text-rose-600 hover:underline disabled:pointer-events-none disabled:opacity-40";
-
-const BUSINESS_TYPES = [
-  { value: "food_restaurant", label: "Food / Restaurant" },
-  { value: "fashion_store", label: "Fashion store" },
-  { value: "electronics_shop", label: "Electronics shop" },
-  { value: "beauty_shop", label: "Beauty shop" },
-  { value: "baby_infant_store", label: "Baby / infant shop" },
-  { value: "grocery_store", label: "Grocery store" },
-  { value: "academic_book", label: "Books / Academic" },
-  { value: "service_provider", label: "Service provider" }
-];
 
 export function VendorStoresPage() {
   const navigate = useNavigate();
@@ -29,10 +18,6 @@ export function VendorStoresPage() {
   const { toast } = useNotice();
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [name, setName] = useState("");
-  const [businessType, setBusinessType] = useState("fashion_store");
-  const [description, setDescription] = useState("");
   /** `"${slug}:logo"` | `"${slug}:banner"` | `""` */
   const [brandBusy, setBrandBusy] = useState("");
 
@@ -114,41 +99,6 @@ export function VendorStoresPage() {
       setErr(apiErrorMessage(ex, "Could not update branding."));
     } finally {
       setBrandBusy("");
-    }
-  };
-
-  const onCreate = async (e) => {
-    e.preventDefault();
-    if (!accessToken) return;
-    setLoading(true);
-    setErr("");
-    try {
-      const created = await apiFetch("/api/businesses", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        json: {
-          name: name.trim(),
-          businessType,
-          description: description.trim(),
-          status: "draft",
-          pickupAvailable: true,
-          deliveryAvailable: false
-        }
-      });
-      const linked = Number(created?.linkedOrphanProducts) || 0;
-      toast(
-        linked > 0
-          ? `Store created. ${linked} existing listing${linked === 1 ? "" : "s"} linked to this store menu.`
-          : "Store created as draft. Open it to add branding, then submit for admin approval.",
-        { variant: "success" }
-      );
-      setName("");
-      setDescription("");
-      await load();
-    } catch (e) {
-      setErr(apiErrorMessage(e, "Could not create store."));
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -376,41 +326,18 @@ export function VendorStoresPage() {
               ]);
             })
           ])
-        : h("p", { className: "py-10 text-center text-sm text-slate-500 dark:text-slate-400" }, "No stores yet.")
-    ),
-    h(
-      GlassPanel,
-      { key: "form" },
-      [
-        h("h2", { className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "Create store"),
-        h(
-          "p",
-          { className: "mt-1 text-sm text-slate-600 dark:text-slate-400" },
-          "Creates a draft storefront. After it appears in the list, open Manage storefront, add logo and banner, then submit for admin approval."
-        ),
-        h(
-          "form",
-          { className: "mt-6 space-y-4", onSubmit: onCreate },
-          [
-            h(Field, { key: "n", label: "Business / brand name" }, h(TextInput, { value: name, onChange: (ev) => setName(ev.target.value), required: true })),
+        : h("p", { className: "py-10 text-center text-sm text-slate-500 dark:text-slate-400" }, [
+            "No stores yet. ",
             h(
-              Field,
-              { key: "bt", label: "Business archetype" },
-              h(
-                SelectInput,
-                { value: businessType, onChange: (ev) => setBusinessType(ev.target.value) },
-                BUSINESS_TYPES.map((o) => h("option", { key: o.value, value: o.value }, o.label))
-              )
-            ),
-            h(
-              Field,
-              { key: "d", label: "Short description (public)" },
-              h(TextArea, { value: description, onChange: (ev) => setDescription(ev.target.value), rows: 4 })
-            ),
-            h(Button, { key: "go", type: "submit", loading }, "Create store (draft)")
-          ]
-        )
-      ]
+              Link,
+              {
+                key: "onb",
+                to: "/vendor/onboarding",
+                className: "font-semibold text-sky-600 hover:underline dark:text-sky-300"
+              },
+              "Create one in Get started →"
+            )
+          ])
     )
   ]);
 }
