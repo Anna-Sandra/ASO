@@ -1333,13 +1333,12 @@ function renderVendorStoreFields(h, opts) {
   return nodes;
 }
 
-const STANDARD_PRODUCT_TAGS = new Set(["new", "popular", "sale"]);
+const STANDARD_PRODUCT_TAGS = new Set(["popular", "sale"]);
 
 /** @returns {string[]} */
-function buildVendorSubmitTags(showTags, { tagNew, tagPopular, tagSale, extraCsv }) {
+function buildVendorSubmitTags(showTags, { tagPopular, tagSale, extraCsv }) {
   if (!showTags) return [];
   const list = [];
-  if (tagNew) list.push("new");
   if (tagPopular) list.push("popular");
   if (tagSale) list.push("sale");
   String(extraCsv || "")
@@ -1352,16 +1351,16 @@ function buildVendorSubmitTags(showTags, { tagNew, tagPopular, tagSale, extraCsv
     )
     .filter(Boolean)
     .forEach((t) => {
-      if (!STANDARD_PRODUCT_TAGS.has(t)) list.push(t);
+      if (t === "new" || STANDARD_PRODUCT_TAGS.has(t)) return;
+      list.push(t);
     });
   return [...new Set(list)].slice(0, 10);
 }
 
 /** @param {string[]} tagsArray */
 function promoTagCheckboxState(tagsArray) {
-  const arr = (tagsArray || []).map((x) => String(x).trim().toLowerCase());
+  const arr = (tagsArray || []).map((x) => String(x).trim().toLowerCase()).filter((t) => t && t !== "new");
   return {
-    tagNew: arr.includes("new"),
     tagPopular: arr.includes("popular"),
     tagSale: arr.includes("sale"),
     tagExtras: arr.filter((t) => !STANDARD_PRODUCT_TAGS.has(t)).join(", ")
@@ -1369,7 +1368,7 @@ function promoTagCheckboxState(tagsArray) {
 }
 
 /** @param {typeof import("../utils/h").h} h */
-function vendorListingTagField(h, Field, TextInput, { tagNew, setTagNew, tagPopular, setTagPopular, tagSale, setTagSale, tagExtras, setTagExtras }) {
+function vendorListingTagField(h, Field, TextInput, { tagPopular, setTagPopular, tagSale, setTagSale, tagExtras, setTagExtras }) {
   const chk = (key, checked, lab, setter) =>
     h("label", { key, className: "flex cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-100" }, [
       h("input", { type: "checkbox", checked, onChange: (e) => setter(e.target.checked) }),
@@ -1379,10 +1378,9 @@ function vendorListingTagField(h, Field, TextInput, { tagNew, setTagNew, tagPopu
     h(
       "p",
       { key: "tg-h", className: "mb-3 text-xs text-slate-500 dark:text-slate-400" },
-      "Choose badges shoppers may see on your listing ribbons. Leave all unchecked for no badge."
+      "Shoppers see a New ribbon automatically for 7 days after you publish a listing — you cannot pin New longer. Choose Popular or Sale below if you want extra badges."
     ),
     h("div", { key: "tg-row", className: "mb-3 flex flex-wrap gap-x-5 gap-y-2" }, [
-      chk("tg-new", tagNew, "New", setTagNew),
       chk("tg-pop", tagPopular, "Popular", setTagPopular),
       chk("tg-sale", tagSale, "Sale", setTagSale)
     ]),
@@ -1421,7 +1419,6 @@ export function VendorAddProductPage() {
   const [addonPrice, setAddonPrice] = useState("");
   const [inStock, setInStock] = useState(true);
   const [subcategory, setSubcategory] = useState("");
-  const [tagNew, setTagNew] = useState(false);
   const [tagPopular, setTagPopular] = useState(false);
   const [tagSale, setTagSale] = useState(false);
   const [tagExtras, setTagExtras] = useState("");
@@ -1488,7 +1485,6 @@ export function VendorAddProductPage() {
     setLoading(true);
     try {
       const tagList = buildVendorSubmitTags(m.showTags, {
-        tagNew,
         tagPopular,
         tagSale,
         extraCsv: tagExtras
@@ -1645,8 +1641,6 @@ export function VendorAddProductPage() {
   if (meta.showTags) {
     innerFields.push(
       vendorListingTagField(h, Field, TextInput, {
-        tagNew,
-        setTagNew,
         tagPopular,
         setTagPopular,
         tagSale,
@@ -1739,7 +1733,6 @@ export function VendorEditProductPage() {
   const [status, setStatus] = useState("draft");
   const [serverStatus, setServerStatus] = useState(null);
   const [rejectionReason, setRejectionReason] = useState(null);
-  const [tagNew, setTagNew] = useState(false);
   const [tagPopular, setTagPopular] = useState(false);
   const [tagSale, setTagSale] = useState(false);
   const [tagExtras, setTagExtras] = useState("");
@@ -1785,7 +1778,6 @@ export function VendorEditProductPage() {
           setStatus("draft");
         }
         const promo = promoTagCheckboxState(p.tags || []);
-        setTagNew(promo.tagNew);
         setTagPopular(promo.tagPopular);
         setTagSale(promo.tagSale);
         setTagExtras(promo.tagExtras);
@@ -1822,7 +1814,6 @@ export function VendorEditProductPage() {
     setSaving(true);
     try {
       const tagList = buildVendorSubmitTags(m.showTags, {
-        tagNew,
         tagPopular,
         tagSale,
         extraCsv: tagExtras
@@ -1993,8 +1984,6 @@ export function VendorEditProductPage() {
   if (meta.showTags) {
     innerFields.push(
       vendorListingTagField(h, Field, TextInput, {
-        tagNew,
-        setTagNew,
         tagPopular,
         setTagPopular,
         tagSale,

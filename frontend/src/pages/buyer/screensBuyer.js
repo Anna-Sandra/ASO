@@ -3727,7 +3727,7 @@ export function ShopPage() {
             fil === "sales"
               ? "Deals, flash sales, and compare-at markdowns — biggest discounts first."
               : fil === "new"
-                ? "New tags and listings added in the last 30 days."
+                ? "Listings added in the last 7 days."
                 : fil === "popular"
                   ? "Trending from sales, views, and reviews this week."
                   : cat === "all"

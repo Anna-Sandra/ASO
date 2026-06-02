@@ -103,12 +103,12 @@ function fieldChanged(key: string, from: unknown, to: unknown): boolean {
   return String(from ?? "") !== String(to ?? "");
 }
 
-/** Align with frontend filters / ribbons (case-sensitive tokens in catalog.js). */
+/** Align with frontend filters / ribbons. “new” is time-based only — strip if sent from old clients. */
 function normalizeSellerTags(tags: unknown): string[] {
   const rawTags = Array.isArray(tags)
     ? (tags as unknown[]).map((t) => String(t).trim().toLowerCase()).filter(Boolean)
     : [];
-  return [...new Set(rawTags)].slice(0, 10);
+  return [...new Set(rawTags.filter((t) => t !== "new"))].slice(0, 10);
 }
 
 function sellerModerationTouched(

@@ -148,15 +148,16 @@ export function productHasSale(p) {
   return Number.isFinite(cmp) && Number.isFinite(list) && cmp > list && list > 0;
 }
 
-const NEW_LISTING_MS = 30 * 24 * 60 * 60 * 1000;
+/** Listings are “new” only for this long after `createdAt` (vendors cannot set a permanent New tag). */
+export const NEW_LISTING_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** `new` tag or first published within the last 30 days. */
+/** First published within the last 7 days — used for New filter, badge, and sort. */
 export function productIsNewListing(p) {
   if (!p || typeof p !== "object") return false;
-  const tags = /** @type {string[]} */ ((p.tags || []).map((t) => String(t || "").toLowerCase()));
-  if (tags.includes("new")) return true;
   const created = p.createdAt ? new Date(String(p.createdAt)).getTime() : NaN;
-  return Number.isFinite(created) && Date.now() - created <= NEW_LISTING_MS;
+  if (!Number.isFinite(created)) return false;
+  const ageMs = Date.now() - created;
+  return ageMs >= 0 && ageMs <= NEW_LISTING_MS;
 }
 
 /** `popular` tag, recent sales/views, or strong review volume. */
@@ -252,7 +253,7 @@ export function browseFilterEmptyHint(filId) {
     case "sales":
       return "No discounted listings in this view yet. Try All, or check back when vendors run promos.";
     case "new":
-      return "No new listings in the last 30 days here. Try All or another category.";
+      return "No listings added in the last 7 days here. Try All or another category.";
     case "popular":
       return "Nothing trending in this category yet. Try All to see everything.";
     default:
@@ -290,8 +291,9 @@ export function refFromId(id) {
 
 /** @param {Record<string, unknown>} p */
 export function productBadge(p) {
-  const tags = /** @type {string[]} */ (p.tags || []);
-  if (tags.includes("new")) return "New";
+  if (!p || typeof p !== "object") return null;
+  if (productIsNewListing(p)) return "New";
+  const tags = /** @type {string[]} */ ((p.tags || []).map((t) => String(t || "").toLowerCase()));
   if (tags.includes("sale")) return "Sale";
   return null;
 }
@@ -334,11 +336,16 @@ export function productStorefrontBadges(p) {
     }
   }
 
-  if (tags.includes("popular")) out.push({ key: "popular", label: "Popular", className: "bg-orange-500 text-white" });
+  if (productIsPopularListing(p)) {
+    out.push({ key: "popular", label: "Popular", className: "bg-orange-500 text-white" });
+  }
 
   const pb = productBadge(p);
-  if (pb === "New") out.push({ key: "new", label: "New", className: "bg-emerald-500 text-white" });
-  else if (pb === "Sale" && !out.some((x) => x.key === "off")) out.push({ key: "sale", label: "Sale", className: "bg-rose-500 text-white" });
+  if (pb === "New" && !out.some((x) => x.key === "new")) {
+    out.push({ key: "new", label: "New", className: "bg-emerald-500 text-white" });
+  } else if (pb === "Sale" && !out.some((x) => x.key === "off")) {
+    out.push({ key: "sale", label: "Sale", className: "bg-rose-500 text-white" });
+  }
 
   const seen = new Set();
   return out.filter((b) => (seen.has(b.label) ? false : (seen.add(b.label), true))).slice(0, 3);
