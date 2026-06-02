@@ -3,6 +3,7 @@ import { Crosshair, MapPin, Radio } from "lucide-react";
 import { useGeolocation } from "hooks/useGeolocation";
 import { h } from "utils/h";
 import { Button, Field, TextInput } from "components/ui";
+import { clearStorefrontDraftSection, readStorefrontDraft, writeStorefrontDraft } from "utils/vendorStorefrontDraft";
 
 const LIVE_SAVE_MS = 60_000;
 
@@ -20,22 +21,29 @@ function movedEnough(prev, lat, lng) {
 /**
  * Inline store location: label + live GPS pin for buyers, riders, and dispatch maps.
  */
-export function StoreLocationSection({ business, onSave, saving }) {
+export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
   const geo = business?.geoLocation;
   const [label, setLabel] = useState(business?.locationLabel ? String(business.locationLabel) : "");
   const [liveEnabled, setLiveEnabled] = useState(Boolean(business?.settings?.liveLocationEnabled));
   const { position, error, watching, getOnce, startWatch, clearWatch, setError } = useGeolocation();
   const onSaveRef = useRef(onSave);
   const lastLiveSaveRef = useRef({ at: 0, lat: null, lng: null });
-
   useEffect(() => {
     onSaveRef.current = onSave;
   }, [onSave]);
 
   useEffect(() => {
-    setLabel(business?.locationLabel ? String(business.locationLabel) : "");
+    if (!business?.id) return;
+    const draftLabel = readStorefrontDraft(storeSlug)?.locationLabel;
+    setLabel(
+      typeof draftLabel === "string"
+        ? draftLabel
+        : business?.locationLabel
+          ? String(business.locationLabel)
+          : ""
+    );
     setLiveEnabled(Boolean(business?.settings?.liveLocationEnabled));
-  }, [business?.locationLabel, business?.settings?.liveLocationEnabled]);
+  }, [business?.id, business?.updatedAt, business?.locationLabel, business?.settings?.liveLocationEnabled, storeSlug]);
 
   const saveLivePosition = (lat, lng) => {
     const now = Date.now();
@@ -97,6 +105,7 @@ export function StoreLocationSection({ business, onSave, saving }) {
 
   const saveLabel = async () => {
     await persist({ locationLabel: label.trim() }, { reload: true });
+    clearStorefrontDraftSection(storeSlug, "locationLabel");
   };
 
   return h(
@@ -135,7 +144,11 @@ export function StoreLocationSection({ business, onSave, saving }) {
       h(Field, { key: "lbl", label: "Location name (shown to shoppers)", className: "mt-4" }, [
         h(TextInput, {
           value: label,
-          onChange: (e) => setLabel(e.target.value),
+          onChange: (e) => {
+            const next = e.target.value;
+            setLabel(next);
+            if (storeSlug) writeStorefrontDraft(storeSlug, { locationLabel: next });
+          },
           placeholder: "e.g. University Main Gate, Block A"
         })
       ]),

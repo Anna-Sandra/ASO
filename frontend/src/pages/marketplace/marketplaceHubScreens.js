@@ -9,6 +9,8 @@ import { buyerDisplayPrice } from "utils/checkoutPricing";
 import { useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
 import { h, f } from "utils/h";
 import { storeStatusLabel } from "utils/storeStatus";
+import { buildStoreFulfillmentDisplay } from "utils/storeFulfillmentDisplay";
+import { businessWithStorefrontDraft } from "utils/vendorStorefrontDraft";
 import { Button, GlassPanel, Field, TextArea, InlineNotice } from "components/ui";
 import { CATEGORY_LABELS, isFoodCallToOrderCategory, isOfflineQuoteCategory, productCategoryForBusinessType } from "config/catalog";
 
@@ -834,7 +836,31 @@ export function BusinessStorefrontPage() {
     };
   }, [slug, accessToken]);
 
-  const business = payload?.business || null;
+  const businessRaw = payload?.business || null;
+  const viewerOwnsStore = Boolean(
+    user?.role === "seller" && user?.id && businessRaw?.ownerId && String(user.id) === String(businessRaw.ownerId)
+  );
+  const [draftVersion, setDraftVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setDraftVersion((v) => v + 1);
+    const onVis = () => {
+      if (document.visibilityState === "visible") bump();
+    };
+    const onStorage = (e) => {
+      if (String(e.key || "").startsWith("SHOPIQGH_store_draft_")) bump();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  const business = useMemo(
+    () => (viewerOwnsStore && slug ? businessWithStorefrontDraft(businessRaw, slug) : businessRaw),
+    [businessRaw, viewerOwnsStore, slug, draftVersion]
+  );
   const menuSections = Array.isArray(payload?.menuSections) ? payload.menuSections : [];
   const products = Array.isArray(payload?.products) ? payload.products : [];
   const productReviewSummary = payload?.productReviewSummary || payload?.reviewSummary || { avgRating: null, count: 0 };
@@ -946,45 +972,15 @@ export function BusinessStorefrontPage() {
     }
   };
 
-  const viewerOwnsStore = Boolean(
-    user?.role === "seller" && user?.id && business?.ownerId && String(user.id) === String(business.ownerId)
-  );
-
   const hoursSnippet = formatOperatingHoursSnippet(business?.operatingHours);
   const listingCount = products.length;
 
-  const pickupOk = Boolean(business?.pickupAvailable);
-  const deliveryOk = Boolean(business?.deliveryAvailable);
-
-  const etaRange =
-    deliveryOk && business?.estimatedDeliveryMins != null
-      ? `${Math.max(5, business.estimatedDeliveryMins - 8)}–${business.estimatedDeliveryMins + 12} min`
-      : null;
-
-  const feeLine =
-    deliveryOk &&
-    business?.deliveryFee != null &&
-    Number.isFinite(Number(business.deliveryFee)) &&
-    Number(business.deliveryFee) > 0
-      ? `${formatGhc(Number(business.deliveryFee))} delivery`
-      : deliveryOk
-        ? "Delivery cost — confirm with seller"
-        : pickupOk
-          ? "Pickup — arrange with seller"
-          : "Contact seller";
-
-  const storefrontLocationSnippet = business?.locationLabel?.trim()
-    ? String(business.locationLabel).trim()
-    : pickupOk && deliveryOk
-      ? "Pickup and delivery offered — message the seller for pickup address / delivery zones."
-      : deliveryOk && !pickupOk
-        ? "Delivery offered — seller will confirm zones and timing."
-        : pickupOk && !deliveryOk
-          ? "Pickup — message the seller for pickup details."
-          : "How to get your order — message the seller.";
-
-  const storefrontServiceSnippet = [pickupOk && "Pickup", deliveryOk && "Delivery"].filter(Boolean).join(" · ") ||
-    "See listings for how to buy";
+  const {
+    serviceSnippet: storefrontServiceSnippet,
+    fulfillmentTile,
+    locationSnippet: storefrontLocationSnippet,
+    heroChips: fulfillmentHeroChips
+  } = buildStoreFulfillmentDisplay(business);
 
   const shareStore = () => {
     const url = typeof window !== "undefined" ? window.location.href : "";
@@ -1162,24 +1158,21 @@ export function BusinessStorefrontPage() {
                                     ]
                                   )
                                 : null,
-                              etaRange
-                                ? h(
-                                    "span",
-                                    {
-                                      key: "eta",
-                                      className:
-                                        "inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 font-semibold dark:bg-white/10"
-                                    },
-                                    [h(Clock, { className: "h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-300" }), etaRange]
-                                  )
-                                : null,
-                              h(
-                                "span",
-                                {
-                                  key: "fee",
-                                  className: "inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 font-semibold dark:bg-white/10"
-                                },
-                                [h(Truck, { className: "h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-300" }), feeLine]
+                              ...fulfillmentHeroChips.map((chip) =>
+                                h(
+                                  "span",
+                                  {
+                                    key: chip.key,
+                                    className:
+                                      "inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 font-semibold dark:bg-white/10"
+                                  },
+                                  [
+                                    chip.icon === "clock"
+                                      ? h(Clock, { className: "h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-300" })
+                                      : h(Truck, { className: "h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-300" }),
+                                    chip.label
+                                  ]
+                                )
                               )
                             ].filter(Boolean)),
                             tagPills.length
@@ -1246,7 +1239,7 @@ export function BusinessStorefrontPage() {
                               "Service",
                               storefrontServiceSnippet
                             ),
-                            infoTile(h(Sparkles, { className: "h-5 w-5" }), "Delivery", feeLine)
+                            infoTile(h(Sparkles, { className: "h-5 w-5" }), "Fulfillment", fulfillmentTile)
                           ]
                         ),
                         h(

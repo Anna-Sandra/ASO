@@ -1,5 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "services/api";
+import {
+  isStoredAccessTokenValid,
+  readStoredAccessToken,
+  refreshSessionTokens,
+  restoreSessionFromStorage
+} from "services/sessionRefresh";
 import { decodeJwtPayload, isAccessTokenExpired } from "utils/authJwt";
 import { storageGet, storageRemove, storageSet, StorageKeys } from "utils/storage";
 import { h } from "utils/h";
@@ -60,90 +66,67 @@ export function AuthProvider({ children }) {
     [setAccessToken]
   );
 
-  const loadUserForToken = useCallback(async (token) => {
-    try {
-      const me = await apiFetch("/api/auth/me", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (me?.user) {
-        setUser(mergeMeUser(me.user, token));
+  const loadUserForToken = useCallback(
+    async (token, { allowJwtFallback = true } = {}) => {
+      if (!token) return false;
+      try {
+        const me = await apiFetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (me?.user) {
+          setUser(mergeMeUser(me.user, token));
+          setAccessToken(token);
+          return true;
+        }
+      } catch {
+        /* network or 401 — fall back below when allowed */
+      }
+      if (!allowJwtFallback) return false;
+      const fromJwt = userFromJwt(token);
+      if (fromJwt) {
+        setUser(fromJwt);
         setAccessToken(token);
         return true;
       }
-    } catch {
-      /* fall back to JWT claims */
-    }
-    const fromJwt = userFromJwt(token);
-    if (fromJwt) {
-      setUser(fromJwt);
-      setAccessToken(token);
-      return true;
-    }
-    return false;
-  }, [setAccessToken]);
+      return false;
+    },
+    [setAccessToken]
+  );
 
   const refreshAccess = useCallback(async () => {
-    const storedRefresh = storageGet(StorageKeys.REFRESH_TOKEN);
-    const data = await apiFetch("/api/auth/refresh", {
-      method: "POST",
-      json: storedRefresh ? { refreshToken: storedRefresh } : {}
-    });
-    if (data?.accessToken) {
-      persistSessionTokens(data);
-      await loadUserForToken(data.accessToken);
+    const token = await refreshSessionTokens();
+    if (token) {
+      await loadUserForToken(token);
+      return {
+        accessToken: token,
+        refreshToken: storageGet(StorageKeys.REFRESH_TOKEN)
+      };
     }
-    return data;
-  }, [persistSessionTokens, loadUserForToken]);
+    return { accessToken: null };
+  }, [loadUserForToken]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        let token = storageGet(StorageKeys.ACCESS_TOKEN);
-        const storedRefresh = storageGet(StorageKeys.REFRESH_TOKEN);
-
-        if (token && !isAccessTokenExpired(token)) {
-          const ok = await loadUserForToken(token);
-          if (!cancelled && ok) return;
-        }
-
-        let refreshData = null;
-        try {
-          refreshData = await apiFetch("/api/auth/refresh", {
-            method: "POST",
-            json: storedRefresh ? { refreshToken: storedRefresh } : {}
-          });
-        } catch {
-          refreshData = null;
-        }
-
-        if (!cancelled && refreshData?.accessToken) {
-          persistSessionTokens(refreshData);
-          await loadUserForToken(refreshData.accessToken);
-          return;
-        }
-
-        token = storageGet(StorageKeys.ACCESS_TOKEN);
-        if (token && !isAccessTokenExpired(token)) {
+        const { accessToken: token } = await restoreSessionFromStorage();
+        if (cancelled) return;
+        if (token) {
           await loadUserForToken(token);
           return;
         }
-
-        if (!cancelled) {
+        setAccessToken(null);
+        storageRemove(StorageKeys.REFRESH_TOKEN);
+        setUser(null);
+      } catch {
+        if (cancelled) return;
+        const token = readStoredAccessToken();
+        if (token && isStoredAccessTokenValid()) {
+          await loadUserForToken(token);
+        } else {
           setAccessToken(null);
           storageRemove(StorageKeys.REFRESH_TOKEN);
           setUser(null);
-        }
-      } catch {
-        const token = storageGet(StorageKeys.ACCESS_TOKEN);
-        if (!cancelled) {
-          if (token && !isAccessTokenExpired(token)) {
-            await loadUserForToken(token);
-          } else {
-            setAccessToken(null);
-            storageRemove(StorageKeys.REFRESH_TOKEN);
-            setUser(null);
-          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -152,21 +135,66 @@ export function AuthProvider({ children }) {
     return () => {
       cancelled = true;
     };
-  }, [setAccessToken, persistSessionTokens, loadUserForToken]);
+  }, [setAccessToken, loadUserForToken]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const onToken = (e) => {
       const token = e?.detail || null;
-      setAccessToken(token);
-      if (!token) {
+      if (token) {
+        setAccessToken(token);
+        void loadUserForToken(token);
+        return;
+      }
+      void (async () => {
+        const restored = await refreshSessionTokens();
+        if (restored) {
+          setAccessToken(restored);
+          await loadUserForToken(restored);
+          return;
+        }
+        const existing = readStoredAccessToken();
+        if (existing && isStoredAccessTokenValid()) {
+          setAccessToken(existing);
+          await loadUserForToken(existing);
+          return;
+        }
+        setAccessToken(null);
         storageRemove(StorageKeys.REFRESH_TOKEN);
         setUser(null);
-      }
+      })();
     };
     window.addEventListener("auth:token", onToken);
     return () => window.removeEventListener("auth:token", onToken);
-  }, [setAccessToken]);
+  }, [setAccessToken, loadUserForToken]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !accessToken) return undefined;
+    const onStorage = (e) => {
+      if (e.key !== StorageKeys.ACCESS_TOKEN && e.key !== StorageKeys.REFRESH_TOKEN) return;
+      const nextAccess = storageGet(StorageKeys.ACCESS_TOKEN);
+      if (!nextAccess || nextAccess === accessToken) return;
+      if (isAccessTokenExpired(nextAccess)) return;
+      setAccessTokenState(nextAccess);
+      void loadUserForToken(nextAccess);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [accessToken, loadUserForToken]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !accessToken) return undefined;
+    const refreshIfSoon = () => {
+      const t = readStoredAccessToken();
+      if (!t || !isAccessTokenExpired(t, 300)) return;
+      void refreshSessionTokens().then((next) => {
+        if (next) void loadUserForToken(next);
+      });
+    };
+    refreshIfSoon();
+    const id = window.setInterval(refreshIfSoon, 60_000);
+    return () => window.clearInterval(id);
+  }, [accessToken, loadUserForToken]);
 
   const login = useCallback(
     async (identifier, password) => {

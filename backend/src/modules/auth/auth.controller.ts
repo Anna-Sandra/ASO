@@ -808,19 +808,10 @@ export const deleteAccount = asyncHandler(async (req: Request, res: Response) =>
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const fromCookie = req.cookies?.refreshToken as string | undefined;
   const fromBody = (req.body as { refreshToken?: string } | undefined)?.refreshToken;
-  const refreshToken = fromBody || fromCookie;
-  // No cookie/body is normal when logged out — avoid 4xx noise in the browser for startup refresh.
-  if (!refreshToken) {
+  /** Prefer httpOnly cookie — localStorage body can be stale after rotation in another tab. */
+  const candidates = [...new Set([fromCookie, fromBody].filter((t): t is string => Boolean(t && String(t).trim())))];
+  if (!candidates.length) {
     res.json({ accessToken: null });
-    return;
-  }
-
-  if (tryVerifyBootstrapRefreshToken(refreshToken)) {
-    const sub = getBootstrapAdminJwtSub();
-    const accessToken = signAccessToken({ sub, role: "admin", al: "super" });
-    const bootstrapRefresh = signBootstrapRefreshToken();
-    res.cookie("refreshToken", bootstrapRefresh, refreshCookieOptions());
-    res.json({ accessToken, refreshToken: bootstrapRefresh });
     return;
   }
 
@@ -828,26 +819,49 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
     throw new HttpError(503, "The database is unavailable. Please sign in again when the server is healthy.");
   }
 
-  const tokenHash = sha256(refreshToken);
-  const existing = await Token.findOne({
-    purpose: "refresh",
-    tokenHash,
-    revokedAt: null,
-    expiresAt: { $gt: new Date() }
-  }).select("+tokenHash");
-  if (!existing) throw new HttpError(401, "Your session has expired or is invalid. Please sign in again.");
+  let lastAuthError: HttpError | null = null;
 
-  const user = await User.findById(existing.userId);
-  if (!user) throw new HttpError(401, "Your session is no longer valid. Please sign in again.");
+  for (const refreshToken of candidates) {
+    if (tryVerifyBootstrapRefreshToken(refreshToken)) {
+      const sub = getBootstrapAdminJwtSub();
+      const accessToken = signAccessToken({ sub, role: "admin", al: "super" });
+      const bootstrapRefresh = signBootstrapRefreshToken();
+      res.cookie("refreshToken", bootstrapRefresh, refreshCookieOptions());
+      res.json({ accessToken, refreshToken: bootstrapRefresh });
+      return;
+    }
 
-  await Token.updateOne({ _id: existing._id }, { $set: { revokedAt: new Date() } });
+    const tokenHash = sha256(refreshToken);
+    const existing = await Token.findOne({
+      purpose: "refresh",
+      tokenHash,
+      revokedAt: null,
+      expiresAt: { $gt: new Date() }
+    }).select("+tokenHash");
 
-  const role = normalizeUserRole(user.role);
-  const accessToken = signAccessToken(buildAccessTokenPayloadForDbUser(user._id.toString(), role, user.email));
-  const rotated = await issueRefreshToken(user._id);
+    if (!existing) {
+      lastAuthError = new HttpError(401, "Your session has expired or is invalid. Please sign in again.");
+      continue;
+    }
 
-  res.cookie("refreshToken", rotated.refreshToken, refreshCookieOptions());
-  res.json({ accessToken, refreshToken: rotated.refreshToken });
+    const user = await User.findById(existing.userId);
+    if (!user) {
+      lastAuthError = new HttpError(401, "Your session is no longer valid. Please sign in again.");
+      continue;
+    }
+
+    await Token.updateOne({ _id: existing._id }, { $set: { revokedAt: new Date() } });
+
+    const role = normalizeUserRole(user.role);
+    const accessToken = signAccessToken(buildAccessTokenPayloadForDbUser(user._id.toString(), role, user.email));
+    const rotated = await issueRefreshToken(user._id);
+
+    res.cookie("refreshToken", rotated.refreshToken, refreshCookieOptions());
+    res.json({ accessToken, refreshToken: rotated.refreshToken });
+    return;
+  }
+
+  throw lastAuthError ?? new HttpError(401, "Your session has expired or is invalid. Please sign in again.");
 });
 
 export const logout = asyncHandler(async (req: Request, res: Response) => {

@@ -1,5 +1,6 @@
 import { getOrCreateSaveSessionId } from "utils/saveSession";
 import { storageGet, storageRemove, storageSet, StorageKeys } from "utils/storage";
+import { refreshSessionTokens } from "services/sessionRefresh";
 import { apiErrorMessage as buildApiErrorMessage } from "utils/userFacingError";
 
 /**
@@ -8,7 +9,6 @@ import { apiErrorMessage as buildApiErrorMessage } from "utils/userFacingError";
  */
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/$/, "");
 const ADMIN_API_KEY = (process.env.REACT_APP_ADMIN_API_KEY || "").trim();
-let refreshPromise = null;
 
 /**
  * When `REACT_APP_ADMIN_API_KEY` matches the API `ADMIN_ACCESS_SECRET`, admin routes can be called
@@ -38,15 +38,6 @@ export async function fetchPublicPlatformConfig() {
     return await r.json();
   } catch {
     return null;
-  }
-}
-
-function emitTokenUpdate(token) {
-  if (typeof window === "undefined") return;
-  try {
-    window.dispatchEvent(new CustomEvent("auth:token", { detail: token || null }));
-  } catch {
-    /* ignore browser quirks */
   }
 }
 
@@ -86,39 +77,6 @@ async function ensureCsrfToken() {
   }
   storageSet(StorageKeys.CSRF_TOKEN, data.csrfToken);
   return data.csrfToken;
-}
-
-async function refreshAccessToken() {
-  if (refreshPromise) return refreshPromise;
-  refreshPromise = (async () => {
-    const storedRefresh = storageGet(StorageKeys.REFRESH_TOKEN);
-    const url = `${API_BASE}/api/auth/refresh`;
-    const csrfToken = await ensureCsrfToken();
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body: JSON.stringify(storedRefresh ? { refreshToken: storedRefresh } : {}),
-      credentials: "include"
-    });
-    const data = await parseResponse(res);
-    if (!res.ok || !data?.accessToken) {
-      storageRemove(StorageKeys.ACCESS_TOKEN);
-      storageRemove(StorageKeys.REFRESH_TOKEN);
-      if (res.status === 403 && data?.error?.code === "CSRF_CHECK_FAILED") {
-        storageRemove(StorageKeys.CSRF_TOKEN);
-      }
-      emitTokenUpdate(null);
-      return null;
-    }
-    storageSet(StorageKeys.ACCESS_TOKEN, data.accessToken);
-    if (data.refreshToken) storageSet(StorageKeys.REFRESH_TOKEN, data.refreshToken);
-    emitTokenUpdate(data.accessToken);
-    return data.accessToken;
-  })()
-    .finally(() => {
-      refreshPromise = null;
-    });
-  return refreshPromise;
 }
 
 /**
@@ -200,7 +158,7 @@ export async function apiFetch(path, opts = {}) {
     throw err;
   }
   if (res.status === 401 && !retried && !shouldSkip401Refresh(path)) {
-    const nextToken = await refreshAccessToken();
+    const nextToken = await refreshSessionTokens();
     if (nextToken) {
       const nextHeaders = new Headers(opts.headers || {});
       nextHeaders.set("Authorization", `Bearer ${nextToken}`);

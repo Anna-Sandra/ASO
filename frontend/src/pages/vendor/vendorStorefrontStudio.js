@@ -6,12 +6,18 @@ import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
 import { buildStoreListingBlocks, prepareStorefrontListingGroups, StorefrontProductCard } from "pages/marketplace/marketplaceHubScreens";
 import { storeUsesMenuSections } from "config/catalog";
-import { formatGhc } from "utils/money";
 import { Button, Field, GlassPanel, InlineNotice, TextArea } from "components/ui";
 import { StoreLocationSection } from "components/vendor/StoreLocationSection";
 import { StoreServiceSection } from "components/vendor/StoreServiceSection";
 import { StoreSetupSidebar } from "components/vendor/StoreSetupSidebar";
 import { storeStatusLabel } from "utils/storeStatus";
+import { buildStoreFulfillmentDisplay } from "utils/storeFulfillmentDisplay";
+import {
+  businessWithStorefrontDraft,
+  clearStorefrontDraftSection,
+  readStorefrontDraft,
+  writeStorefrontDraft
+} from "utils/vendorStorefrontDraft";
 
 const QUIET_BRAND_LINK =
   "text-[10px] font-medium text-slate-500 underline-offset-2 hover:text-sky-600 hover:underline disabled:pointer-events-none disabled:opacity-40 dark:text-slate-400 dark:hover:text-sky-400";
@@ -51,22 +57,6 @@ function orphanListingsBannerText(count, isFoodMenu) {
 function unpublishedListingsBannerText(count) {
   const verb = count === 1 ? "is" : "are";
   return `${count} listing${pluralize(count, "", "s")} on this store ${verb} not published — shoppers only see published items. Open each listing from the grid below and tap Publish.`;
-}
-
-function buildDeliveryEtaLabel(business) {
-  if (!business?.deliveryAvailable || business?.estimatedDeliveryMins == null) return null;
-  const mins = business.estimatedDeliveryMins;
-  return `${Math.max(5, mins - 8)}–${mins + 12} min`;
-}
-
-function buildDeliveryFeeLabel(business) {
-  if (!business?.deliveryAvailable) {
-    return business?.pickupAvailable ? "Pickup" : null;
-  }
-  if (business?.deliveryFee != null && Number.isFinite(Number(business.deliveryFee))) {
-    return `${formatGhc(Number(business.deliveryFee))} delivery`;
-  }
-  return "Delivery";
 }
 
 function buildPublicStoreUrl(storeSlug) {
@@ -208,11 +198,19 @@ export function VendorStorefrontManagePage() {
   }, [storeSlug, loadStorefront]);
 
   useEffect(() => {
+    const id = storefrontPayload?.business?.id;
+    if (!id) return;
+    const draftDesc = readStorefrontDraft(storeSlug)?.description;
     const description = storefrontPayload?.business?.description;
-    setDescriptionDraft(description ? String(description) : "");
-  }, [storefrontPayload?.business?.id, storefrontPayload?.business?.description]);
+    setDescriptionDraft(
+      typeof draftDesc === "string" ? draftDesc : description ? String(description) : ""
+    );
+  }, [storefrontPayload?.business?.id, storefrontPayload?.business?.updatedAt, storefrontPayload?.business?.description, storeSlug]);
 
-  const business = storefrontPayload?.business || null;
+  const business = useMemo(
+    () => businessWithStorefrontDraft(storefrontPayload?.business || null, storeSlug),
+    [storefrontPayload?.business, storeSlug]
+  );
   const products = useMemo(
     () => (Array.isArray(storefrontPayload?.products) ? storefrontPayload.products : []),
     [storefrontPayload?.products]
@@ -236,8 +234,10 @@ export function VendorStorefrontManagePage() {
   const listingCount = products.length;
 
   const publicStoreUrl = useMemo(() => buildPublicStoreUrl(storeSlug), [storeSlug]);
-  const deliveryEtaLabel = useMemo(() => buildDeliveryEtaLabel(business), [business]);
-  const deliveryFeeLabel = useMemo(() => buildDeliveryFeeLabel(business), [business]);
+  const fulfillmentHeroChips = useMemo(
+    () => buildStoreFulfillmentDisplay(business).heroChips,
+    [business]
+  );
 
   const canSubmitForApproval = business?.status === "draft" || business?.status === "rejected";
 
@@ -390,14 +390,15 @@ export function VendorStorefrontManagePage() {
     });
   }, [publicStoreUrl, toast]);
 
-  const saveDescription = useCallback(() => {
+  const saveDescription = useCallback(async () => {
     const trimmed = descriptionDraft.trim();
     if (trimmed.length > DESCRIPTION_MAX_CHARS) {
       toast(`Description must be ${DESCRIPTION_MAX_CHARS} characters or fewer.`, { variant: "error" });
       return;
     }
-    void patchBusiness({ description: trimmed });
-  }, [descriptionDraft, patchBusiness, toast]);
+    const ok = await patchBusiness({ description: trimmed });
+    if (ok) clearStorefrontDraftSection(storeSlug, "description");
+  }, [descriptionDraft, patchBusiness, storeSlug, toast]);
 
   if (!storeSlug) {
     return h(Navigate, { to: "/vendor/stores", replace: true });
@@ -532,7 +533,7 @@ export function VendorStorefrontManagePage() {
                 ]),
                 h("div", { className: "min-w-0 flex-1 space-y-4 pt-1 sm:pt-3" }, [
                   h("h2", { className: "font-display text-base font-bold text-slate-900 dark:text-white" }, "Store details"),
-                  reviewSummary.count || deliveryEtaLabel || deliveryFeeLabel
+                  reviewSummary.count || fulfillmentHeroChips.length
                     ? h(
                         "div",
                         {
@@ -553,26 +554,22 @@ export function VendorStorefrontManagePage() {
                                 ]
                               )
                             : null,
-                          deliveryEtaLabel
-                            ? h(
-                                "span",
-                                {
-                                  className:
-                                    "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 dark:border-white/15 dark:bg-night-900 dark:text-slate-100"
-                                },
-                                [h(Clock, { className: "h-3.5 w-3.5 shrink-0 text-sky-600" }), deliveryEtaLabel]
-                              )
-                            : null,
-                          deliveryFeeLabel
-                            ? h(
-                                "span",
-                                {
-                                  className:
-                                    "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 dark:border-white/15 dark:bg-night-900 dark:text-slate-100"
-                                },
-                                [h(Truck, { className: "h-3.5 w-3.5 shrink-0 text-sky-600" }), deliveryFeeLabel]
-                              )
-                            : null
+                          ...fulfillmentHeroChips.map((chip) =>
+                            h(
+                              "span",
+                              {
+                                key: chip.key,
+                                className:
+                                  "inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 dark:border-white/15 dark:bg-night-900 dark:text-slate-100"
+                              },
+                              [
+                                chip.icon === "clock"
+                                  ? h(Clock, { className: "h-3.5 w-3.5 shrink-0 text-sky-600" })
+                                  : h(Truck, { className: "h-3.5 w-3.5 shrink-0 text-sky-600" }),
+                                chip.label
+                              ]
+                            )
+                          )
                         ].filter(Boolean)
                       )
                     : null,
@@ -581,7 +578,11 @@ export function VendorStorefrontManagePage() {
                     { label: "Short description (shown on your public shop)" },
                     h(TextArea, {
                       value: descriptionDraft,
-                      onChange: (event) => setDescriptionDraft(event.target.value),
+                      onChange: (event) => {
+                        const next = event.target.value;
+                        setDescriptionDraft(next);
+                        writeStorefrontDraft(storeSlug, { description: next });
+                      },
                       rows: 3,
                       placeholder: "e.g. Fresh local meals, made to order. Open Mon–Sat."
                     })
@@ -603,8 +604,8 @@ export function VendorStorefrontManagePage() {
             ])
           ]
         ),
-        h(StoreLocationSection, { business, onSave: patchBusiness, saving: savingPatch }),
-        h(StoreServiceSection, { business, onSave: patchBusiness, saving: savingPatch }),
+        h(StoreLocationSection, { business, storeSlug, onSave: patchBusiness, saving: savingPatch }),
+        h(StoreServiceSection, { business, storeSlug, onSave: patchBusiness, saving: savingPatch }),
         h(
           "section",
           {
