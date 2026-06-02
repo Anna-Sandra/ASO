@@ -3,6 +3,7 @@ import { PRODUCT_CATEGORIES } from "../products/product.model";
 import { VENDOR_LOCATION_BASE } from "./vendorApplication.schemas";
 
 export type VendorApplicationStatus = "pending" | "approved" | "rejected";
+export type VendorFaceMatchStatus = "matched" | "mismatch" | "manual_review";
 export type VendorLocationBase = (typeof VENDOR_LOCATION_BASE)[number];
 
 export interface VendorApplicationDoc {
@@ -18,6 +19,12 @@ export interface VendorApplicationDoc {
   altPhone: string;
   shopDescription: string;
   verificationDocUrl: string;
+  selfieUrl: string;
+  faceMatchStatus: VendorFaceMatchStatus;
+  faceMatchConfidence?: number | null;
+  faceMatchProvider?: string;
+  faceMatchReason?: string;
+  faceMatchCheckedAt?: Date | null;
   locationBase: VendorLocationBase;
   nearbyArea: string;
   status: VendorApplicationStatus;
@@ -42,6 +49,16 @@ const vendorApplicationSchema = new Schema<VendorApplicationDoc>(
     altPhone: { type: String, default: "", trim: true, maxlength: 40 },
     shopDescription: { type: String, required: true, trim: true, maxlength: 300 },
     verificationDocUrl: { type: String, default: "", trim: true, maxlength: 500 },
+    selfieUrl: { type: String, default: "", trim: true, maxlength: 500 },
+    faceMatchStatus: {
+      type: String,
+      enum: ["matched", "mismatch", "manual_review"],
+      default: "manual_review"
+    },
+    faceMatchConfidence: { type: Number, default: null, min: 0, max: 100 },
+    faceMatchProvider: { type: String, default: "none", trim: true, maxlength: 80 },
+    faceMatchReason: { type: String, default: "", trim: true, maxlength: 400 },
+    faceMatchCheckedAt: { type: Date, default: null },
     locationBase: { type: String, required: true, enum: [...VENDOR_LOCATION_BASE] },
     nearbyArea: { type: String, required: true, trim: true, maxlength: 200 },
     status: {

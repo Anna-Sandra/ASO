@@ -44,7 +44,14 @@ export const submitVendorApplicationSchema = z.object({
     .string()
     .trim()
     .min(1, { message: "Upload a Ghana Card or ID photo / PDF." })
+    .regex(/\.(jpg|jpeg|png|webp)(\?|$)/i, { message: "Upload an ID photo image (JPG, PNG, or WebP)." })
     .max(500, { message: "Verification URL is invalid." }),
+  selfieUrl: z
+    .string()
+    .trim()
+    .min(1, { message: "Upload a selfie photo." })
+    .regex(/\.(jpg|jpeg|png|webp)(\?|$)/i, { message: "Selfie must be JPG, PNG, or WebP." })
+    .max(500, { message: "Selfie URL is invalid." }),
   locationBase: z.enum(VENDOR_LOCATION_BASE, { message: "Choose whether you are on-site or off-site." }),
   nearbyArea: z
     .string()

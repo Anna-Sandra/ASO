@@ -483,9 +483,15 @@ export function ProductDetailPage() {
   const [svcSubmitting, setSvcSubmitting] = useState(false);
   const [relatedExplore, setRelatedExplore] = useState([]);
   const [relatedSimilar, setRelatedSimilar] = useState([]);
+  const [relatedTogether, setRelatedTogether] = useState([]);
   const [relatedExploreTitle, setRelatedExploreTitle] = useState("Explore your interests");
   const [relatedSimilarTitle, setRelatedSimilarTitle] = useState("More you may like");
+  const [relatedTogetherTitle, setRelatedTogetherTitle] = useState("Frequently bought together");
   const pricingOpts = useCheckoutPricingOptions();
+  const guestReviewSecret =
+    orderIdFromUrl && typeof sessionStorage !== "undefined"
+      ? sessionStorage.getItem(guestOrderSecretStorageKey(orderIdFromUrl)) || ""
+      : "";
 
   useEffect(() => {
     if (!productId) return;
@@ -524,7 +530,13 @@ export function ProductDetailPage() {
   }, [product?.id, accessToken, user?.role]);
 
   useEffect(() => {
-    if (!accessToken || !productId) {
+    if (!productId) {
+      setReviewStatus(null);
+      setReviewStatusErr("");
+      return;
+    }
+    const hasGuestReviewAccess = Boolean(orderIdFromUrl && guestReviewSecret);
+    if (!accessToken && !hasGuestReviewAccess) {
       setReviewStatus(null);
       setReviewStatusErr("");
       return;
@@ -532,9 +544,10 @@ export function ProductDetailPage() {
     let cancelled = false;
     setReviewStatusErr("");
     const qs = orderIdFromUrl ? `?orderId=${encodeURIComponent(orderIdFromUrl)}&_=${Date.now()}` : `?_=${Date.now()}`;
-    apiFetch(`/api/products/${productId}/review-status${qs}`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    })
+    const headers = {};
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (!accessToken && hasGuestReviewAccess) headers["X-Guest-Order-Secret"] = guestReviewSecret;
+    apiFetch(`/api/products/${productId}/review-status${qs}`, { headers })
       .then((d) => {
         if (!cancelled) {
           setReviewStatus(d);
@@ -550,7 +563,7 @@ export function ProductDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, productId, orderIdFromUrl]);
+  }, [accessToken, productId, orderIdFromUrl, guestReviewSecret]);
 
   useEffect(() => {
     if (!productId) return;
@@ -560,13 +573,16 @@ export function ProductDetailPage() {
         if (cancelled) return;
         setRelatedExplore(Array.isArray(d.explore?.products) ? d.explore.products : []);
         setRelatedSimilar(Array.isArray(d.similar?.products) ? d.similar.products : []);
+        setRelatedTogether(Array.isArray(d.together?.products) ? d.together.products : []);
         if (d.explore?.title) setRelatedExploreTitle(String(d.explore.title));
         if (d.similar?.title) setRelatedSimilarTitle(String(d.similar.title));
+        if (d.together?.title) setRelatedTogetherTitle(String(d.together.title));
       })
       .catch(() => {
         if (!cancelled) {
           setRelatedExplore([]);
           setRelatedSimilar([]);
+          setRelatedTogether([]);
         }
       });
     return () => {
@@ -619,23 +635,26 @@ export function ProductDetailPage() {
 
   const submitReview = async () => {
     setReviewMsg("");
-    if (!accessToken || !productId || !reviewStatus?.canSubmit) return;
+    if (!productId || !reviewStatus?.canSubmit) return;
+    const hasGuestReviewAccess = Boolean(orderIdFromUrl && guestReviewSecret);
+    if (!accessToken && !hasGuestReviewAccess) return;
     const oid = reviewStatus.orderId != null && String(reviewStatus.orderId).trim() ? String(reviewStatus.orderId).trim() : "";
     if (!reviewStatus.skipVerifiedPurchase && !oid) return;
     setSubmitting(true);
     try {
+      const headers = {};
+      if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+      if (!accessToken && hasGuestReviewAccess) headers["X-Guest-Order-Secret"] = guestReviewSecret;
       await apiFetch(`/api/products/${productId}/reviews`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers,
         json: { rating, comment: comment.trim(), ...(oid ? { orderId: oid } : {}) }
       });
       setComment("");
       const rv = await apiFetch(`/api/products/${productId}/reviews`);
       setReviews(rv.reviews || []);
       const qs2 = orderIdFromUrl ? `?orderId=${encodeURIComponent(orderIdFromUrl)}&_=${Date.now()}` : `?_=${Date.now()}`;
-      const st = await apiFetch(`/api/products/${productId}/review-status${qs2}`, {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
+      const st = await apiFetch(`/api/products/${productId}/review-status${qs2}`, { headers });
       setReviewStatus(st);
       setReviewMsg("Thanks — your review was posted.");
     } catch (ex) {
@@ -646,9 +665,7 @@ export function ProductDetailPage() {
             : `?_=${Date.now()}`;
           const [rv, st] = await Promise.all([
             apiFetch(`/api/products/${productId}/reviews`),
-            apiFetch(`/api/products/${productId}/review-status${qs3}`, {
-              headers: { Authorization: `Bearer ${accessToken}` }
-            })
+            apiFetch(`/api/products/${productId}/review-status${qs3}`, { headers })
           ]);
           setReviews(rv.reviews || []);
           setReviewStatus(st);
@@ -823,8 +840,12 @@ export function ProductDetailPage() {
               h("p", { key: "bad-ord", className: "mt-3 text-sm text-amber-700 dark:text-amber-200/90" }, "This order cannot be used for a review on this product. Pick another order from My orders or remove ?orderId from the address bar."),
             accessToken && reviewStatus?.hasReview &&
               h("p", { key: "done", className: "mt-3 text-sm text-emerald-600 dark:text-emerald-400" }, "You already reviewed this product."),
-            !accessToken &&
-              h("p", { key: "guest", className: "mt-3 text-sm text-slate-500 dark:text-slate-400" }, "Sign in to leave a review after you buy this product."),
+            !accessToken && !guestReviewSecret &&
+              h(
+                "p",
+                { key: "guest", className: "mt-3 text-sm text-slate-500 dark:text-slate-400" },
+                "Sign in to leave a review, or open this product from your guest order confirmation link."
+              ),
             h("div", { key: "list", className: "mt-4 space-y-3" }, [
               reviews.length === 0 && h("p", { className: "text-sm text-slate-500" }, "No reviews yet."),
               reviews.map((r) =>
@@ -1037,7 +1058,12 @@ export function ProductDetailPage() {
         ])
       ]),
       h(BuyerProductDiscoveryRail, { key: "rail-exp", title: relatedExploreTitle, products: relatedExplore }),
-      h(BuyerProductDiscoveryRail, { key: "rail-sim", title: relatedSimilarTitle, products: relatedSimilar })
+      h(BuyerProductDiscoveryRail, { key: "rail-sim", title: relatedSimilarTitle, products: relatedSimilar }),
+      h(BuyerProductDiscoveryRail, {
+        key: "rail-together",
+        title: relatedTogetherTitle,
+        products: relatedTogether
+      })
     ])
     ),
     h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })
@@ -3301,23 +3327,31 @@ export function ShopPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setRecLoading(true);
-    setRecErr("");
+    let timer = 0;
     const headers = {};
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-    apiFetch("/api/products/recommended", { headers })
-      .then((d) => {
-        if (cancelled) return;
-        setRecRows(Array.isArray(d.rows) ? d.rows : []);
-      })
-      .catch((ex) => {
-        if (!cancelled) setRecErr(apiErrorMessage(ex, "Could not load recommendations"));
-      })
-      .finally(() => {
-        if (!cancelled) setRecLoading(false);
-      });
+
+    // Non-critical data: defer slightly so first catalog paint is faster.
+    timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setRecLoading(true);
+      setRecErr("");
+      apiFetch("/api/products/recommended?limit=8", { headers })
+        .then((d) => {
+          if (cancelled) return;
+          setRecRows(Array.isArray(d.rows) ? d.rows : []);
+        })
+        .catch((ex) => {
+          if (!cancelled) setRecErr(apiErrorMessage(ex, "Could not load recommendations"));
+        })
+        .finally(() => {
+          if (!cancelled) setRecLoading(false);
+        });
+    }, 280);
+
     return () => {
       cancelled = true;
+      if (timer) window.clearTimeout(timer);
     };
   }, [accessToken]);
 
@@ -3327,19 +3361,27 @@ export function ShopPage() {
       return undefined;
     }
     let cancelled = false;
-    setRecentLoading(true);
-    apiFetch("/api/products/recently-viewed", { headers: { Authorization: `Bearer ${accessToken}` } })
-      .then((d) => {
-        if (!cancelled) setRecentProducts(Array.isArray(d.products) ? d.products : []);
-      })
-      .catch(() => {
-        if (!cancelled) setRecentProducts([]);
-      })
-      .finally(() => {
-        if (!cancelled) setRecentLoading(false);
-      });
+    let timer = 0;
+
+    // Defer this secondary rail to avoid competing with first product fetch.
+    timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setRecentLoading(true);
+      apiFetch("/api/products/recently-viewed", { headers: { Authorization: `Bearer ${accessToken}` } })
+        .then((d) => {
+          if (!cancelled) setRecentProducts(Array.isArray(d.products) ? d.products : []);
+        })
+        .catch(() => {
+          if (!cancelled) setRecentProducts([]);
+        })
+        .finally(() => {
+          if (!cancelled) setRecentLoading(false);
+        });
+    }, 450);
+
     return () => {
       cancelled = true;
+      if (timer) window.clearTimeout(timer);
     };
   }, [accessToken]);
 

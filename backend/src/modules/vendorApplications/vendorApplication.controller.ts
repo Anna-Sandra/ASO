@@ -5,6 +5,7 @@ import { User, normalizeUserRole, type VendorProfileStatus } from "../auth/user.
 import { VendorApplication } from "./vendorApplication.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
 import { emailVendorApplicationReceived } from "../../utils/vendorApplicationActivation";
+import { verifyVendorIdentityWithSelfie } from "../../utils/vendorIdentityVerification";
 
 function resolveVendorStatus(u: { role?: unknown; vendorStatus?: VendorProfileStatus }): VendorProfileStatus {
   const role = normalizeUserRole(u.role);
@@ -32,6 +33,7 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
     altPhone?: string;
     shopDescription: string;
     verificationDocUrl?: string;
+    selfieUrl?: string;
     locationBase: string;
     nearbyArea: string;
     email?: string;
@@ -93,6 +95,17 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
     );
   }
 
+  const faceMatch = await verifyVendorIdentityWithSelfie(
+    (body.verificationDocUrl || "").trim(),
+    (body.selfieUrl || "").trim()
+  );
+  if (faceMatch.status === "mismatch") {
+    throw new HttpError(
+      400,
+      "Selfie does not match the ID clearly enough. Please retake the selfie in good lighting and try again."
+    );
+  }
+
   await VendorApplication.create({
     userId: user?._id ?? null,
     fullName: body.fullName.trim(),
@@ -104,6 +117,12 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
     altPhone: (body.altPhone || "").trim(),
     shopDescription: body.shopDescription.trim(),
     verificationDocUrl: (body.verificationDocUrl || "").trim(),
+    selfieUrl: (body.selfieUrl || "").trim(),
+    faceMatchStatus: faceMatch.status,
+    faceMatchConfidence: faceMatch.confidence,
+    faceMatchProvider: faceMatch.provider,
+    faceMatchReason: faceMatch.reason,
+    faceMatchCheckedAt: faceMatch.checkedAt,
     locationBase: body.locationBase,
     nearbyArea: body.nearbyArea.trim(),
     status: "pending"

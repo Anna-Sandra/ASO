@@ -120,9 +120,9 @@ export const uploadVendorVerificationMiddleware = multer({
   storage: isCloudinaryConfigured() ? memoryStorage : vendorVerifyStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const ok = ["image/jpeg", "image/png", "application/pdf"].includes(file.mimetype);
+    const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
     if (!ok) {
-      cb(new Error("Only JPEG, PNG, or PDF are allowed"));
+      cb(new Error("Only JPEG, PNG, or WebP images are allowed"));
       return;
     }
     cb(null, true);
@@ -138,6 +138,35 @@ export const uploadVendorVerification = asyncHandler(async (req: Request, res: R
     ? await cloudinaryUploadMulterFile(file, "vendor-verification", "auto")
     : `${requirePublicUploadBase(req)}/uploads/vendor-verification/${file.filename}`;
 
+  res.status(201).json({ url });
+});
+
+const vendorSelfieDir = path.resolve(process.cwd(), "uploads", "vendor-selfies");
+const vendorSelfieStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(vendorSelfieDir, { recursive: true });
+    cb(null, vendorSelfieDir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const safe = [".jpg", ".jpeg", ".png", ".webp"].includes(ext) ? ext : ".jpg";
+    cb(null, `${randomUUID()}${safe}`);
+  }
+});
+
+export const uploadVendorSelfieMiddleware = multer({
+  storage: isCloudinaryConfigured() ? memoryStorage : vendorSelfieStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: imageFilter
+}).single("file");
+
+export const uploadVendorSelfie = asyncHandler(async (req: Request, res: Response) => {
+  assertUploadStorageAvailable();
+  const file = req.file as Express.Multer.File | undefined;
+  if (!file) throw new HttpError(400, "No file received");
+  const url = isCloudinaryConfigured()
+    ? await cloudinaryUploadMulterFile(file, "vendor-selfies", "image")
+    : `${requirePublicUploadBase(req)}/uploads/vendor-selfies/${file.filename}`;
   res.status(201).json({ url });
 });
 

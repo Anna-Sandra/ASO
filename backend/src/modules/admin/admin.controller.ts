@@ -2186,6 +2186,12 @@ export const listVendorApplications = asyncHandler(async (req: Request, res: Res
       altPhone: r.altPhone,
       shopDescription: r.shopDescription,
       verificationDocUrl: r.verificationDocUrl,
+      selfieUrl: r.selfieUrl || "",
+      faceMatchStatus: r.faceMatchStatus || "manual_review",
+      faceMatchConfidence: r.faceMatchConfidence ?? null,
+      faceMatchProvider: r.faceMatchProvider || "none",
+      faceMatchReason: r.faceMatchReason || "",
+      faceMatchCheckedAt: r.faceMatchCheckedAt ?? null,
       locationBase: r.locationBase,
       nearbyArea: r.nearbyArea,
       status: r.status,
@@ -2214,6 +2220,12 @@ export const patchAdminVendorApplication = asyncHandler(async (req: Request, res
   const app = await VendorApplication.findById(id);
   if (!app) throw new HttpError(404, "Application not found");
   if (app.status !== "pending") throw new HttpError(400, "Only pending applications can be reviewed.");
+  if (app.faceMatchStatus === "mismatch") {
+    throw new HttpError(
+      400,
+      "Automatic ID selfie match failed for this application. Ask the applicant to resubmit clear photos."
+    );
+  }
 
   const appEmailNorm = (app.email || "").trim().toLowerCase();
 

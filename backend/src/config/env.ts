@@ -124,6 +124,13 @@ const envSchema = z.object({
     .optional()
     .transform((v) => (v ?? "").trim().toLowerCase() === "true"),
 
+  /** Optional automatic face match provider for vendor ID + selfie checks. */
+  KYC_FACE_MATCH_PROVIDER: z.enum(["none", "faceplusplus"]).optional().default("none"),
+  FACEPP_API_KEY: z.string().optional().default(""),
+  FACEPP_API_SECRET: z.string().optional().default(""),
+  /** Face similarity threshold (0-100) required for automatic pass. */
+  KYC_FACE_MATCH_MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(70),
+
   /**
    * Optional. When set, all `/api/admin` requests require header `X-Admin-Secret: <this>` in addition
    * to a JWT for user role `admin`. Set the same value in the frontend as `REACT_APP_ADMIN_API_KEY` for the SPA.

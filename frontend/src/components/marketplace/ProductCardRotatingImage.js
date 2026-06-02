@@ -29,13 +29,44 @@ export function ProductCardRotatingImage({
     return () => clearInterval(timer);
   }, [images?.length, intervalMs]);
 
-  const imageNode = h(RefImage, {
-    key: images ? `pic-${imgIdx}` : "pic",
-    src: images ? images[imgIdx] : product?.imageUrls?.[0],
-    n: refFromId(product?.id),
-    alt: product?.name || "",
-    className: imageClassName
-  });
+  const imageNode =
+    images && images.length > 1
+      ? h(
+          "div",
+          {
+            key: "carousel",
+            className: "h-full w-full overflow-hidden"
+          },
+          h(
+            "div",
+            {
+              className: "flex h-full w-full transition-transform duration-500 ease-out",
+              style: { transform: `translateX(-${imgIdx * 100}%)` }
+            },
+            images.map((src, i) =>
+              h(
+                "div",
+                {
+                  key: `slide-${i}`,
+                  className: "h-full w-full shrink-0"
+                },
+                h(RefImage, {
+                  src,
+                  n: refFromId(product?.id),
+                  alt: product?.name || "",
+                  className: imageClassName
+                })
+              )
+            )
+          )
+        )
+      : h(RefImage, {
+          key: "pic",
+          src: product?.imageUrls?.[0],
+          n: refFromId(product?.id),
+          alt: product?.name || "",
+          className: imageClassName
+        });
 
   const dots =
     images && images.length > 1

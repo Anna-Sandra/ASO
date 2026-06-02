@@ -23,7 +23,8 @@ export function VendorApplicationPage() {
   const nav = useNavigate();
   const { accessToken, user, setUser } = useAuth();
   const { toast } = useNotice();
-  const fileRef = useRef(null);
+  const idFileRef = useRef(null);
+  const selfieFileRef = useRef(null);
 
   const [fullName, setFullName] = useState(() => String(user?.displayName || "").trim());
   const accountEmail = String(user?.email || "").trim();
@@ -37,7 +38,9 @@ export function VendorApplicationPage() {
   const [locationBase, setLocationBase] = useState("on_campus");
   const [nearbyArea, setNearbyArea] = useState("");
   const [verificationDocUrl, setVerificationDocUrl] = useState("");
+  const [selfieUrl, setSelfieUrl] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [uploadingSelfie, setUploadingSelfie] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [agreeVendorRules, setAgreeVendorRules] = useState(false);
   const [err, setErr] = useState("");
@@ -69,13 +72,31 @@ export function VendorApplicationPage() {
     }
   }, [user, nav]);
 
-  const onPickFile = async (e) => {
+  const uploadVendorFile = async (file, endpoint) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const hdr = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+    const res = await fetch(`${getApiBase()}/api/uploads/${endpoint}`, {
+      method: "POST",
+      headers: hdr,
+      body: fd,
+      credentials: "include"
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const serverMsg = messageFromApiJson(data);
+      throw new Error(serverMsg || `Upload failed (HTTP ${res.status}). Check that the API is running and up to date.`);
+    }
+    return String(data.url || "");
+  };
+
+  const onPickIdFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    const okMime = file.type === "image/jpeg" || file.type === "image/png" || file.type === "application/pdf";
+    const okMime = file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/webp";
     if (!okMime) {
-      setErr("Please upload a PNG, JPG, or PDF (max 5 MB).");
+      setErr("Please upload an ID image file: PNG, JPG, or WebP (max 5 MB).");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
@@ -85,25 +106,37 @@ export function VendorApplicationPage() {
     setErr("");
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const hdr = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
-      const res = await fetch(`${getApiBase()}/api/uploads/vendor-verification`, {
-        method: "POST",
-        headers: hdr,
-        body: fd,
-        credentials: "include"
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const serverMsg = messageFromApiJson(data);
-        throw new Error(serverMsg || `Upload failed (HTTP ${res.status}). Check that the API is running and up to date.`);
-      }
-      if (data.url) setVerificationDocUrl(data.url);
+      const url = await uploadVendorFile(file, "vendor-verification");
+      if (url) setVerificationDocUrl(url);
     } catch (ex) {
       setErr(apiErrorMessage(ex, "Upload failed."));
     } finally {
       setUploading(false);
+    }
+  };
+
+  const onPickSelfieFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const okMime = file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/webp";
+    if (!okMime) {
+      setErr("Please upload a selfie image as PNG, JPG, or WebP (max 5 MB).");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setErr("File must be 5 MB or smaller.");
+      return;
+    }
+    setErr("");
+    setUploadingSelfie(true);
+    try {
+      const url = await uploadVendorFile(file, "vendor-selfie");
+      if (url) setSelfieUrl(url);
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "Selfie upload failed."));
+    } finally {
+      setUploadingSelfie(false);
     }
   };
 
@@ -134,7 +167,11 @@ export function VendorApplicationPage() {
       return;
     }
     if (!String(verificationDocUrl).trim()) {
-      setErr("Ghana Card (or equivalent ID) upload is required. Use the upload section above.");
+      setErr("ID image upload is required. Use the upload section above.");
+      return;
+    }
+    if (!String(selfieUrl).trim()) {
+      setErr("Selfie upload is required for identity matching.");
       return;
     }
     if (!String(nearbyArea).trim()) {
@@ -165,6 +202,7 @@ export function VendorApplicationPage() {
         altPhone: altPhone.trim(),
         shopDescription: shopDescription.trim(),
         verificationDocUrl: verificationDocUrl.trim(),
+        selfieUrl: selfieUrl.trim(),
         locationBase,
         nearbyArea: nearbyArea.trim(),
         agreeToTerms: true,
@@ -373,25 +411,44 @@ export function VendorApplicationPage() {
                 ])
               ]),
               h("div", { key: "up", className: "space-y-2" }, [
-                h("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400" }, "Ghana Card (required)"),
+                h("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400" }, "ID photo (required)"),
                 h(
                   "button",
                   {
                     type: "button",
-                    onClick: () => fileRef.current?.click(),
+                    onClick: () => idFileRef.current?.click(),
                     disabled: uploading || !!applyBlocked,
                     className: "vendor-form-upload"
                   },
                   [
                     h(CloudUpload, { key: "upl-ic", className: "h-10 w-10 text-sky-600 dark:text-sky-400" }),
                     h("p", { key: "upl-t1", className: "text-sm font-medium text-slate-800 dark:text-slate-100" }, "Click to upload or drag and drop"),
-                    h("p", { key: "upl-t2", className: "text-xs text-slate-500" }, "PNG, JPG or PDF (max. 5 MB). Required.")
+                    h("p", { key: "upl-t2", className: "text-xs text-slate-500" }, "PNG, JPG, or WebP (max. 5 MB). Required.")
                   ]
                 ),
-                h("input", { ref: fileRef, type: "file", accept: "image/png,image/jpeg,application/pdf", className: "hidden", onChange: onPickFile }),
+                h("input", { ref: idFileRef, type: "file", accept: "image/png,image/jpeg,image/webp", className: "hidden", onChange: onPickIdFile }),
                 verificationDocUrl
                   ? h("p", { className: "text-xs text-emerald-600 dark:text-emerald-400" }, "File uploaded.")
                   : null
+              ]),
+              h("div", { key: "selfie-up", className: "space-y-2" }, [
+                h("span", { className: "text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400" }, "Selfie photo (required)"),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: () => selfieFileRef.current?.click(),
+                    disabled: uploadingSelfie || !!applyBlocked,
+                    className: "vendor-form-upload"
+                  },
+                  [
+                    h(CloudUpload, { key: "upl-ic", className: "h-10 w-10 text-sky-600 dark:text-sky-400" }),
+                    h("p", { key: "upl-t1", className: "text-sm font-medium text-slate-800 dark:text-slate-100" }, "Upload a clear front-facing selfie"),
+                    h("p", { key: "upl-t2", className: "text-xs text-slate-500" }, "No sunglasses/hat. PNG, JPG, or WebP (max. 5 MB).")
+                  ]
+                ),
+                h("input", { ref: selfieFileRef, type: "file", accept: "image/png,image/jpeg,image/webp", className: "hidden", onChange: onPickSelfieFile }),
+                selfieUrl ? h("p", { className: "text-xs text-emerald-600 dark:text-emerald-400" }, "Selfie uploaded.") : null
               ]),
               h("div", { key: "loc", className: "space-y-4" }, [
                 h("h3", { className: "text-xs font-bold uppercase tracking-wide text-sky-800 dark:text-sky-300" }, "3. Location (VERY IMPORTANT)"),

@@ -3537,7 +3537,16 @@ export function AdminPage() {
                           detail("Location", locationLine || "—"),
                           detail("Phone", row.phone ? `${row.phone}${row.altPhone ? ` · Alt ${row.altPhone}` : ""}` : "—"),
                           detail("Verification", row.verificationDocUrl ? "File uploaded" : "None uploaded"),
+                          detail(
+                            "ID match",
+                            row.faceMatchStatus === "matched"
+                              ? `Matched${row.faceMatchConfidence != null ? ` (${Math.round(row.faceMatchConfidence)}%)` : ""}`
+                              : row.faceMatchStatus === "mismatch"
+                                ? `Mismatch${row.faceMatchConfidence != null ? ` (${Math.round(row.faceMatchConfidence)}%)` : ""}`
+                                : "Needs manual review"
+                          ),
                           row.reviewedAt ? detail("Reviewed on", fmtDateTime(row.reviewedAt)) : null,
+                          row.faceMatchReason ? detail("Match note", row.faceMatchReason) : null,
                           row.adminNote ? detail("Admin note", row.adminNote) : null,
                           row.accountRole ? detail("Account role", row.accountRole) : null
                         ].filter(Boolean)
@@ -3580,6 +3589,18 @@ export function AdminPage() {
                             onClick: () => window.open(row.verificationDocUrl, "_blank", "noopener,noreferrer")
                           },
                           "Open verification file"
+                        )
+                      : null,
+                    row.selfieUrl
+                      ? h(
+                          Button,
+                          {
+                            key: "selfie",
+                            variant: "ghost",
+                            className: "!min-h-[36px] !px-3 !text-xs",
+                            onClick: () => window.open(row.selfieUrl, "_blank", "noopener,noreferrer")
+                          },
+                          "Open selfie"
                         )
                       : null,
                     vendorAppsStatus === "pending" && row.status === "pending"
@@ -6328,26 +6349,56 @@ export function AdminPage() {
               h(Button, { key: "cl", variant: "ghost", onClick: () => setVendorVerificationApp(null) }, "Close")
             ]
           ),
-          vendorVerificationApp.verificationDocUrl
-            ? h(
-                "div",
-                {
-                  key: "doclink",
-                  className:
-                    "rounded-2xl border border-white/10 bg-slate-900/5 px-4 py-3 dark:bg-white/5"
-                },
-                h(
+          h(
+            "div",
+            { key: "match-meta", className: "rounded-2xl border border-white/10 bg-slate-900/5 px-4 py-3 text-sm dark:bg-white/5" },
+            [
+              h(
+                "p",
+                { key: "match-status", className: "font-medium text-slate-800 dark:text-slate-200" },
+                `ID match: ${
+                  vendorVerificationApp.faceMatchStatus === "matched"
+                    ? "Matched"
+                    : vendorVerificationApp.faceMatchStatus === "mismatch"
+                      ? "Mismatch"
+                      : "Manual review"
+                }${vendorVerificationApp.faceMatchConfidence != null ? ` (${Math.round(vendorVerificationApp.faceMatchConfidence)}%)` : ""}`
+              ),
+              vendorVerificationApp.faceMatchReason
+                ? h("p", { key: "match-reason", className: "mt-1 text-xs text-slate-500 dark:text-slate-400" }, vendorVerificationApp.faceMatchReason)
+                : null
+            ].filter(Boolean)
+          ),
+          h("div", { key: "links", className: "grid gap-2 sm:grid-cols-2" }, [
+            vendorVerificationApp.verificationDocUrl
+              ? h(
                   "a",
                   {
+                    key: "id",
                     href: vendorVerificationApp.verificationDocUrl,
                     target: "_blank",
                     rel: "noreferrer",
-                    className: "text-sm font-medium text-sky-600 hover:underline dark:text-sky-300"
+                    className:
+                      "rounded-2xl border border-white/10 bg-slate-900/5 px-4 py-3 text-sm font-medium text-sky-600 hover:underline dark:bg-white/5 dark:text-sky-300"
                   },
-                  "Open verification document in new tab →"
+                  "Open ID image →"
                 )
-              )
-            : h("p", { key: "nodoc", className: "text-sm text-slate-500" }, "No verification document uploaded.")
+              : h("p", { key: "nodoc", className: "text-sm text-slate-500" }, "No ID image uploaded."),
+            vendorVerificationApp.selfieUrl
+              ? h(
+                  "a",
+                  {
+                    key: "selfie",
+                    href: vendorVerificationApp.selfieUrl,
+                    target: "_blank",
+                    rel: "noreferrer",
+                    className:
+                      "rounded-2xl border border-white/10 bg-slate-900/5 px-4 py-3 text-sm font-medium text-sky-600 hover:underline dark:bg-white/5 dark:text-sky-300"
+                  },
+                  "Open selfie →"
+                )
+              : h("p", { key: "noselfie", className: "text-sm text-slate-500" }, "No selfie uploaded.")
+          ])
           ].filter(Boolean)
         )
       )

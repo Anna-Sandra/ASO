@@ -370,7 +370,13 @@ export const listVendorReviews = asyncHandler(async (req: Request, res: Response
   const reviewFilter = await reviewFilterForSeller(sid);
   const rows = await Review.find(reviewFilter).sort({ createdAt: -1 }).limit(100).lean();
 
-  const bidSet = [...new Set(rows.map((r) => r.buyerId.toString()))];
+  const bidSet = [
+    ...new Set(
+      rows
+        .map((r) => (r.buyerId instanceof mongoose.Types.ObjectId ? r.buyerId.toString() : ""))
+        .filter(Boolean)
+    )
+  ];
   const pidSet = [...new Set(rows.map((r) => r.productId.toString()))];
   const [buyers, products] = await Promise.all([
     bidSet.length
@@ -395,8 +401,11 @@ export const listVendorReviews = asyncHandler(async (req: Request, res: Response
       id: r._id.toString(),
       productId: r.productId.toString(),
       productName: nameByProduct.get(r.productId.toString()) || "Product",
-      buyerId: r.buyerId.toString(),
-      buyerDisplayName: nameByBuyer.get(r.buyerId.toString()) || "Buyer",
+      buyerId: r.buyerId instanceof mongoose.Types.ObjectId ? r.buyerId.toString() : "",
+      buyerDisplayName:
+        r.buyerId instanceof mongoose.Types.ObjectId
+          ? nameByBuyer.get(r.buyerId.toString()) || "Buyer"
+          : "Guest buyer",
       rating: r.rating,
       comment: r.comment,
       createdAt: r.createdAt

@@ -18,6 +18,11 @@ import {
 } from "./product.publicSerialize";
 import { BuyerProductView } from "./buyerProductView.model";
 import { ProductSave } from "./productSave.model";
+import {
+  buildUserBehaviorProfile,
+  fetchFrequentlyBoughtTogetherProducts,
+  getTrendingProductIds
+} from "./productRecommendations";
 import { assertProductBusinessLink, getSellerDefaultBusinessId } from "../businesses/business.controller";
 import { Business, primaryProductCategoryForBusinessType, type BusinessType } from "../businesses/business.model";
 import { notifySaversPriceDrop } from "../notifications/notification.service";
@@ -398,54 +403,19 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
     medianByCat.set(cat, sorted[Math.floor(sorted.length / 2)] ?? sorted[0] ?? 1);
   }
 
-  const preferredCats = new Set<string>();
+  let preferredCats = new Set<string>();
   let personalized = false;
+  let productWeights = new Map<string, number>();
+  let maxBehaviorWeight = 0;
   const uid =
     req.user?.role === "buyer" && req.user?.id && mongoose.isValidObjectId(req.user.id) ? req.user.id : "";
   if (uid && mongoose.isValidObjectId(uid)) {
     const buyerOid = new mongoose.Types.ObjectId(uid);
-    const orders = await Order.find({
-      buyerId: buyerOid,
-      status: { $in: ["paid", "processing", "sent_for_delivery", "delivered"] }
-    })
-      .sort({ updatedAt: -1 })
-      .limit(40)
-      .select("items")
-      .lean();
-    const pids = new Set<string>();
-    for (const o of orders as { items?: { productId?: unknown }[] }[]) {
-      for (const it of o.items || []) {
-        const pid =
-          it.productId instanceof mongoose.Types.ObjectId
-            ? it.productId.toString()
-            : typeof it.productId === "string" && mongoose.isValidObjectId(it.productId)
-              ? it.productId
-              : "";
-        if (pid) pids.add(pid);
-      }
-    }
-    const recentViews = await BuyerProductView.find({ buyerId: buyerOid })
-      .sort({ viewedAt: -1 })
-      .limit(16)
-      .select("productId")
-      .lean();
-    for (const v of recentViews) {
-      const pid =
-        v.productId instanceof mongoose.Types.ObjectId
-          ? v.productId.toString()
-          : typeof v.productId === "string"
-            ? v.productId
-            : "";
-      if (pid) pids.add(pid);
-    }
-    if (pids.size) {
-      personalized = true;
-      const pidObjs = [...pids].map((id) => new mongoose.Types.ObjectId(id));
-      const past = await Product.find({ _id: { $in: pidObjs } })
-        .select("category")
-        .lean();
-      for (const p of past) preferredCats.add(String((p as { category?: string }).category ?? ""));
-    }
+    const profile = await buildUserBehaviorProfile(buyerOid);
+    preferredCats = profile.preferredCats;
+    personalized = profile.personalized;
+    productWeights = profile.productWeights;
+    maxBehaviorWeight = profile.maxWeight;
   }
 
   function reliabilityPart(productIdStr: string) {
@@ -470,10 +440,11 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
       }
     }
     const trustPart = reliabilityPart(id);
-    const personalBump = preferredCats.has(p.category) ? 0.07 : 0;
+    const behaviorScore = maxBehaviorWeight > 0 ? clamp01((productWeights.get(id) || 0) / maxBehaviorWeight) : 0;
+    const personalBump = preferredCats.has(p.category) ? 0.05 : 0;
     const wCheap = preferCheaper ? 0.44 : 0.29;
     const wTrust = preferCheaper ? 0.49 : 0.63;
-    const score = cheapPart * wCheap + trustPart * wTrust + personalBump;
+    const score = cheapPart * wCheap + trustPart * wTrust + behaviorScore * 0.14 + personalBump;
     return { p, score, cheapPart, trustPart };
   });
 
@@ -522,6 +493,28 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
       title: "Best reviewed",
       picks: ratedPicks
     });
+  }
+
+  const trendingIds = await getTrendingProductIds(80, used);
+  if (trendingIds.length) {
+    const byId = new Map(
+      (raw as ProductDoc[]).map((p) => [p._id.toString(), p as unknown as Record<string, unknown> & ProductDoc])
+    );
+    const trendingPicks = takeUniqueProducts(
+      trendingIds
+        .map((id) => byId.get(id))
+        .filter((p): p is Record<string, unknown> & ProductDoc => Boolean(p))
+        .map((p) => ({ p, score: 0, cheapPart: 0, trustPart: 0 })),
+      used,
+      REC_PER_ROW
+    );
+    if (trendingPicks.length >= REC_MIN_TO_SHOW_ROW) {
+      rails.push({
+        id: "trending_now",
+        title: "Trending now",
+        picks: trendingPicks
+      });
+    }
   }
 
   const rowsOut: { id: string; title: string; products: Awaited<ReturnType<typeof enrichPublicProducts>> }[] = [];
@@ -596,6 +589,11 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
 
   const similarEnriched = await enrichPublicProducts(similarRaw as unknown as Record<string, unknown>[]);
   const exploreEnriched = await enrichPublicProducts(exploreRaw as unknown as Record<string, unknown>[]);
+  const togetherRaw = await fetchFrequentlyBoughtTogetherProducts(id, 14, {
+    ...relatedBase,
+    _id: { $ne: oid }
+  });
+  const togetherEnriched = await enrichPublicProducts(togetherRaw);
 
   const similarLabel = REC_CATEGORY_LABEL[cat] || (cat ? cat.replace(/_/g, " ") : "this category");
 
@@ -607,6 +605,10 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
     similar: {
       title: `More in ${similarLabel}`,
       products: similarEnriched
+    },
+    together: {
+      title: "Frequently bought together",
+      products: togetherEnriched
     }
   });
 });

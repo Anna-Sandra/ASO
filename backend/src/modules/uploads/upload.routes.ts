@@ -10,6 +10,8 @@ import {
   uploadReportEvidenceMiddleware,
   uploadVendorVerification,
   uploadVendorVerificationMiddleware,
+  uploadVendorSelfie,
+  uploadVendorSelfieMiddleware,
   uploadBookPdf,
   uploadBookPdfMiddleware,
   uploadDeliveryProof,
@@ -42,6 +44,15 @@ router.post(
   authorizeGuestOrBuyerApplicationUpload,
   uploadVendorVerificationMiddleware,
   uploadVendorVerification
+);
+
+router.post(
+  "/vendor-selfie",
+  optionalProtect,
+  requireActiveAccount,
+  authorizeGuestOrBuyerApplicationUpload,
+  uploadVendorSelfieMiddleware,
+  uploadVendorSelfie
 );
 
 router.post(
