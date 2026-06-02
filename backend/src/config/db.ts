@@ -197,7 +197,10 @@ async function migrateConversationKindAndIndex() {
 
 export async function connectDb() {
   mongoose.set("strictQuery", true);
-  await mongoose.connect(env.MONGODB_URI);
+  await mongoose.connect(env.MONGODB_URI, {
+    serverSelectionTimeoutMS: 12_000,
+    connectTimeoutMS: 12_000
+  });
   await migrateConversationKindAndIndex();
   await migrateLegacyProductCategories();
   await migrateMiscategorizedBabyProducts();

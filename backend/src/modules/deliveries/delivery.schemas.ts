@@ -13,9 +13,8 @@ export const deliveryStageSchema = z.enum([
 
 export const patchDeliveryStageSchema = z.object({
   stage: deliveryStageSchema,
-  proofPhotoUrl: z.string().min(1).max(2000).optional(),
+  deliveryOtp: z.string().regex(/^\d{6}$/, { message: "Enter the 6-digit code from the customer." }).optional(),
   receivedByName: z.string().max(120).optional(),
-  customerSignatureUrl: z.string().max(2000).optional(),
   deliveryNote: z.string().max(500).optional()
 });
 export const assignRiderSchema = z.object({ riderUserId: z.string().min(1) });

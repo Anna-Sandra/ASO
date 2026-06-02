@@ -44,11 +44,15 @@ export interface DeliveryDoc {
   estimatedArrivalMinutes?: number | null;
   /** When a vendor/admin assigned the courier */
   riderAssignedAt?: Date | null;
-  /** Proof-of-delivery captured when rider marks delivered */
+  /** Legacy proof URLs — no longer required for new deliveries. */
   proofPhotoUrl?: string | null;
   customerSignatureUrl?: string | null;
   receivedByName?: string | null;
   deliveryNote?: string | null;
+  /** Hashed 6-digit code sent to buyer when rider is on the way. */
+  deliveryOtpHash?: string | null;
+  deliveryOtpExpiresAt?: Date | null;
+  deliveryOtpSentAt?: Date | null;
   deliveredAt?: Date | null;
   statusHistory: DeliveryHistoryEntry[];
   createdAt: Date;
@@ -82,6 +86,9 @@ const deliverySchema = new Schema<DeliveryDoc>(
     customerSignatureUrl: { type: String, default: "", maxlength: 2000 },
     receivedByName: { type: String, default: "", maxlength: 120 },
     deliveryNote: { type: String, default: "", maxlength: 500 },
+    deliveryOtpHash: { type: String, default: "", maxlength: 128 },
+    deliveryOtpExpiresAt: { type: Date, default: null },
+    deliveryOtpSentAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },
     statusHistory: { type: [historySchema], default: [] }
   },

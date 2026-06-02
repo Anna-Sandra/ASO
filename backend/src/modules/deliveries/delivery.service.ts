@@ -10,6 +10,11 @@ import type { UserRole } from "../auth/user.model";
 import { emitDeliveryLocation, emitDeliveryUpdate } from "./delivery.broadcast";
 import { notifyBuyerOrderStatus } from "../notifications/notification.service";
 import { sendOrderDeliveredEmails } from "../../utils/orderDeliveredEmail";
+import {
+  clearDeliveryOtp,
+  sendDeliveryOtpToBuyer,
+  verifyDeliveryOtp
+} from "./deliveryOtp.service";
 
 const TRACKABLE_ORDER: OrderStatus[] = ["paid", "processing", "sent_for_delivery", "delivered"];
 
@@ -47,6 +52,7 @@ export function serializeDelivery(d: HydratedDocument<DeliveryDoc>) {
     customerSignatureUrl: rewriteStoredMediaUrl(o.customerSignatureUrl || ""),
     receivedByName: o.receivedByName || "",
     deliveryNote: o.deliveryNote || "",
+    deliveryOtpSentAt: o.deliveryOtpSentAt ?? null,
     deliveredAt: o.deliveredAt ?? null,
     statusHistory: (o.statusHistory || []).map((h) => ({
       stage: h.stage,
@@ -306,9 +312,8 @@ export async function advanceDeliveryStage(params: {
   actorId: string;
   actorRole: UserRole;
   proof?: {
-    proofPhotoUrl?: string;
+    deliveryOtp?: string;
     receivedByName?: string;
-    customerSignatureUrl?: string;
     deliveryNote?: string;
   };
 }): Promise<HydratedDocument<DeliveryDoc>> {
@@ -389,14 +394,27 @@ export async function advanceDeliveryStage(params: {
       await order.save();
     }
 
-    if (params.nextStage === "delivered") {
-      if (params.actorRole === "rider" && !String(params.proof?.proofPhotoUrl || "").trim()) {
-        throw new HttpError(400, "A delivery photo is required to mark delivered.");
+    if (params.nextStage === "on_the_way") {
+      const sent = await sendDeliveryOtpToBuyer(order, d);
+      if (!sent.sent) {
+        throw new HttpError(
+          400,
+          "Could not send a delivery code to the customer (no phone or email on the order). Add contact details before going on the way."
+        );
       }
-      const proofUrl = String(params.proof?.proofPhotoUrl || "").trim();
-      if (proofUrl) d.proofPhotoUrl = proofUrl.slice(0, 2000);
-      const sigUrl = String(params.proof?.customerSignatureUrl || "").trim();
-      if (sigUrl) d.customerSignatureUrl = sigUrl.slice(0, 2000);
+    }
+
+    if (params.nextStage === "delivered") {
+      if (params.actorRole === "rider") {
+        const code = String(params.proof?.deliveryOtp || "").trim();
+        if (!verifyDeliveryOtp(d, code)) {
+          throw new HttpError(
+            400,
+            "Enter the 6-digit code the customer received by SMS or email. Only they should share it when they have the order."
+          );
+        }
+        clearDeliveryOtp(d);
+      }
       const recv = String(params.proof?.receivedByName || "").trim();
       if (recv) d.receivedByName = recv.slice(0, 120);
       const note = String(params.proof?.deliveryNote || "").trim();
@@ -561,4 +579,26 @@ export async function listAvailableRiders(): Promise<
 
   out.sort((a, b) => a.activeDeliveries - b.activeDeliveries || a.displayName.localeCompare(b.displayName));
   return out;
+}
+
+/** Rider/admin: resend delivery OTP if customer did not receive it. */
+export async function resendDeliveryOtp(params: {
+  orderId: string;
+  actorId: string;
+  actorRole: UserRole;
+}): Promise<{ sent: boolean; channels: string[] }> {
+  const order = await Order.findById(params.orderId);
+  if (!order) throw new HttpError(404, "Order not found");
+  const d = await Delivery.findOne({ orderId: order._id });
+  if (!d) throw new HttpError(404, "Delivery not found");
+  await assertDeliveryParticipant(params.actorId, params.actorRole, order, d);
+  if (!(params.actorRole === "admin" || (params.actorRole === "rider" && d.assignedRiderId?.toString() === params.actorId))) {
+    throw new HttpError(403, "Only assigned rider or admin.");
+  }
+  if (STAGE_INDEX[d.currentStage] >= STAGE_INDEX.delivered || d.currentStage === "cancelled") {
+    throw new HttpError(400, "Delivery already completed.");
+  }
+  const result = await sendDeliveryOtpToBuyer(order, d);
+  await d.save();
+  return result;
 }

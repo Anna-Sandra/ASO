@@ -17,7 +17,8 @@ import {
   patchDeliveryDropoff,
   postRiderLocation,
   setEstimatedArrival,
-  serializeDelivery
+  serializeDelivery,
+  resendDeliveryOtp
 } from "./delivery.service";
 import {
   patchDeliveryStageSchema,
@@ -75,9 +76,8 @@ router.patch(
     const { orderId } = req.params;
     const body = req.body as {
       stage: DeliveryStage;
-      proofPhotoUrl?: string;
+      deliveryOtp?: string;
       receivedByName?: string;
-      customerSignatureUrl?: string;
       deliveryNote?: string;
     };
     const { stage } = body;
@@ -87,14 +87,29 @@ router.patch(
       actorId: req.user!.id,
       actorRole: req.user!.role,
       proof: {
-        proofPhotoUrl: body.proofPhotoUrl,
+        deliveryOtp: body.deliveryOtp,
         receivedByName: body.receivedByName,
-        customerSignatureUrl: body.customerSignatureUrl,
         deliveryNote: body.deliveryNote
       }
     });
     const order = await Order.findById(orderId);
     res.json({ delivery: serializeDelivery(d), orderStatus: order?.status });
+  })
+);
+
+router.post(
+  "/order/:orderId/resend-delivery-otp",
+  protect,
+  requireActiveAccount,
+  authorize("rider", "admin"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { orderId } = req.params;
+    const result = await resendDeliveryOtp({
+      orderId,
+      actorId: req.user!.id,
+      actorRole: req.user!.role
+    });
+    res.json(result);
   })
 );
 

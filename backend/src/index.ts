@@ -11,16 +11,17 @@ import { runAutoConfirmDeliveredOrders } from "./modules/orders/orderAutoConfirm
 import { runAbandonedCartReminders } from "./modules/orders/orderAbandonedReminder.job";
 import { getUploadStorageDiagnostics } from "./utils/uploadStorage";
 
-async function main() {
-  try {
-    await connectDb();
-  } catch (err) {
+function startBackgroundDb() {
+  void connectDb().catch((err) => {
     // eslint-disable-next-line no-console
     console.error(
-      "[db] MongoDB connection failed — API still starts. Env-based platform admin can sign in; most routes need the database.",
+      "[db] MongoDB connection failed — API still runs. Env-based platform admin can sign in; most routes need the database.",
       err
     );
-  }
+  });
+}
+
+async function main() {
   const app = createApp();
   const server = createServer(app);
   const io = new Server(server, {
@@ -30,9 +31,11 @@ async function main() {
 
   // Render (and most PaaS) inject PORT and route health checks to the process; bind all interfaces.
   const listenHost = "0.0.0.0";
-  server.listen(env.PORT, listenHost, () => {
+  const port = Number(process.env.PORT) || env.PORT;
+  server.listen(port, listenHost, () => {
     // eslint-disable-next-line no-console
-    console.log(`API listening on http://${listenHost}:${env.PORT} (PORT from env)`);
+    console.log(`API listening on http://${listenHost}:${port} (PORT from env)`);
+    startBackgroundDb();
     const emailDiag = getEmailTransportDiagnostics();
     console.log(
       `[email] transport=${emailDiag.mode} configured=${isEmailTransportConfigured()}${emailDiag.hints.length ? ` hints=${emailDiag.hints.join(" ")}` : ""}`
@@ -85,7 +88,7 @@ async function main() {
     if (err.code === "EADDRINUSE") {
       // eslint-disable-next-line no-console
       console.error(
-        `Port ${env.PORT} is already in use. Another process is listening (often a leftover node). Find PID: netstat -ano | findstr :${env.PORT} — last column is PID. Then: taskkill /PID <pid> /F  Or set a different PORT in .env.`
+        `Port ${port} is already in use. Another process is listening (often a leftover node). Find PID: netstat -ano | findstr :${port} — last column is PID. Then: taskkill /PID <pid> /F  Or set a different PORT in .env.`
       );
     } else {
       // eslint-disable-next-line no-console

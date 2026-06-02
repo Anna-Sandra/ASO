@@ -5,7 +5,6 @@ import L from "leaflet";
 import {
   ArrowLeft,
   Bike,
-  Camera,
   Check,
   Crosshair,
   Headphones,
@@ -20,7 +19,7 @@ import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import "leaflet/dist/leaflet.css";
-import { apiFetch, apiUploadDeliveryProof, apiErrorMessage } from "services/api";
+import { apiFetch, apiErrorMessage } from "services/api";
 import { openDeliverySocket } from "services/deliverySocket";
 import { formatGhc } from "utils/money";
 
@@ -282,16 +281,11 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const socketRef = useRef(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const [lastLivePulse, setLastLivePulse] = useState(0);
-  const [showDeliverProof, setShowDeliverProof] = useState(false);
-  const [proofPhotoFile, setProofPhotoFile] = useState(null);
-  const [proofPhotoPreview, setProofPhotoPreview] = useState("");
+  const [showDeliverOtp, setShowDeliverOtp] = useState(false);
+  const [deliveryOtp, setDeliveryOtp] = useState("");
   const [receivedByName, setReceivedByName] = useState("");
   const [deliveryNote, setDeliveryNote] = useState("");
-  const [signatureTouched, setSignatureTouched] = useState(false);
-  /** @type {React.MutableRefObject<HTMLCanvasElement | null>} */
-  const signatureCanvasRef = useRef(null);
-  const proofInputRef = useRef(null);
-  const drawingRef = useRef(false);
+  const [resendingOtp, setResendingOtp] = useState(false);
 
   const loadBundle = useCallback(async () => {
     const d = await apiFetch(`/api/deliveries/order/${encodeURIComponent(orderId)}`, {
@@ -448,9 +442,8 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     try {
       const body = { stage };
       if (proof) {
-        if (proof.proofPhotoUrl) body.proofPhotoUrl = proof.proofPhotoUrl;
+        if (proof.deliveryOtp) body.deliveryOtp = proof.deliveryOtp;
         if (proof.receivedByName) body.receivedByName = proof.receivedByName;
-        if (proof.customerSignatureUrl) body.customerSignatureUrl = proof.customerSignatureUrl;
         if (proof.deliveryNote) body.deliveryNote = proof.deliveryNote;
       }
       const { delivery } = await apiFetch(`/api/deliveries/order/${encodeURIComponent(orderId)}/stage`, {
@@ -459,12 +452,10 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
         json: body
       });
       setBundle((prev) => (prev ? { ...prev, delivery } : prev));
-      setShowDeliverProof(false);
-      setProofPhotoFile(null);
-      setProofPhotoPreview("");
+      setShowDeliverOtp(false);
+      setDeliveryOtp("");
       setReceivedByName("");
       setDeliveryNote("");
-      setSignatureTouched(false);
     } catch (ex) {
       setGeoErr(apiErrorMessage(ex, "Could not update delivery status. Try again."));
     } finally {
@@ -472,87 +463,41 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     }
   };
 
-  const clearSignature = () => {
-    const canvas = signatureCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const resendCustomerOtp = async () => {
+    setResendingOtp(true);
+    setGeoErr("");
+    try {
+      await apiFetch(`/api/deliveries/order/${encodeURIComponent(orderId)}/resend-delivery-otp`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: {}
+      });
+      await loadBundle();
+    } catch (ex) {
+      setGeoErr(apiErrorMessage(ex, "Could not resend the code. Check the order has a customer phone or email."));
+    } finally {
+      setResendingOtp(false);
     }
-    setSignatureTouched(false);
   };
 
-  const startSignature = (e) => {
-    const canvas = signatureCanvasRef.current;
-    if (!canvas) return;
-    drawingRef.current = true;
-    setSignatureTouched(true);
-    const rect = canvas.getBoundingClientRect();
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    const x = (e.clientX ?? e.touches?.[0]?.clientX ?? 0) - rect.left;
-    const y = (e.clientY ?? e.touches?.[0]?.clientY ?? 0) - rect.top;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-  };
-
-  const drawSignature = (e) => {
-    if (!drawingRef.current) return;
-    e.preventDefault();
-    const canvas = signatureCanvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const x = (e.clientX ?? e.touches?.[0]?.clientX ?? 0) - rect.left;
-    const y = (e.clientY ?? e.touches?.[0]?.clientY ?? 0) - rect.top;
-    ctx.lineTo(x, y);
-    ctx.stroke();
-  };
-
-  const endSignature = () => {
-    drawingRef.current = false;
-  };
-
-  const submitDeliverProof = async () => {
-    if (!proofPhotoFile) {
-      setGeoErr("Add a delivery photo before completing.");
+  const submitDeliveryOtp = async () => {
+    const code = deliveryOtp.replace(/\D/g, "");
+    if (code.length !== 6) {
+      setGeoErr("Enter the 6-digit code from the customer.");
       return;
     }
     setBusyStage("delivered");
     setGeoErr("");
     try {
-      const { url: proofPhotoUrl } = await apiUploadDeliveryProof(proofPhotoFile, accessToken);
-      let customerSignatureUrl = "";
-      if (signatureTouched && signatureCanvasRef.current) {
-        const blob = await new Promise((resolve) => signatureCanvasRef.current.toBlob(resolve, "image/png"));
-        if (blob) {
-          const sigFile = new File([blob], "signature.png", { type: "image/png" });
-          const sigRes = await apiUploadDeliveryProof(sigFile, accessToken);
-          customerSignatureUrl = sigRes.url || "";
-        }
-      }
       await patchStage("delivered", {
-        proofPhotoUrl,
+        deliveryOtp: code,
         receivedByName: receivedByName.trim(),
-        customerSignatureUrl,
         deliveryNote: deliveryNote.trim()
       });
     } catch (ex) {
-      setGeoErr(apiErrorMessage(ex, "Could not complete delivery. Check your photo and try again."));
+      setGeoErr(apiErrorMessage(ex, "Could not complete delivery. Check the code and try again."));
       setBusyStage("");
     }
-  };
-
-  const onProofPhotoPick = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setProofPhotoFile(file);
-    setProofPhotoPreview(URL.createObjectURL(file));
-    setGeoErr("");
   };
 
   const delivery = bundle?.delivery;
@@ -1155,7 +1100,6 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
               ),
 
             isDeliveredFinal &&
-              (delivery.proofPhotoUrl || delivery.receivedByName || delivery.deliveryNote || delivery.customerSignatureUrl) &&
               el(
                 "div",
                 {
@@ -1164,16 +1108,30 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                     "rounded-lg border border-emerald-200/80 bg-emerald-50/60 p-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/25"
                 },
                 [
-                  el("p", { className: "text-[9px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-200" }, "Proof of delivery"),
+                  el("p", { className: "text-[9px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-200" }, "Delivery confirmed"),
                   delivery.deliveredAt
                     ? el("p", { key: "at", className: "mt-1 text-[11px] text-slate-700 dark:text-slate-200" }, [
                         el("span", { className: "font-semibold" }, "Delivered at: "),
                         formatDeliveredAt(delivery.deliveredAt)
                       ])
                     : null,
+                  el(
+                    "p",
+                    { key: "otp-note", className: "mt-1 text-[11px] text-slate-600 dark:text-slate-300" },
+                    "Verified with the customer’s delivery code (no photo stored)."
+                  ),
+                  delivery.receivedByName
+                    ? el("p", { key: "recv", className: "mt-1 text-[11px] text-slate-700 dark:text-slate-200" }, [
+                        el("span", { className: "font-semibold" }, "Received by: "),
+                        delivery.receivedByName
+                      ])
+                    : null,
+                  delivery.deliveryNote
+                    ? el("p", { key: "note", className: "mt-1 text-[11px] text-slate-700 dark:text-slate-200" }, delivery.deliveryNote)
+                    : null,
                   delivery.proofPhotoUrl
                     ? el("div", { key: "photo", className: "mt-2" }, [
-                        el("p", { className: "text-[10px] font-semibold text-slate-600 dark:text-slate-300" }, "Proof:"),
+                        el("p", { className: "text-[10px] font-semibold text-slate-600 dark:text-slate-300" }, "Legacy photo:"),
                         el("img", {
                           src: delivery.proofPhotoUrl,
                           alt: "Delivery proof",
@@ -1264,7 +1222,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 },
                 [
                   el("p", { className: "text-xs font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200" }, "Rider controls"),
-                  !showDeliverProof
+                  !showDeliverOtp
                     ? el("div", { key: "acts", className: "mt-3 flex flex-wrap gap-2" }, [
                         ...riderNextActions().map((a) =>
                           el(
@@ -1275,7 +1233,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               disabled: Boolean(busyStage),
                               className:
                                 "rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
-                              onClick: () => (a.stage === "delivered" ? setShowDeliverProof(true) : patchStage(a.stage))
+                              onClick: () => (a.stage === "delivered" ? setShowDeliverOtp(true) : patchStage(a.stage))
                             },
                             busyStage === a.stage ? "Saving…" : a.label
                           )
