@@ -132,6 +132,20 @@ const envSchema = z.object({
   KYC_FACE_MATCH_MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(70),
 
   /**
+   * When true, API routes reject traffic that does not appear to originate from Ghana.
+   * Defaults to on in production, off in development (override with GHANA_ONLY_ENABLED=true|false).
+   */
+  GHANA_ONLY_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const raw = (v ?? "").trim().toLowerCase();
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      return (process.env.NODE_ENV || "development") === "production";
+    }),
+
+  /**
    * Optional. When set, all `/api/admin` requests require header `X-Admin-Secret: <this>` in addition
    * to a JWT for user role `admin`. Set the same value in the frontend as `REACT_APP_ADMIN_API_KEY` for the SPA.
    */

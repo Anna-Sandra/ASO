@@ -34,8 +34,10 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
     shopDescription: string;
     verificationDocUrl?: string;
     selfieUrl?: string;
-    locationBase: string;
-    nearbyArea: string;
+    locationLat: number;
+    locationLng: number;
+    locationLabel?: string;
+    locationAccuracyM?: number | null;
     email?: string;
   };
 
@@ -123,8 +125,13 @@ export const submitVendorApplication = asyncHandler(async (req: Request, res: Re
     faceMatchProvider: faceMatch.provider,
     faceMatchReason: faceMatch.reason,
     faceMatchCheckedAt: faceMatch.checkedAt,
-    locationBase: body.locationBase,
-    nearbyArea: body.nearbyArea.trim(),
+    locationLat: Number(body.locationLat),
+    locationLng: Number(body.locationLng),
+    locationLabel: (body.locationLabel || "").trim(),
+    locationAccuracyM:
+      body.locationAccuracyM != null && Number.isFinite(Number(body.locationAccuracyM))
+        ? Number(body.locationAccuracyM)
+        : null,
     status: "pending"
   });
 

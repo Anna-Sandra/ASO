@@ -3,8 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { CheckCircle2, CloudUpload, Lock, Mail, Navigation, Phone, ShieldCheck, Truck, User } from "lucide-react";
 import { useAuth, useNotice } from "context";
 import { apiFetch, fetchPublicPlatformConfig, getApiBase } from "services/api";
+import { ApplicationGhanaLocation } from "components/applications/ApplicationGhanaLocation";
 import { BuyerLayout, CartDrawer } from "pages/buyer/screensBuyer";
 import { h, f } from "utils/h";
+import { isCoordinateInGhana } from "utils/ghanaGeo";
 import { Button, Field, GlassPanel, InlineNotice, TextArea, TextInput } from "components/ui";
 import { apiErrorMessage, messageFromApiJson, sanitizeErrorMessage } from "utils/userFacingError";
 
@@ -21,6 +23,7 @@ export function CourierApplicationPage() {
   const [vehicleType, setVehicleType] = useState("bicycle");
   const [notes, setNotes] = useState("");
   const [idDocUrl, setIdDocUrl] = useState("");
+  const [ghanaLocation, setGhanaLocation] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [agreeCourierRules, setAgreeCourierRules] = useState(false);
@@ -121,6 +124,13 @@ export function CourierApplicationPage() {
       setErr("Please accept the Terms & Conditions and the courier requirements.");
       return;
     }
+    if (
+      !ghanaLocation ||
+      !isCoordinateInGhana(ghanaLocation.locationLat, ghanaLocation.locationLng)
+    ) {
+      setErr("Capture your live location in Ghana before submitting.");
+      return;
+    }
     if (String(notes).trim().length < 15) {
       setErr("Please add a bit more detail in “About your delivery experience” (at least 15 characters).");
       return;
@@ -139,6 +149,10 @@ export function CourierApplicationPage() {
         vehicleType: vehicleType.trim(),
         notes: notes.trim(),
         idDocUrl: idDocUrl.trim(),
+        locationLat: ghanaLocation.locationLat,
+        locationLng: ghanaLocation.locationLng,
+        locationLabel: String(ghanaLocation.locationLabel || "").trim(),
+        locationAccuracyM: ghanaLocation.locationAccuracyM ?? null,
         agreeToTerms: true,
         agreeCourierRules: true
       };
@@ -210,9 +224,9 @@ export function CourierApplicationPage() {
           h("div", { className: "mt-6 space-y-4" }, [
             h("h3", { className: "text-xs font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-300" }, "Why apply"),
             [
-              { icon: Navigation, t: "Flexible work", d: "Pick up nearby handoffs and earn per delivery." },
+              { icon: Navigation, t: "Flexible work", d: "Pick up deliveries across Ghana and earn per trip." },
               { icon: ShieldCheck, t: "Trusted role", d: "Admins approve every courier before assigning routes." },
-              { icon: CheckCircle2, t: "Local delivery", d: "Built for on-site pickups and tracked handoffs." }
+              { icon: CheckCircle2, t: "Ghana only", d: "Live GPS pin confirms you operate inside Ghana." }
             ].map((row) =>
               h("div", { key: row.t, className: "flex gap-3" }, [
                 h(row.icon, { className: "mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" }),
@@ -338,6 +352,12 @@ export function CourierApplicationPage() {
                   h("input", { ref: fileRef, type: "file", accept: "image/png,image/jpeg,application/pdf", className: "hidden", onChange: onPickFile }),
                   idDocUrl ? h("p", { className: "text-xs text-emerald-600 dark:text-emerald-400" }, "File uploaded.") : null
                 ]),
+                h(ApplicationGhanaLocation, {
+                  key: "loc",
+                  value: ghanaLocation,
+                  onChange: setGhanaLocation,
+                  disabled: !!applyBlocked
+                }),
                 h("div", { key: "agr", className: "space-y-3" }, [
                   h("h3", { className: "text-xs font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-300" }, "Agreement"),
                   h("label", { className: "vendor-form-terms" }, [

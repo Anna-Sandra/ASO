@@ -13,6 +13,7 @@ import { requireAdminEnvSecret } from "./middleware/adminSecret";
 import { requireActiveAccount } from "./middleware/requireActiveAccount";
 import { errorHandler, notFound } from "./middleware/errorHandler";
 import { mongoSanitize } from "./middleware/sanitize";
+import { requireGhanaAccess } from "./middleware/requireGhanaAccess";
 import { validateBody, validateQuery } from "./middleware/validate";
 import { deleteAccount } from "./modules/auth/auth.controller";
 import { deleteAccountSchema } from "./modules/auth/auth.schemas";
@@ -105,6 +106,7 @@ export function createApp() {
 
   app.use(express.json({ limit: "1mb" }));
   app.use(mongoSanitize);
+  app.use(requireGhanaAccess);
 
   /**
    * When `connectDb()` failed at startup, Mongoose buffers queries until they hit the default 10s timeout

@@ -14,8 +14,10 @@ import {
 import { useAuth, useNotice } from "context";
 import { apiFetch, fetchPublicPlatformConfig, getApiBase } from "services/api";
 import { CATEGORY_LABELS, PRODUCT_CATEGORY_VALUES } from "config/catalog";
+import { ApplicationGhanaLocation } from "components/applications/ApplicationGhanaLocation";
 import { BuyerLayout, CartDrawer } from "pages/buyer/screensBuyer";
 import { h, f } from "utils/h";
+import { isCoordinateInGhana } from "utils/ghanaGeo";
 import { Button, Field, GlassPanel, InlineNotice, SelectInput, TextArea, TextInput } from "components/ui";
 import { apiErrorMessage, messageFromApiJson } from "utils/userFacingError";
 
@@ -35,8 +37,7 @@ export function VendorApplicationPage() {
   const [phone, setPhone] = useState("");
   const [altPhone, setAltPhone] = useState("");
   const [shopDescription, setShopDescription] = useState("");
-  const [locationBase, setLocationBase] = useState("on_campus");
-  const [nearbyArea, setNearbyArea] = useState("");
+  const [ghanaLocation, setGhanaLocation] = useState(null);
   const [verificationDocUrl, setVerificationDocUrl] = useState("");
   const [selfieUrl, setSelfieUrl] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -174,8 +175,11 @@ export function VendorApplicationPage() {
       setErr("Selfie upload is required for identity matching.");
       return;
     }
-    if (!String(nearbyArea).trim()) {
-      setErr("Please enter your nearby town or area (under Location).");
+    if (
+      !ghanaLocation ||
+      !isCoordinateInGhana(ghanaLocation.locationLat, ghanaLocation.locationLng)
+    ) {
+      setErr("Capture your live location in Ghana before submitting.");
       return;
     }
     if (String(shopDescription).trim().length < 10) {
@@ -203,8 +207,10 @@ export function VendorApplicationPage() {
         shopDescription: shopDescription.trim(),
         verificationDocUrl: verificationDocUrl.trim(),
         selfieUrl: selfieUrl.trim(),
-        locationBase,
-        nearbyArea: nearbyArea.trim(),
+        locationLat: ghanaLocation.locationLat,
+        locationLng: ghanaLocation.locationLng,
+        locationLabel: String(ghanaLocation.locationLabel || "").trim(),
+        locationAccuracyM: ghanaLocation.locationAccuracyM ?? null,
         agreeToTerms: true,
         agreeToVendorRules: true
       };
@@ -450,33 +456,12 @@ export function VendorApplicationPage() {
                 h("input", { ref: selfieFileRef, type: "file", accept: "image/png,image/jpeg,image/webp", className: "hidden", onChange: onPickSelfieFile }),
                 selfieUrl ? h("p", { className: "text-xs text-emerald-600 dark:text-emerald-400" }, "Selfie uploaded.") : null
               ]),
-              h("div", { key: "loc", className: "space-y-4" }, [
-                h("h3", { className: "text-xs font-bold uppercase tracking-wide text-sky-800 dark:text-sky-300" }, "3. Location (VERY IMPORTANT)"),
-                h("p", { className: "text-sm font-medium text-slate-900 dark:text-white" }, "Where are you based?"),
-                h("div", { className: "flex flex-wrap gap-4" }, [
-                  h("label", { key: "on", className: "flex cursor-pointer items-center gap-2 rounded-2xl border border-white/20 bg-white/30 px-4 py-2.5 text-sm text-slate-800 dark:border-white/10 dark:bg-slate-900/30 dark:text-slate-100" }, [
-                    h("input", {
-                      type: "radio",
-                      name: "locationBase",
-                      className: "h-4 w-4 border-slate-300 text-sky-600",
-                      checked: locationBase === "on_campus",
-                      onChange: () => setLocationBase("on_campus")
-                    }),
-                    "On-site"
-                  ]),
-                  h("label", { key: "off", className: "flex cursor-pointer items-center gap-2 rounded-2xl border border-white/20 bg-white/30 px-4 py-2.5 text-sm text-slate-800 dark:border-white/10 dark:bg-slate-900/30 dark:text-slate-100" }, [
-                    h("input", {
-                      type: "radio",
-                      name: "locationBase",
-                      className: "h-4 w-4 border-slate-300 text-sky-600",
-                      checked: locationBase === "off_campus",
-                      onChange: () => setLocationBase("off_campus")
-                    }),
-                    "Off-site"
-                  ])
-                ]),
-                h(Field, { key: "near", label: "Nearby town / area" }, h(TextInput, { value: nearbyArea, onChange: (e) => setNearbyArea(e.target.value), placeholder: "e.g. East Legon, Tema Community 4, …", required: true }))
-              ]),
+              h(ApplicationGhanaLocation, {
+                key: "loc",
+                value: ghanaLocation,
+                onChange: setGhanaLocation,
+                disabled: !!applyBlocked
+              }),
               h("div", { key: "agr", className: "space-y-3" }, [
                 h("h3", { className: "text-xs font-bold uppercase tracking-wide text-sky-800 dark:text-sky-300" }, "6. Agreement"),
                 h("label", { className: "vendor-form-terms" }, [

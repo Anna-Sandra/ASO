@@ -47,6 +47,7 @@ import { AboutUsPage, TermsAndConditionsPage, VendorRulesPage } from "pages/lega
 import { AdminPage } from "pages/admin/screensAdmin";
 import { AdminLoginPage, AdminLoginOtpPage } from "pages/admin/screensAdminLogin";
 import RiderDashboard from "pages/rider/RiderDashboard";
+import { GhanaAccessGate } from "components/GhanaAccessGate";
 import { h } from "utils/h";
 import {
   VendorAddProductPage,
@@ -344,7 +345,11 @@ export default function App() {
             h(
               NoticeProvider,
               null,
-              h(BrowserRouter, { future: { v7_startTransition: true, v7_relativeSplatPath: true } }, h(AppRoutes))
+              h(
+                BrowserRouter,
+                { future: { v7_startTransition: true, v7_relativeSplatPath: true } },
+                h(GhanaAccessGate, null, h(AppRoutes))
+              )
             )
           )
         )

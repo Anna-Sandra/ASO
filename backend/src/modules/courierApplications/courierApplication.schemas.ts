@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { applicationGhanaLocationFields } from "../vendorApplications/vendorApplication.schemas";
+import { isCoordinateInGhana } from "../../utils/ghanaGeo";
 
 function firstQueryString(v: unknown): string | undefined {
   if (v === undefined || v === null) return undefined;
@@ -12,10 +14,19 @@ export const submitCourierApplicationSchema = z.object({
   vehicleType: z.string().trim().min(1).max(80),
   notes: z.string().trim().min(15).max(800),
   idDocUrl: z.string().trim().min(1, { message: "Upload a Ghana Card or valid ID photo / PDF." }).max(500),
+  ...applicationGhanaLocationFields,
   agreeToTerms: z.boolean().refine((v) => v === true, { message: "You must accept the Terms & Conditions." }),
   agreeCourierRules: z.boolean().refine((v) => v === true, { message: "You must acknowledge the courier requirements." }),
   /** Required when submitting as a guest; ignored when signed in as a shopper (profile email wins). */
   email: z.union([z.literal(""), z.string().trim().email().max(200)]).optional()
+}).superRefine((body, ctx) => {
+  if (!isCoordinateInGhana(body.locationLat, body.locationLng)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Your GPS location must be inside Ghana. Tap “Use my current location” again.",
+      path: ["locationLat"]
+    });
+  }
 });
 
 export const adminCourierApplicationsQuerySchema = z.object({

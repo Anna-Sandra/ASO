@@ -11,6 +11,10 @@ export interface CourierApplicationDoc {
   vehicleType: string;
   notes: string;
   idDocUrl: string;
+  locationLat: number;
+  locationLng: number;
+  locationLabel: string;
+  locationAccuracyM?: number | null;
   status: CourierApplicationStatus;
   adminNote: string;
   reviewedAt?: Date | null;
@@ -27,6 +31,10 @@ const courierApplicationSchema = new Schema<CourierApplicationDoc>(
     vehicleType: { type: String, required: true, trim: true, maxlength: 80 },
     notes: { type: String, required: true, trim: true, maxlength: 800 },
     idDocUrl: { type: String, default: "", trim: true, maxlength: 500 },
+    locationLat: { type: Number, required: true },
+    locationLng: { type: Number, required: true },
+    locationLabel: { type: String, default: "", trim: true, maxlength: 300 },
+    locationAccuracyM: { type: Number, default: null, min: 0 },
     status: {
       type: String,
       enum: ["pending", "approved", "rejected"],

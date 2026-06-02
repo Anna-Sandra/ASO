@@ -1,10 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import { PRODUCT_CATEGORIES } from "../products/product.model";
-import { VENDOR_LOCATION_BASE } from "./vendorApplication.schemas";
 
 export type VendorApplicationStatus = "pending" | "approved" | "rejected";
-export type VendorFaceMatchStatus = "matched" | "mismatch" | "manual_review";
-export type VendorLocationBase = (typeof VENDOR_LOCATION_BASE)[number];
 
 export interface VendorApplicationDoc {
   _id: mongoose.Types.ObjectId;
@@ -20,13 +17,18 @@ export interface VendorApplicationDoc {
   shopDescription: string;
   verificationDocUrl: string;
   selfieUrl: string;
-  faceMatchStatus: VendorFaceMatchStatus;
+  faceMatchStatus: string;
   faceMatchConfidence?: number | null;
   faceMatchProvider?: string;
   faceMatchReason?: string;
   faceMatchCheckedAt?: Date | null;
-  locationBase: VendorLocationBase;
-  nearbyArea: string;
+  locationLat: number;
+  locationLng: number;
+  locationLabel: string;
+  locationAccuracyM?: number | null;
+  /** @deprecated Legacy campus fields — kept for older rows only. */
+  locationBase?: string;
+  nearbyArea?: string;
   status: VendorApplicationStatus;
   adminNote: string;
   reviewedAt?: Date | null;
@@ -59,8 +61,12 @@ const vendorApplicationSchema = new Schema<VendorApplicationDoc>(
     faceMatchProvider: { type: String, default: "none", trim: true, maxlength: 80 },
     faceMatchReason: { type: String, default: "", trim: true, maxlength: 400 },
     faceMatchCheckedAt: { type: Date, default: null },
-    locationBase: { type: String, required: true, enum: [...VENDOR_LOCATION_BASE] },
-    nearbyArea: { type: String, required: true, trim: true, maxlength: 200 },
+    locationLat: { type: Number, required: true },
+    locationLng: { type: Number, required: true },
+    locationLabel: { type: String, default: "", trim: true, maxlength: 300 },
+    locationAccuracyM: { type: Number, default: null, min: 0 },
+    locationBase: { type: String, default: "", trim: true, maxlength: 40 },
+    nearbyArea: { type: String, default: "", trim: true, maxlength: 200 },
     status: {
       type: String,
       enum: ["pending", "approved", "rejected"],

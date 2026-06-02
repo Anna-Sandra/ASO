@@ -98,10 +98,16 @@ const REJECT_REASONS = [
   "Other"
 ];
 
-const VENDOR_LOC_BASE_LABELS = {
-  on_campus: "On-site",
-  off_campus: "Off-site"
-};
+function formatApplicationLocation(row) {
+  if (row?.locationLabel) return String(row.locationLabel).trim();
+  const lat = row?.locationLat;
+  const lng = row?.locationLng;
+  if (lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))) {
+    return `${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}`;
+  }
+  const legacy = [row?.nearbyArea, row?.locationBase].filter((x) => x && String(x).trim());
+  return legacy.join(" · ");
+}
 
 const SIDEBAR_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -3472,9 +3478,7 @@ export function AdminPage() {
                 id: row.userId,
                 role: "buyer"
               };
-              const locationLine = [VENDOR_LOC_BASE_LABELS[row.locationBase] || row.locationBase, row.nearbyArea]
-                .filter(Boolean)
-                .join(" · ");
+              const locationLine = formatApplicationLocation(row);
               const detail = (label, value) =>
                 value == null || String(value).trim() === ""
                   ? null
@@ -3601,6 +3605,23 @@ export function AdminPage() {
                             onClick: () => window.open(row.selfieUrl, "_blank", "noopener,noreferrer")
                           },
                           "Open selfie"
+                        )
+                      : null,
+                    row.locationLat != null && row.locationLng != null
+                      ? h(
+                          Button,
+                          {
+                            key: "map",
+                            variant: "ghost",
+                            className: "!min-h-[36px] !px-3 !text-xs",
+                            onClick: () =>
+                              window.open(
+                                `https://www.google.com/maps?q=${encodeURIComponent(`${row.locationLat},${row.locationLng}`)}`,
+                                "_blank",
+                                "noopener,noreferrer"
+                              )
+                          },
+                          "Open map pin"
                         )
                       : null,
                     vendorAppsStatus === "pending" && row.status === "pending"
@@ -3798,6 +3819,7 @@ export function AdminPage() {
                         { className: "grid gap-3 sm:grid-cols-2" },
                         [
                           detail("Notes", row.notes),
+                          detail("Location", formatApplicationLocation(row) || "—"),
                           detail("ID document", row.idDocUrl ? "File uploaded" : "None uploaded"),
                           row.reviewedAt ? detail("Reviewed on", fmtDateTime(row.reviewedAt)) : null,
                           row.adminNote ? detail("Admin note", row.adminNote) : null
@@ -3816,6 +3838,23 @@ export function AdminPage() {
                             onClick: () => window.open(row.idDocUrl, "_blank", "noopener,noreferrer")
                           },
                           "Open ID file"
+                        )
+                      : null,
+                    row.locationLat != null && row.locationLng != null
+                      ? h(
+                          Button,
+                          {
+                            key: "map",
+                            variant: "ghost",
+                            className: "!min-h-[36px] !px-3 !text-xs",
+                            onClick: () =>
+                              window.open(
+                                `https://www.google.com/maps?q=${encodeURIComponent(`${row.locationLat},${row.locationLng}`)}`,
+                                "_blank",
+                                "noopener,noreferrer"
+                              )
+                          },
+                          "Open map pin"
                         )
                       : null,
                     courierAppsStatus === "pending" && row.status === "pending"

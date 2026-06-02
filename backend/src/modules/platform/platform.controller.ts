@@ -11,11 +11,40 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { getUploadStorageDiagnostics } from "../../utils/uploadStorage";
 import { getEffectiveCommissionPercent, getOrCreateSettings } from "./platformSettings.service";
 import { getPlatformTrialEndsAt, isPlatformLaunchTrialActive } from "../vendorSubscription/vendorSubscription.service";
+import {
+  clientIpFromRequest,
+  countryCodeFromHeaders,
+  isRequestFromGhana,
+  resolveCountryCodeForIp
+} from "../../utils/ghanaGeo";
 
-export const getPublicPlatformConfig = asyncHandler(async (_req: Request, res: Response) => {
+export const getPlatformAccessCheck = asyncHandler(async (req: Request, res: Response) => {
+  const ghanaOnly = env.GHANA_ONLY_ENABLED;
+  if (!ghanaOnly) {
+    res.json({ allowed: true, ghanaOnly: false, country: null });
+    return;
+  }
+  const allowed = await isRequestFromGhana(req);
+  const ip = clientIpFromRequest(req);
+  const country = countryCodeFromHeaders(req) || (await resolveCountryCodeForIp(ip));
+  if (!allowed) {
+    res.status(403).json({
+      allowed: false,
+      ghanaOnly: true,
+      country: country || "unknown",
+      message: "SHOPIQGH is only available in Ghana. If you are in Ghana, disable VPN and refresh."
+    });
+    return;
+  }
+  res.json({ allowed: true, ghanaOnly: true, country: country || "GH" });
+});
+
+export const getPublicPlatformConfig = asyncHandler(async (req: Request, res: Response) => {
   const doc = await getOrCreateSettings();
   const paystackRail = isPaystackMoneyRailEnabled();
   const commissionPercent = await getEffectiveCommissionPercent();
+  const ghanaOnly = env.GHANA_ONLY_ENABLED;
+  const regionAllowed = !ghanaOnly || (await isRequestFromGhana(req));
   res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=120");
   res.json({
     siteName: doc.siteName || DEFAULT_SITE_NAME,
@@ -54,6 +83,13 @@ export const getPublicPlatformConfig = asyncHandler(async (_req: Request, res: R
       configured: isEmailTransportConfigured(),
       transport: getEmailTransportMode()
     },
-    uploads: getUploadStorageDiagnostics()
+    uploads: getUploadStorageDiagnostics(),
+    region: {
+      ghanaOnly,
+      allowed: regionAllowed,
+      message: regionAllowed
+        ? ""
+        : "SHOPIQGH is only available in Ghana. If you are in Ghana, disable VPN and refresh."
+    }
   });
 });

@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { getPublicPlatformConfig } from "./platform.controller";
+import { getPlatformAccessCheck, getPublicPlatformConfig } from "./platform.controller";
 
 const router = Router();
+router.get("/access-check", getPlatformAccessCheck);
 router.get("/config", getPublicPlatformConfig);
 
 export default router;

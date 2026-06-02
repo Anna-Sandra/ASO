@@ -32,6 +32,10 @@ export const submitCourierApplication = asyncHandler(async (req: Request, res: R
     vehicleType: string;
     notes: string;
     idDocUrl?: string;
+    locationLat: number;
+    locationLng: number;
+    locationLabel?: string;
+    locationAccuracyM?: number | null;
     email?: string;
   };
 
@@ -91,6 +95,13 @@ export const submitCourierApplication = asyncHandler(async (req: Request, res: R
     vehicleType: body.vehicleType.trim(),
     notes: body.notes.trim(),
     idDocUrl: (body.idDocUrl || "").trim(),
+    locationLat: Number(body.locationLat),
+    locationLng: Number(body.locationLng),
+    locationLabel: (body.locationLabel || "").trim(),
+    locationAccuracyM:
+      body.locationAccuracyM != null && Number.isFinite(Number(body.locationAccuracyM))
+        ? Number(body.locationAccuracyM)
+        : null,
     status: "pending"
   });
 

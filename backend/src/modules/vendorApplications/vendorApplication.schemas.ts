@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { PRODUCT_CATEGORIES } from "../products/product.model";
+import { isCoordinateInGhana } from "../../utils/ghanaGeo";
 
-export const VENDOR_LOCATION_BASE = ["on_campus", "off_campus"] as const;
+export const applicationGhanaLocationFields = {
+  locationLat: z.coerce.number({ message: "Capture your live location in Ghana." }),
+  locationLng: z.coerce.number({ message: "Capture your live location in Ghana." }),
+  locationLabel: z.string().trim().max(300).optional().default(""),
+  locationAccuracyM: z.coerce.number().min(0).max(50_000).optional().nullable()
+};
 
 function firstQueryString(v: unknown): string | undefined {
   if (v === undefined || v === null) return undefined;
@@ -52,16 +58,19 @@ export const submitVendorApplicationSchema = z.object({
     .min(1, { message: "Upload a selfie photo." })
     .regex(/\.(jpg|jpeg|png|webp)(\?|$)/i, { message: "Selfie must be JPG, PNG, or WebP." })
     .max(500, { message: "Selfie URL is invalid." }),
-  locationBase: z.enum(VENDOR_LOCATION_BASE, { message: "Choose whether you are on-site or off-site." }),
-  nearbyArea: z
-    .string()
-    .trim()
-    .min(1, { message: "Please enter your nearby town or area (under Location)." })
-    .max(200, { message: "Nearby area must be at most 200 characters." }),
+  ...applicationGhanaLocationFields,
   agreeToTerms: z.boolean().refine((v) => v === true, { message: "You must accept the Terms & Conditions." }),
   agreeToVendorRules: z.boolean().refine((v) => v === true, { message: "You must accept the vendor rules." }),
   /** Required when submitting without signing in — ignored for authenticated shoppers (profile email wins). */
   email: z.union([z.literal(""), z.string().trim().email().max(200)]).optional()
+}).superRefine((body, ctx) => {
+  if (!isCoordinateInGhana(body.locationLat, body.locationLng)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Your GPS location must be inside Ghana. Tap “Use my current location” again.",
+      path: ["locationLat"]
+    });
+  }
 });
 
 export const adminVendorApplicationsQuerySchema = z.object({
