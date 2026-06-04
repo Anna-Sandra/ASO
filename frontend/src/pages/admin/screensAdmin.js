@@ -942,7 +942,6 @@ export function AdminPage() {
   const [addRiderBusy, setAddRiderBusy] = useState(false);
   const [addRiderForm, setAddRiderForm] = useState({
     email: "",
-    password: "",
     displayName: "",
     phone: "",
     vehicleType: ""
@@ -952,7 +951,6 @@ export function AdminPage() {
   const [addVendorBusy, setAddVendorBusy] = useState(false);
   const [addVendorForm, setAddVendorForm] = useState({
     email: "",
-    sendPasswordSetup: true,
     fullName: "",
     shopName: "",
     phone: "",
@@ -2325,7 +2323,6 @@ export function AdminPage() {
       return;
     }
     const email = addRiderForm.email.trim().toLowerCase();
-    const password = addRiderForm.password;
     const vt = addRiderForm.vehicleType.trim();
     if (!email || !email.includes("@")) {
       await alert("Enter a valid email.", { variant: "error" });
@@ -2347,9 +2344,9 @@ export function AdminPage() {
           vehicleType: vt
         }
       });
-      toast(data?.message || "Rider account created. Password setup email sent.", { variant: "success" });
+      toast(data?.message || "Rider created. They were emailed an account link.", { variant: "success" });
       setAddRiderOpen(false);
-      setAddRiderForm({ email: "", password: "", displayName: "", phone: "", vehicleType: "" });
+      setAddRiderForm({ email: "", displayName: "", phone: "", vehicleType: "" });
       await loadRiders();
       await loadDashboard();
     } catch (ex) {
@@ -2366,7 +2363,6 @@ export function AdminPage() {
       return;
     }
     const email = addVendorForm.email.trim().toLowerCase();
-    const sendPasswordSetup = Boolean(addVendorForm.sendPasswordSetup);
     const fullName = addVendorForm.fullName.trim();
     const shopName = addVendorForm.shopName.trim();
     const phone = addVendorForm.phone.trim();
@@ -2393,7 +2389,7 @@ export function AdminPage() {
         ...auth,
         json: {
           email,
-          password: sendPasswordSetup ? "send-setup-email" : "",
+          password: "send-setup-email",
           fullName,
           shopName,
           phone,
@@ -2407,7 +2403,6 @@ export function AdminPage() {
       setAddVendorOpen(false);
       setAddVendorForm({
         email: "",
-        sendPasswordSetup: true,
         fullName: "",
         shopName: "",
         phone: "",
@@ -3557,7 +3552,7 @@ export function AdminPage() {
         h(
           "p",
           { key: "h", className: "mb-3 text-xs text-slate-600 dark:text-slate-300" },
-          "Creates a courier account and emails them a secure link to set their own password. Do not share passwords manually."
+          "Creates a courier account and emails them a secure account link. They finish setup from the email — you never set or share a password."
         ),
         h(Field, { key: "em", label: "Email" }, h(TextInput, {
           type: "email",
@@ -3902,7 +3897,7 @@ export function AdminPage() {
         h(
           "p",
           { key: "h", className: "mb-3 text-xs text-slate-600 dark:text-slate-300" },
-          "Creates an approved vendor. Check “Send password setup email” to email a secure set-password link (recommended). Leave unchecked for new emails only: sends the standard vendor activation link instead."
+          "Creates an approved vendor and emails them a secure account link. They finish setup from the email — you never set or share a password."
         ),
         h(Field, { key: "em", label: "Email" }, h(TextInput, {
           type: "email",
@@ -3910,15 +3905,6 @@ export function AdminPage() {
           disabled: addVendorBusy,
           onChange: (e) => setAddVendorForm((f) => ({ ...f, email: e.target.value }))
         })),
-        h("label", { key: "pw-send", className: "flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200" }, [
-          h("input", {
-            type: "checkbox",
-            checked: Boolean(addVendorForm.sendPasswordSetup),
-            disabled: addVendorBusy,
-            onChange: (e) => setAddVendorForm((f) => ({ ...f, sendPasswordSetup: e.target.checked }))
-          }),
-          "Send password setup email (they choose their own password)"
-        ]),
         h(Field, { key: "fn", label: "Contact name" }, h(TextInput, {
           value: addVendorForm.fullName,
           disabled: addVendorBusy,
