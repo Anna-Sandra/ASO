@@ -3553,6 +3553,7 @@ export function ShopPage() {
     const top = [];
     for (const row of rows) {
       if (row.id === "great_value" || row.title === "Great value") greatValue = row;
+      else if (row.id === "top_reviewed" || row.title === "Best reviewed") continue;
       else top.push(row);
     }
     const catId = cat === "all" ? "all" : cat;

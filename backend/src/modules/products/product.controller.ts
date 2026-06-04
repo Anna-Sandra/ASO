@@ -485,16 +485,6 @@ export const recommendProducts = asyncHandler(async (req: Request, res: Response
     });
   }
 
-  const byRated = [...scored].sort((a, b) => b.trustPart - a.trustPart);
-  const ratedPicks = takeUniqueProducts(byRated, used, REC_PER_ROW);
-  if (ratedPicks.length >= REC_MIN_TO_SHOW_ROW) {
-    rails.push({
-      id: "top_reviewed",
-      title: "Best reviewed",
-      picks: ratedPicks
-    });
-  }
-
   const trendingIds = await getTrendingProductIds(80, used);
   if (trendingIds.length) {
     const byId = new Map(
