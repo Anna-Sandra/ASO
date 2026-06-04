@@ -197,7 +197,9 @@ async function migrateConversationKindAndIndex() {
 
 export async function connectDb() {
   mongoose.set("strictQuery", true);
-  mongoose.set("sanitizeFilter", true);
+  // Do not enable sanitizeFilter globally — it wraps $gt/$lt in $eq and breaks valid
+  // server-side queries (e.g. Token expiresAt: { $gt: new Date() }). Request injection
+  // is handled by mongo-sanitize middleware + Zod on inputs.
   await mongoose.connect(env.MONGODB_URI, {
     serverSelectionTimeoutMS: 12_000,
     connectTimeoutMS: 12_000
