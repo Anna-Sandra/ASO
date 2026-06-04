@@ -114,7 +114,15 @@ export function createApp() {
     cors({
       origin: env.APP_ORIGIN,
       credentials: true,
-      allowedHeaders: ["Content-Type", "Authorization", "X-Save-Session", "X-Admin-Secret", "X-Guest-Order-Secret", "X-CSRF-Token"]
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Save-Session",
+        "X-Admin-Secret",
+        "X-Admin-Gate",
+        "X-Guest-Order-Secret",
+        "X-CSRF-Token"
+      ]
     })
   );
 

@@ -5,9 +5,16 @@ import { requireAdminEnvSecret } from "./adminSecret";
 import { env } from "../config/env";
 import { ADMIN_GATE_COOKIE, setAdminAccessGateCookie } from "./adminGate";
 
-function makeReq(secret?: string, cookies?: Record<string, string>): Request {
+function makeReq(
+  secret?: string,
+  cookies?: Record<string, string>,
+  extraHeaders?: Record<string, string>
+): Request {
   return {
-    headers: secret ? { "x-admin-secret": secret } : {},
+    headers: {
+      ...(secret ? { "x-admin-secret": secret } : {}),
+      ...(extraHeaders || {})
+    },
     cookies: cookies || {}
   } as unknown as Request;
 }
@@ -63,3 +70,22 @@ test("requireAdminEnvSecret passes when admin gate cookie is valid", () => {
   (env as { ADMIN_ACCESS_SECRET: string }).ADMIN_ACCESS_SECRET = original;
 });
 
+test("requireAdminEnvSecret passes when X-Admin-Gate header is valid", () => {
+  const original = env.ADMIN_ACCESS_SECRET;
+  (env as { ADMIN_ACCESS_SECRET: string }).ADMIN_ACCESS_SECRET = "top-secret-at-least-24-chars!!";
+  let gate = "";
+  const res = {
+    cookie(name: string, value: string) {
+      if (name === ADMIN_GATE_COOKIE) gate = value;
+    }
+  } as unknown as Response;
+  setAdminAccessGateCookie(res, "507f1f77bcf86cd799439011");
+  const req = makeReq(undefined, {}, { "x-admin-gate": gate });
+  let called = false;
+  requireAdminEnvSecret(req, makeRes(), (err?: unknown) => {
+    assert.equal(err, undefined);
+    called = true;
+  });
+  assert.equal(called, true);
+  (env as { ADMIN_ACCESS_SECRET: string }).ADMIN_ACCESS_SECRET = original;
+});

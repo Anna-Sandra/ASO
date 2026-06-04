@@ -62,6 +62,10 @@ export function AuthProvider({ children }) {
     (data) => {
       if (data?.accessToken) setAccessToken(data.accessToken);
       if (data?.refreshToken) storageSet(StorageKeys.REFRESH_TOKEN, data.refreshToken);
+      if (data?.adminGateToken) storageSet(StorageKeys.ADMIN_GATE_TOKEN, data.adminGateToken);
+      else if (data?.user?.role && data.user.role !== "admin") {
+        storageRemove(StorageKeys.ADMIN_GATE_TOKEN);
+      }
     },
     [setAccessToken]
   );
@@ -113,6 +117,10 @@ export function AuthProvider({ children }) {
         if (cancelled) return;
         if (token) {
           await loadUserForToken(token);
+          const p = decodeJwtPayload(token);
+          if (p?.role === "admin" && !storageGet(StorageKeys.ADMIN_GATE_TOKEN)) {
+            await refreshSessionTokens();
+          }
           return;
         }
         setAccessToken(null);
@@ -266,6 +274,7 @@ export function AuthProvider({ children }) {
     setAccessToken(null);
     storageRemove(StorageKeys.REFRESH_TOKEN);
     storageRemove(StorageKeys.CSRF_TOKEN);
+    storageRemove(StorageKeys.ADMIN_GATE_TOKEN);
   }, [setAccessToken]);
 
   const value = useMemo(

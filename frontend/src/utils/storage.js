@@ -10,7 +10,8 @@ export const StorageKeys = {
   CART: "SHOPIQGH_cart_v1",
   THEME: "SHOPIQGH-theme",
   SAVE_SESSION: "SHOPIQGH_save_session",
-  VENDOR_PROMO_DRAFT: "SHOPIQGH_vendor_promo_draft"
+  VENDOR_PROMO_DRAFT: "SHOPIQGH_vendor_promo_draft",
+  ADMIN_GATE_TOKEN: "SHOPIQGH_admin_gate_token"
 };
 
 const LEGACY_KEYS = {

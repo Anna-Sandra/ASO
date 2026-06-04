@@ -3,6 +3,24 @@ import { sanitizeErrorMessage } from "utils/userFacingError";
 
 const BRAND_CONFIRM = "#7c3aed";
 
+const compactCard = Swal.mixin({
+  width: "18rem",
+  padding: "0.75rem 1rem",
+  buttonsStyling: false,
+  heightAuto: false,
+  backdrop: "rgba(15, 23, 42, 0.35)",
+  customClass: {
+    container: "shopiqgh-swal-container",
+    popup: "shopiqgh-swal-popup",
+    title: "shopiqgh-swal-title",
+    htmlContainer: "shopiqgh-swal-text",
+    icon: "shopiqgh-swal-icon",
+    actions: "shopiqgh-swal-actions",
+    confirmButton: "shopiqgh-swal-btn",
+    cancelButton: "shopiqgh-swal-btn shopiqgh-swal-btn--muted"
+  }
+});
+
 const errorToast = Swal.mixin({
   toast: true,
   position: "top",
@@ -10,6 +28,9 @@ const errorToast = Swal.mixin({
   showConfirmButton: false,
   timer: 5000,
   timerProgressBar: true,
+  customClass: {
+    popup: "shopiqgh-swal-toast"
+  },
   didOpen: (toast) => {
     toast.onmouseenter = Swal.stopTimer;
     toast.onmouseleave = Swal.resumeTimer;
@@ -21,18 +42,15 @@ function prepareErrorText(message) {
   return sanitizeErrorMessage(m, m || "Something went wrong. Please try again.");
 }
 
-/** Modal error (replaces custom alert / inline error banners). */
+/** Compact modal error (replaces large default SweetAlert). */
 export function swalError(message, opts = {}) {
   const text = prepareErrorText(message);
   const title = opts.title != null && String(opts.title).trim() ? String(opts.title).trim() : "Something went wrong";
-  return Swal.fire({
+  return compactCard.fire({
     icon: "error",
     title,
     text,
-    confirmButtonText: opts.confirmButtonText || opts.okLabel || "OK",
-    confirmButtonColor: BRAND_CONFIRM,
-    buttonsStyling: true,
-    heightAuto: false
+    confirmButtonText: opts.confirmButtonText || opts.okLabel || "OK"
   });
 }
 
@@ -44,50 +62,43 @@ export function swalErrorToast(message) {
 
 export function swalWarning(message, opts = {}) {
   const text = prepareErrorText(message);
-  return Swal.fire({
+  return compactCard.fire({
     icon: "warning",
     title: opts.title != null && String(opts.title).trim() ? String(opts.title).trim() : "Please check",
     text,
-    confirmButtonText: opts.confirmButtonText || opts.okLabel || "OK",
-    confirmButtonColor: BRAND_CONFIRM,
-    heightAuto: false
+    confirmButtonText: opts.confirmButtonText || opts.okLabel || "OK"
   });
 }
 
 export function swalConfirm(message, opts = {}) {
   const text = prepareErrorText(message);
-  return Swal.fire({
-    icon: "warning",
-    title: opts.title != null && String(opts.title).trim() ? String(opts.title).trim() : "Just checking",
-    text,
-    showCancelButton: true,
-    confirmButtonText: opts.confirmButtonText || opts.confirmLabel || "OK",
-    cancelButtonText: opts.cancelButtonText || opts.cancelLabel || "Cancel",
-    confirmButtonColor: BRAND_CONFIRM,
-    cancelButtonColor: "#64748b",
-    reverseButtons: true,
-    heightAuto: false
-  }).then((r) => Boolean(r.isConfirmed));
+  return compactCard
+    .fire({
+      icon: "warning",
+      title: opts.title != null && String(opts.title).trim() ? String(opts.title).trim() : "Just checking",
+      text,
+      showCancelButton: true,
+      confirmButtonText: opts.confirmButtonText || opts.confirmLabel || "OK",
+      cancelButtonText: opts.cancelButtonText || opts.cancelLabel || "Cancel",
+      reverseButtons: true
+    })
+    .then((r) => Boolean(r.isConfirmed));
 }
 
 export function swalSuccess(message, opts = {}) {
-  return Swal.fire({
+  return compactCard.fire({
     icon: "success",
     title: opts.title || "Done",
     text: String(message ?? "").trim(),
-    confirmButtonText: opts.okLabel || "OK",
-    confirmButtonColor: BRAND_CONFIRM,
-    heightAuto: false
+    confirmButtonText: opts.okLabel || "OK"
   });
 }
 
 export function swalInfo(message, opts = {}) {
-  return Swal.fire({
+  return compactCard.fire({
     icon: "info",
     title: opts.title || "Notice",
     text: String(message ?? "").trim(),
-    confirmButtonText: opts.okLabel || "OK",
-    confirmButtonColor: BRAND_CONFIRM,
-    heightAuto: false
+    confirmButtonText: opts.okLabel || "OK"
   });
 }

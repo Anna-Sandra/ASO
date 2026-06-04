@@ -28,6 +28,7 @@ const KNOWN_ACTIONABLE = [
   [/proof photo/i, "Enter the customer’s 6-digit delivery code and optional details, then submit."],
   [/dropoffLatitude|dropoffLongitude|delivery location/i, "At checkout, enter your delivery address and tap Use my location so the courier can find you on the map."],
   [/Use my location|GPS/i, "Tap Use my location on checkout and allow location access in your browser, or move to an open area and try again."],
+  [/admin session could not be verified|admin access verification/i, "Sign out, sign in again with your admin account, then try once more. If it still fails, refresh the page."],
   [/sign in|Unauthorized/i, "Sign in with your email and password, then try again."],
   [/verify your email|email verification/i, "Open your email inbox, find the SHOPIQGH code or link, and complete verification. Then sign in again."],
   [/paystack|payment/i, "Complete payment on the Paystack screen. If it failed, check your card or MoMo balance and try Pay now again."],

@@ -42,6 +42,11 @@ function shouldSkip401Refresh(path) {
   return p === "/api/auth/refresh" || p === "/api/auth/login" || p === "/api/auth/register" || p === "/api/auth/logout";
 }
 
+function needsAdminGate(path) {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return p.startsWith("/api/admin");
+}
+
 function needsCsrf(path, method = "GET") {
   const p = path.startsWith("/") ? path : `/${path}`;
   const m = String(method || "GET").toUpperCase();
@@ -111,6 +116,12 @@ export async function apiFetch(path, opts = {}) {
   if (needsCsrf(path, opts.method || "GET")) {
     const csrfToken = await ensureCsrfToken();
     headers.set("X-CSRF-Token", csrfToken);
+  }
+  if (needsAdminGate(path)) {
+    const gate = storageGet(StorageKeys.ADMIN_GATE_TOKEN);
+    if (gate && !headers.has("X-Admin-Gate")) {
+      headers.set("X-Admin-Gate", gate);
+    }
   }
   const init = {
     ...opts,

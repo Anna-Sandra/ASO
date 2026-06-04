@@ -39,7 +39,11 @@ import {
   tryVerifyBootstrapRefreshToken
 } from "./jwt";
 import { issueCsrfToken } from "../../middleware/csrf";
-import { clearAdminAccessGateCookie, setAdminAccessGateCookie } from "../../middleware/adminGate";
+import {
+  clearAdminAccessGateCookie,
+  createAdminGateToken,
+  setAdminAccessGateCookie
+} from "../../middleware/adminGate";
 import { allowAuthEmailAttempt } from "../../utils/authEmailRateLimit";
 import { generateReferralCode, REFERRAL_REWARD_POINTS_EACH } from "../../utils/referral";
 import { resetPasswordSchema } from "./auth.schemas";
@@ -141,6 +145,12 @@ async function issueRefreshToken(userId: mongoose.Types.ObjectId) {
   return { refreshToken, expiresAt };
 }
 
+function adminGateJsonExtras(userId: string, role: string): { adminGateToken?: string } {
+  if (role !== "admin") return {};
+  const adminGateToken = createAdminGateToken(userId);
+  return adminGateToken ? { adminGateToken } : {};
+}
+
 async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, extra?: Record<string, unknown>) {
   const role = normalizeUserRole(user.role);
   const accessPayload = buildAccessTokenPayloadForDbUser(user._id.toString(), role, user.email);
@@ -180,6 +190,7 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
         : {}),
       ...(accessPayload.al ? { adminLevel: accessPayload.al } : {})
     },
+    ...adminGateJsonExtras(user._id.toString(), role),
     ...extra
   });
 }
@@ -210,6 +221,7 @@ function sendEnvBootstrapAdminLoginSuccess(res: Response, extra?: Record<string,
       bankAccountName: u.bankAccountName,
       adminLevel: "super" as const
     },
+    ...adminGateJsonExtras(sub, "admin"),
     ...extra
   });
 }
@@ -846,7 +858,11 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
       const bootstrapRefresh = signBootstrapRefreshToken();
       res.cookie("refreshToken", bootstrapRefresh, refreshCookieOptions());
       setAdminAccessGateCookie(res, sub);
-      res.json({ accessToken, refreshToken: bootstrapRefresh });
+      res.json({
+        accessToken,
+        refreshToken: bootstrapRefresh,
+        ...adminGateJsonExtras(sub, "admin")
+      });
       return;
     }
 
@@ -888,7 +904,11 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
     res.cookie("refreshToken", rotated.refreshToken, refreshCookieOptions());
     if (role === "admin") setAdminAccessGateCookie(res, user._id.toString());
     else clearAdminAccessGateCookie(res);
-    res.json({ accessToken, refreshToken: rotated.refreshToken });
+    res.json({
+      accessToken,
+      refreshToken: rotated.refreshToken,
+      ...adminGateJsonExtras(user._id.toString(), role)
+    });
     return;
   }
 

@@ -1,0 +1,85 @@
+/* Compact SHOPIQGH notice cards (SweetAlert2) */
+.shopiqgh-swal-popup {
+  border-radius: 0.75rem !important;
+  padding: 0.85rem 1rem 0.75rem !important;
+  box-shadow:
+    0 10px 25px -5px rgb(15 23 42 / 0.12),
+    0 4px 10px -4px rgb(15 23 42 / 0.08) !important;
+  font-family: inherit;
+}
+
+.shopiqgh-swal-title {
+  font-size: 0.9375rem !important;
+  font-weight: 600 !important;
+  color: rgb(15 23 42) !important;
+  padding: 0 !important;
+  margin: 0 0 0.35rem !important;
+  line-height: 1.35 !important;
+}
+
+.shopiqgh-swal-text {
+  font-size: 0.8125rem !important;
+  line-height: 1.45 !important;
+  color: rgb(71 85 105) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.shopiqgh-swal-icon {
+  width: 2.25rem !important;
+  height: 2.25rem !important;
+  margin: 0.15rem auto 0.5rem !important;
+  border-width: 2px !important;
+}
+
+.shopiqgh-swal-icon .swal2-icon-content {
+  font-size: 1.1rem !important;
+}
+
+.shopiqgh-swal-actions {
+  margin: 0.65rem 0 0 !important;
+  gap: 0.4rem !important;
+}
+
+.shopiqgh-swal-btn {
+  font-size: 0.8125rem !important;
+  font-weight: 600 !important;
+  padding: 0.4rem 0.85rem !important;
+  border-radius: 0.5rem !important;
+  margin: 0 !important;
+  background: #7c3aed !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+.shopiqgh-swal-btn:hover {
+  background: #6d28d9 !important;
+}
+
+.shopiqgh-swal-btn--muted {
+  background: rgb(241 245 249) !important;
+  color: rgb(51 65 85) !important;
+}
+
+.shopiqgh-swal-btn--muted:hover {
+  background: rgb(226 232 240) !important;
+}
+
+.swal2-container.shopiqgh-swal-container {
+  padding: 0.75rem !important;
+}
+
+/* Error toasts — slim strip */
+.shopiqgh-swal-toast.swal2-popup {
+  width: auto !important;
+  max-width: min(20rem, calc(100vw - 1.5rem)) !important;
+  padding: 0.5rem 0.75rem !important;
+  font-size: 0.8125rem !important;
+}
+
+.shopiqgh-swal-toast .swal2-title {
+  font-size: 0.8125rem !important;
+  font-weight: 500 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}

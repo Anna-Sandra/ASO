@@ -22,7 +22,8 @@ function gateSigningKey(): string | null {
   return secret.length >= 24 ? secret : null;
 }
 
-function signAdminGate(userId: string): string | null {
+/** Signed gate token for httpOnly cookie or `X-Admin-Gate` (cross-origin admin SPA). */
+export function createAdminGateToken(userId: string): string | null {
   const key = gateSigningKey();
   if (!key || !userId) return null;
   const exp = Date.now() + GATE_TTL_MS;
@@ -51,7 +52,7 @@ export function verifyAdminGateCookie(value: string | undefined): boolean {
 
 /** httpOnly cookie so the admin SPA never needs a build-time admin secret. */
 export function setAdminAccessGateCookie(res: Response, userId: string) {
-  const token = signAdminGate(userId);
+  const token = createAdminGateToken(userId);
   if (!token) return;
   res.cookie(ADMIN_GATE_COOKIE, token, adminGateCookieOptions());
 }

@@ -48,6 +48,7 @@ function persistTokens(data) {
   if (!data?.accessToken) return false;
   storageSet(StorageKeys.ACCESS_TOKEN, data.accessToken);
   if (data.refreshToken) storageSet(StorageKeys.REFRESH_TOKEN, data.refreshToken);
+  if (data.adminGateToken) storageSet(StorageKeys.ADMIN_GATE_TOKEN, data.adminGateToken);
   emitTokenUpdate(data.accessToken);
   return true;
 }
@@ -184,6 +185,7 @@ export async function refreshSessionTokens() {
 
     storageRemove(StorageKeys.ACCESS_TOKEN);
     storageRemove(StorageKeys.REFRESH_TOKEN);
+    storageRemove(StorageKeys.ADMIN_GATE_TOKEN);
     emitTokenUpdate(null);
     return null;
   }).finally(() => {
