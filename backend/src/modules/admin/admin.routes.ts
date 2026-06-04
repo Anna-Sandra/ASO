@@ -32,6 +32,7 @@ import {
   getAdminRevenue,
   getAdminSellerBalances,
   getAdminUserSummary,
+  demoteUserToBuyerAccess,
   grantAdmin,
   revokeAdmin,
   listAdminConversations,
@@ -124,6 +125,7 @@ router.get("/badges", p("dashboard"), adminBadges);
 router.get("/users", p("users"), validateQuery(adminUsersQuerySchema), listAdminUsers);
 router.post("/users/grant-admin", requireSuperAdmin, validateBody(grantAdminBodySchema), grantAdmin);
 router.post("/users/revoke-admin", requireSuperAdmin, validateBody(grantAdminBodySchema), revokeAdmin);
+router.post("/users/demote-to-buyer", validateBody(grantAdminBodySchema), demoteUserToBuyerAccess);
 router.patch("/users/:id", p("users", "users_manage"), validateBody(adminPatchUserSchema), patchAdminUser);
 router.post(
   "/sellers/:id/reactivate-listings",

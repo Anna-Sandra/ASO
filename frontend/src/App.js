@@ -86,7 +86,7 @@ function VendorGate({ children }) {
     if (user.role === "rider") {
       return h(Navigate, { to: "/rider", replace: true });
     }
-    return h(Navigate, { to: "/login", replace: true, state: { from: "vendor" } });
+    return h(Navigate, { to: "/", replace: true });
   }
   return children;
 }
@@ -127,8 +127,11 @@ function AdminGate({ children }) {
   if (!accessToken) {
     return h(Navigate, { to: "/admin/login", replace: true, state: { from: "/admin" } });
   }
-  if (user && user.role !== "admin") {
+  if (user && user.role === "buyer") {
     return h(Navigate, { to: "/", replace: true });
+  }
+  if (user && user.role !== "admin") {
+    return h(Navigate, { to: "/login", replace: true, state: { from: "/admin" } });
   }
   return children;
 }
@@ -147,8 +150,11 @@ function RiderGate({ children }) {
   if (user?.role === "seller") {
     return h(Navigate, { to: "/vendor/dashboard", replace: true });
   }
-  if (user?.role !== "rider") {
+  if (user?.role === "buyer") {
     return h(Navigate, { to: "/", replace: true });
+  }
+  if (user?.role !== "rider") {
+    return h(Navigate, { to: "/login", replace: true, state: { from: "rider" } });
   }
   return children;
 }

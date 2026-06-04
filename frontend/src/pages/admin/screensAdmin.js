@@ -1814,12 +1814,31 @@ export function AdminPage() {
     await grantUserAdmin({ userId: u.id });
   };
 
+  const canDemoteRoles = isSuperAdmin || canAdmin("users_manage");
+
+  const demoteUserToBuyerAccess = async (body, reloadFns = [loadUsers, loadRiders, loadSellers]) => {
+    if (!auth || !canDemoteRoles) return;
+    try {
+      const d = await apiFetch("/api/admin/users/demote-to-buyer", { method: "POST", ...auth, json: body });
+      if (d?.already) {
+        toast("That account is already a buyer.");
+      } else {
+        toast(d?.message || "User moved to buyer account.", { variant: "success", duration: 7000 });
+      }
+      for (const fn of reloadFns) {
+        if (typeof fn === "function") await fn();
+      }
+    } catch (ex) {
+      await alert(apiErrorMessage(ex, "Could not move user to buyer"), { variant: "error" });
+    }
+  };
+
   const revokeUserAdmin = async (body) => {
     if (!auth || !isSuperAdmin) return;
     try {
       const d = await apiFetch("/api/admin/users/revoke-admin", { method: "POST", ...auth, json: body });
       if (d?.already) toast("That account is not an admin.");
-      else toast("Admin access removed.", { variant: "success" });
+      else toast(d?.message || "Admin access removed. They are now a buyer.", { variant: "success", duration: 7000 });
       await loadUsers();
       await loadRiders();
     } catch (ex) {
@@ -1831,11 +1850,24 @@ export function AdminPage() {
     if (!isSuperAdmin) return;
     const label = u.displayName || u.email || "this user";
     const ok = await confirm(
-      `Remove admin access from ${label}? They become a buyer (or seller if they still have listings) and will lose access to this dashboard after signing in again.`,
-      { title: "Remove admin", confirmLabel: "Remove access" }
+      `Remove admin access from ${label}? They become a buyer and will see a message on next sign-in. They cannot use the admin dashboard anymore.`,
+      { title: "Remove admin", confirmLabel: "Move to buyer" }
     );
     if (!ok) return;
     await revokeUserAdmin({ userId: u.id });
+  };
+
+  const onDemoteToBuyer = async (u, roleKind) => {
+    if (!canDemoteRoles) return;
+    const label = u.displayName || u.email || "this user";
+    const roleName =
+      roleKind === "admin" ? "administrator" : roleKind === "seller" ? "seller" : roleKind === "rider" ? "courier" : "special";
+    const ok = await confirm(
+      `Move ${label} to a buyer account? They lose ${roleName} access and will see a message when they sign in again. They cannot open the ${roleName} dashboard.`,
+      { title: `Remove ${roleName} access`, confirmLabel: "Move to buyer" }
+    );
+    if (!ok) return;
+    await demoteUserToBuyerAccess({ userId: u.id });
   };
 
   const onBanUser = async (u) => {
@@ -3242,6 +3274,32 @@ export function AdminPage() {
                                   "Remove admin"
                                 )
                               : null,
+                            canDemoteRoles && u.role === "seller"
+                              ? h(
+                                  "button",
+                                  {
+                                    key: "rs",
+                                    type: "button",
+                                    onClick: () => onDemoteToBuyer(u, "seller"),
+                                    className:
+                                      "shrink-0 whitespace-nowrap rounded-xl border border-slate-300/50 bg-slate-500/10 px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-500/20 dark:text-slate-200"
+                                  },
+                                  "Remove seller"
+                                )
+                              : null,
+                            canDemoteRoles && u.role === "rider"
+                              ? h(
+                                  "button",
+                                  {
+                                    key: "rr",
+                                    type: "button",
+                                    onClick: () => onDemoteToBuyer(u, "rider"),
+                                    className:
+                                      "shrink-0 whitespace-nowrap rounded-xl border border-slate-300/50 bg-slate-500/10 px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-500/20 dark:text-slate-200"
+                                  },
+                                  "Remove rider"
+                                )
+                              : null,
                             (u.role !== "admin" || isSuperAdmin) &&
                             (u.accountStatus === "active"
                               ? u.adminLevel !== "super"
@@ -3565,6 +3623,19 @@ export function AdminPage() {
                                   },
                                   "Activate"
                                 ),
+                            canDemoteRoles
+                              ? h(
+                                  "button",
+                                  {
+                                    key: "rb",
+                                    type: "button",
+                                    className:
+                                      "shrink-0 rounded-xl border border-slate-300/50 bg-slate-500/10 px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-500/20 dark:text-slate-200",
+                                    onClick: () => onDemoteToBuyer(r, "rider")
+                                  },
+                                  "Remove rider"
+                                )
+                              : null,
                             isSuperAdmin
                               ? h(
                                   "button",
@@ -4327,8 +4398,16 @@ export function AdminPage() {
                             variant: "ghost",
                             className: "!min-h-[36px] !px-3 !text-xs",
                             onClick: () => onOpenUserDetails(u)
-                          }, "View details")
-                        ]
+                          }, "View details"),
+                          canDemoteRoles
+                            ? h(Button, {
+                                key: "dem",
+                                variant: "ghost",
+                                className: "!min-h-[36px] !px-3 !text-xs",
+                                onClick: () => onDemoteToBuyer(u, "seller")
+                              }, "Remove seller")
+                            : null
+                        ].filter(Boolean)
                       : sellersTab === "verified"
                         ? [
                             h(Button, {
@@ -4347,8 +4426,16 @@ export function AdminPage() {
                               variant: "danger",
                               className: "!min-h-[36px] !px-3 !text-xs",
                               onClick: () => onVerifySeller(u, false)
-                            }, "Revoke verification")
-                          ]
+                            }, "Revoke verification"),
+                            canDemoteRoles
+                              ? h(Button, {
+                                  key: "dem",
+                                  variant: "ghost",
+                                  className: "!min-h-[36px] !px-3 !text-xs",
+                                  onClick: () => onDemoteToBuyer(u, "seller")
+                                }, "Remove seller")
+                              : null
+                          ].filter(Boolean)
                         : [
                             h(Button, {
                               key: "d",
@@ -4360,8 +4447,16 @@ export function AdminPage() {
                               key: "res",
                               className: "!min-h-[36px] !px-3 !text-xs",
                               onClick: () => patchUser(u.id, { accountStatus: "active" }, loadSellers)
-                            }, "Reinstate")
-                          ]
+                            }, "Reinstate"),
+                            canDemoteRoles
+                              ? h(Button, {
+                                  key: "dem",
+                                  variant: "ghost",
+                                  className: "!min-h-[36px] !px-3 !text-xs",
+                                  onClick: () => onDemoteToBuyer(u, "seller")
+                                }, "Remove seller")
+                              : null
+                          ].filter(Boolean)
                   )
                 ]
               )

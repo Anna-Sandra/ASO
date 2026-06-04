@@ -80,6 +80,9 @@ export function AuthProvider({ children }) {
         if (me?.user) {
           setUser(mergeMeUser(me.user, token));
           setAccessToken(token);
+          if (me.user.roleDemotionNotice) {
+            storageRemove(StorageKeys.ADMIN_GATE_TOKEN);
+          }
           return true;
         }
       } catch {

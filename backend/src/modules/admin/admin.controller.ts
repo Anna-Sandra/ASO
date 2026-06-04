@@ -65,8 +65,14 @@ import {
   mergeAdminPermissionsWithUserOverrides,
   pruneAdminPermissionOverrides,
   resolveAdminPermissions,
-  resolveUserAdminPermissionOverrides
+  resolveUserAdminPermissionOverrides,
+  requestHasAdminPermission
 } from "./adminPermissions";
+import {
+  assertCanDemoteAdminTarget,
+  demoteUserToBuyer,
+  demotedFromRoleForUser
+} from "./demoteUserToBuyer";
 import { createPaystackRefund, getPaystackRefundById } from "../payments/payments.controller";
 import { applyProcessedPaystackRefundToOrder, isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
 import { conversationMessageSchema } from "../conversations/conversation.schemas";
@@ -596,23 +602,67 @@ export const revokeAdmin = asyncHandler(async (req: Request, res: Response) => {
     throw new HttpError(403, "Cannot remove admin from a platform super-admin account.");
   }
   const admins = await User.countDocuments({ role: "admin" });
-  if (admins <= 1) {
-    throw new HttpError(400, "Cannot remove the only administrator. Grant another admin first.");
-  }
-  const listingCount = await Product.countDocuments({ sellerId: u._id });
-  const nextRole: UserDoc["role"] = listingCount > 0 ? "seller" : "buyer";
-  u.role = nextRole;
-  (u as { adminPermissions?: Record<string, boolean> }).adminPermissions = undefined;
-  u.markModified("adminPermissions");
-  await u.save();
+  assertCanDemoteAdminTarget(uEmail, admins);
+  const { message } = await demoteUserToBuyer(u, { previousRole: "admin" });
   const who = ((u.displayName || "").trim() || uEmail || u._id.toString()).slice(0, 80);
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "admin.revoke",
     title: `Removed admin — ${who}`,
-    detail: `Now ${nextRole} · ${(uEmail || "").trim() || "—"}`
+    detail: `Now buyer · ${(uEmail || "").trim() || "—"}`
   });
-  res.json({ ok: true, user: { id: u._id.toString(), role: nextRole } });
+  res.json({
+    ok: true,
+    user: { id: u._id.toString(), role: "buyer" },
+    previousRole: "admin",
+    message
+  });
+});
+
+export const demoteUserToBuyerAccess = asyncHandler(async (req: Request, res: Response) => {
+  const body = grantAdminBodySchema.parse(req.body);
+  let u: HydratedDocument<UserDoc> | null;
+  if ("userId" in body) {
+    if (!mongoose.isValidObjectId(body.userId)) throw new HttpError(400, "Invalid user id");
+    u = await User.findById(body.userId);
+  } else {
+    u = await User.findOne({ email: body.email.trim().toLowerCase() });
+  }
+  if (!u) throw new HttpError(404, "User not found");
+  const current = normalizeUserRole(u.role);
+  const from = demotedFromRoleForUser(current);
+  if (!from) {
+    res.json({ ok: true, already: true, user: { id: u._id.toString(), role: "buyer" } });
+    return;
+  }
+
+  if (from === "admin") {
+    if (req.user?.adminLevel !== "super") {
+      throw new HttpError(403, "Only the platform super admin can remove administrator access.");
+    }
+    if (String(u._id) === String(req.user?.id)) {
+      throw new HttpError(400, "You cannot remove your own admin access.");
+    }
+    const admins = await User.countDocuments({ role: "admin" });
+    assertCanDemoteAdminTarget((u as { email?: string }).email, admins);
+  } else if (!requestHasAdminPermission(req, "users_manage")) {
+    throw new HttpError(403, "You do not have permission to change user roles.");
+  }
+
+  const { message, previousRole } = await demoteUserToBuyer(u, { previousRole: from });
+  const label = ((u.displayName || "").trim() || (u as { email?: string }).email || u._id.toString()).slice(0, 80);
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: `user.demote.${previousRole}`,
+    title: `Moved to buyer — ${label}`,
+    detail: `Was ${previousRole} · ${((u as { email?: string }).email || "").trim() || "—"}`
+  });
+  res.json({
+    ok: true,
+    user: { id: u._id.toString(), role: "buyer" },
+    previousRole,
+    message
+  });
 });
 
 export const listAdminProducts = asyncHandler(async (req: Request, res: Response) => {

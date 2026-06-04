@@ -78,6 +78,12 @@ export interface UserDoc {
   referralBonusGrantedAt?: Date | null;
   /** Limited admin only: per-user overrides of platform `adminPermissions` (e.g. disable payments for one admin). */
   adminPermissions?: Record<string, boolean>;
+  /** Shown once after admin demotes this user to buyer (cleared when they dismiss). */
+  roleDemotionNotice?: {
+    fromRole: "admin" | "seller" | "rider";
+    message: string;
+    at: Date;
+  } | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -129,7 +135,15 @@ const userSchema = new Schema<UserDoc>(
     referralCode: { type: String, trim: true, uppercase: true, maxlength: 12, unique: true, sparse: true },
     referredByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true, sparse: true },
     referralBonusGrantedAt: { type: Date, default: null },
-    adminPermissions: { type: Schema.Types.Mixed, default: undefined }
+    adminPermissions: { type: Schema.Types.Mixed, default: undefined },
+    roleDemotionNotice: {
+      type: {
+        fromRole: { type: String, enum: ["admin", "seller", "rider"], required: true },
+        message: { type: String, required: true, maxlength: 500 },
+        at: { type: Date, required: true }
+      },
+      default: null
+    }
   },
   { timestamps: true }
 );

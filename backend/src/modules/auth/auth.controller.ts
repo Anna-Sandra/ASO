@@ -107,6 +107,17 @@ function pickProfileFromUser(
   };
 }
 
+function serializeRoleDemotionNotice(u: LeanUser): { fromRole: string; message: string; at: string } | null {
+  const n = (u as { roleDemotionNotice?: { fromRole?: string; message?: string; at?: Date } | null })
+    .roleDemotionNotice;
+  if (!n?.fromRole || !n.message?.trim()) return null;
+  return {
+    fromRole: n.fromRole,
+    message: n.message.trim(),
+    at: n.at ? new Date(n.at).toISOString() : new Date().toISOString()
+  };
+}
+
 const SALT_ROUNDS = 12;
 const PASSWORD_OTP_TTL_MS = 10 * 60 * 1000;
 const EMAIL_VERIFY_OTP_TTL_MS = 10 * 60 * 1000;
@@ -188,7 +199,8 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
             vendorBilling
           }
         : {}),
-      ...(accessPayload.al ? { adminLevel: accessPayload.al } : {})
+      ...(accessPayload.al ? { adminLevel: accessPayload.al } : {}),
+      roleDemotionNotice: serializeRoleDemotionNotice(user as LeanUser)
     },
     ...adminGateJsonExtras(user._id.toString(), role),
     ...extra
@@ -712,9 +724,19 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         : {}),
       ...(role === "admin" && req.user?.adminLevel
         ? { adminLevel: req.user.adminLevel }
-        : {})
+        : {}),
+      roleDemotionNotice: serializeRoleDemotionNotice(user as LeanUser)
     }
   });
+});
+
+export const ackRoleDemotionNotice = asyncHandler(async (req: Request, res: Response) => {
+  const user = await User.findById(req.user!.id);
+  if (!user) throw new HttpError(404, "We couldn't find your account. Please sign in again.");
+  (user as { roleDemotionNotice?: null }).roleDemotionNotice = null;
+  user.markModified("roleDemotionNotice");
+  await user.save();
+  res.json({ ok: true });
 });
 
 export const updateProfile = asyncHandler(async (req: Request, res: Response) => {

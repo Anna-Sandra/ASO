@@ -1852,7 +1852,7 @@ export function BuyerLayout({
 }) {
   const { dark, toggle } = useTheme();
   const { count } = useCart();
-  const { accessToken, logout, user } = useAuth();
+  const { accessToken, logout, user, setUser } = useAuth();
   const nav = useNavigate();
   const [asideOpen, setAsideOpen] = useState(false);
 
@@ -1943,6 +1943,29 @@ export function BuyerLayout({
       },
       "Rider application pending review"
     );
+
+  const dismissRoleDemotionNotice = async () => {
+    if (!accessToken) return;
+    try {
+      await apiFetch("/api/auth/ack-role-notice", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+    } catch {
+      /* still hide locally */
+    }
+    setUser((prev) => (prev ? { ...prev, roleDemotionNotice: null } : prev));
+  };
+
+  const roleDemotionBanner =
+    accessToken &&
+    user?.roleDemotionNotice?.message &&
+    h(InlineNotice, {
+      key: "role-demote",
+      variant: "warning",
+      className: "mb-3",
+      onDismiss: () => void dismissRoleDemotionNotice()
+    }, user.roleDemotionNotice.message);
 
   const profileChip =
     accessToken &&
@@ -2123,6 +2146,7 @@ export function BuyerLayout({
                   h("div", { key: "sf-actions", className: "ml-auto flex flex-wrap items-center justify-end gap-1 sm:gap-2" }, headerActionsSf)
                 ]
               ),
+              roleDemotionBanner,
               vendorPendingBanner,
               riderPendingBanner,
               h(
@@ -2261,6 +2285,7 @@ export function BuyerLayout({
               buyerTabsScrollWrap(topNavLinks)
             )
           ]),
+          roleDemotionBanner,
           vendorPendingBanner,
           riderPendingBanner,
           !hideSearch &&

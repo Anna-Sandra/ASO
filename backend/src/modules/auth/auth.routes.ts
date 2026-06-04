@@ -6,6 +6,7 @@ import { protect } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import {
+  ackRoleDemotionNotice,
   activateAccount,
   csrfToken,
   forgotPassword,
@@ -74,6 +75,7 @@ router.post("/forgot-password", forgotPasswordLimiter, validateBody(forgotPasswo
 router.post("/reset-password", authLimiter, validateBody(resetPasswordSchema), resetPassword);
 
 router.get("/me", protect, requireActiveAccount, getMe);
+router.post("/ack-role-notice", protect, requireActiveAccount, ackRoleDemotionNotice);
 router.get("/referral", protect, requireActiveAccount, getReferralInfo);
 router.patch("/profile", protect, requireActiveAccount, validateBody(profileUpdateSchema), updateProfile);
 /** Account deletion is registered on the root app in `app.ts` (POST /api/auth/delete-account, etc.). */
