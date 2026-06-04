@@ -11,7 +11,11 @@ export const adminPermissionsPatchSchema = z
 export const adminPatchUserSchema = z.object({
   accountStatus: z.enum(["active", "suspended", "banned"]).optional(),
   sellerVerified: z.boolean().optional(),
-  vendorSubscriptionExempt: z.boolean().optional()
+  vendorSubscriptionExempt: z.boolean().optional(),
+  /** Super admin only: per-user overrides for limited admins (e.g. disable payments for one person). */
+  adminPermissions: adminPermissionsPatchSchema,
+  /** Super admin only: remove all per-user overrides (use platform defaults). */
+  clearAdminPermissionOverrides: z.boolean().optional()
 });
 
 /** Super admin: promote a user to role `admin` by id or by email. */

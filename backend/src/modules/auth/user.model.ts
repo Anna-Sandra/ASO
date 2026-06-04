@@ -76,6 +76,8 @@ export interface UserDoc {
   referredByUserId?: mongoose.Types.ObjectId | null;
   /** When invitee received first-order referral bonus. */
   referralBonusGrantedAt?: Date | null;
+  /** Limited admin only: per-user overrides of platform `adminPermissions` (e.g. disable payments for one admin). */
+  adminPermissions?: Record<string, boolean>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -126,7 +128,8 @@ const userSchema = new Schema<UserDoc>(
     rewardPoints: { type: Number, default: 0, min: 0 },
     referralCode: { type: String, trim: true, uppercase: true, maxlength: 12, unique: true, sparse: true },
     referredByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true, sparse: true },
-    referralBonusGrantedAt: { type: Date, default: null }
+    referralBonusGrantedAt: { type: Date, default: null },
+    adminPermissions: { type: Schema.Types.Mixed, default: undefined }
   },
   { timestamps: true }
 );

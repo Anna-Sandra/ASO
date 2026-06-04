@@ -927,6 +927,16 @@ export function AdminPage() {
   const [addAdminBusy, setAddAdminBusy] = useState(false);
   const usersLimit = 20;
   const [viewUser, setViewUser] = useState(null);
+  const [adminUserPermEdit, setAdminUserPermEdit] = useState(null);
+  const [savingAdminUserPerms, setSavingAdminUserPerms] = useState(false);
+
+  useEffect(() => {
+    if (viewUser?.permissionInfo?.effective) {
+      setAdminUserPermEdit({ ...viewUser.permissionInfo.effective });
+    } else {
+      setAdminUserPermEdit(null);
+    }
+  }, [viewUser?.user?.id, viewUser?.permissionInfo]);
 
   /* Riders (delivery — not listed under Users) */
   const [riders, setRiders] = useState([]);
@@ -1695,6 +1705,50 @@ export function AdminPage() {
   }
 
   /* ---------------- Actions ---------------- */
+
+  const saveAdminUserPermissions = async () => {
+    if (!auth || !isSuperAdmin || !viewUser?.user?.id || !viewUser?.permissionInfo || !adminUserPermEdit) return;
+    const global = viewUser.permissionInfo.global;
+    const overrides = {};
+    for (const item of viewUser.permissionInfo.catalog || []) {
+      const key = item.key;
+      if (adminUserPermEdit[key] !== global[key]) overrides[key] = adminUserPermEdit[key];
+    }
+    try {
+      setSavingAdminUserPerms(true);
+      await apiFetch(`/api/admin/users/${viewUser.user.id}`, {
+        method: "PATCH",
+        ...auth,
+        json: { adminPermissions: overrides }
+      });
+      toast("Admin access updated for this user.", { variant: "success" });
+      const d = await apiFetch(`/api/admin/users/${viewUser.user.id}/summary`, auth);
+      setViewUser(d);
+    } catch (ex) {
+      await alert(apiErrorMessage(ex, "Could not save admin access"), { variant: "error" });
+    } finally {
+      setSavingAdminUserPerms(false);
+    }
+  };
+
+  const clearAdminUserPermissionOverrides = async () => {
+    if (!auth || !isSuperAdmin || !viewUser?.user?.id) return;
+    try {
+      setSavingAdminUserPerms(true);
+      await apiFetch(`/api/admin/users/${viewUser.user.id}`, {
+        method: "PATCH",
+        ...auth,
+        json: { clearAdminPermissionOverrides: true }
+      });
+      toast("This admin now uses the global access rules only.", { variant: "success" });
+      const d = await apiFetch(`/api/admin/users/${viewUser.user.id}/summary`, auth);
+      setViewUser(d);
+    } catch (ex) {
+      await alert(apiErrorMessage(ex, "Could not reset admin access"), { variant: "error" });
+    } finally {
+      setSavingAdminUserPerms(false);
+    }
+  };
 
   const patchUser = async (id, body, reloadFn = loadUsers) => {
     if (!canAdmin("users_manage")) {
@@ -6553,7 +6607,12 @@ export function AdminPage() {
   const userModal = viewUser
     ? h(
         Modal,
-        { open: true, onClose: () => setViewUser(null), title: "User activity", size: "md" },
+        {
+          open: true,
+          onClose: () => setViewUser(null),
+          title: "User activity",
+          size: viewUser.permissionInfo ? "lg" : "md"
+        },
         [
           h(
             "div",
@@ -6602,6 +6661,113 @@ export function AdminPage() {
               h(StatCard, { key: "r", label: "Reports mentioning user", value: String(viewUser.activity.reportsMentioningUser), icon: AlertTriangle })
             ]
           ),
+          viewUser.permissionInfo &&
+          adminUserPermEdit &&
+          isSuperAdmin &&
+          viewUser.user.role === "admin" &&
+          viewUser.user.adminLevel === "normal"
+            ? h("div", { key: "admin-perms", className: "mt-4 space-y-3 border-t border-slate-200/80 pt-4 dark:border-white/10" }, [
+                h(
+                  "p",
+                  { key: "t", className: "font-display text-sm font-bold text-slate-900 dark:text-white" },
+                  "Access for this admin"
+                ),
+                h(
+                  "p",
+                  { key: "hint", className: "text-xs text-slate-500 dark:text-slate-400" },
+                  "Change access for this person only. Other admins keep the global rules under Settings → Admin access."
+                ),
+                h("div", { key: "quick", className: "flex flex-wrap gap-2" }, [
+                  adminUserPermEdit.payments
+                    ? h(
+                        Button,
+                        {
+                          key: "no-pay",
+                          type: "button",
+                          variant: "ghost",
+                          className: "!min-h-[32px] !px-2 !text-xs",
+                          onClick: () => setAdminUserPermEdit((s) => ({ ...s, payments: false }))
+                        },
+                        "Disable payments"
+                      )
+                    : h(Badge, { key: "pay-off", tone: "neutral" }, "Payments disabled"),
+                  h(
+                    Button,
+                    {
+                      key: "global",
+                      type: "button",
+                      variant: "ghost",
+                      className: "!min-h-[32px] !px-2 !text-xs",
+                      disabled: savingAdminUserPerms,
+                      onClick: () => void clearAdminUserPermissionOverrides()
+                    },
+                    "Use global defaults"
+                  )
+                ]),
+                ...ADMIN_PERMISSION_GROUPS.map((group) => {
+                  const items = (viewUser.permissionInfo.catalog || []).filter((c) => c.group === group);
+                  if (!items.length) return null;
+                  return h(GlassCard, { key: `perm-${group}`, className: "!p-3" }, [
+                    h(
+                      "p",
+                      { className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" },
+                      group
+                    ),
+                    h(
+                      "div",
+                      { className: "mt-2 space-y-2" },
+                      items.map((item) => {
+                        const globalOn = viewUser.permissionInfo.global?.[item.key] === true;
+                        const effectiveOn = adminUserPermEdit[item.key] === true;
+                        const customized = effectiveOn !== globalOn;
+                        return h(
+                          "label",
+                          {
+                            key: item.key,
+                            className:
+                              "flex cursor-pointer items-start justify-between gap-3 rounded-xl bg-white/40 px-3 py-2 dark:bg-white/5"
+                          },
+                          [
+                            h("div", { key: "txt", className: "min-w-0" }, [
+                              h("span", { className: "text-sm font-medium text-slate-900 dark:text-white" }, item.label),
+                              customized
+                                ? h(
+                                    Badge,
+                                    { key: "c", tone: "warn", className: "ml-2 inline-flex !text-[10px]" },
+                                    "Custom"
+                                  )
+                                : null,
+                              item.description
+                                ? h("p", { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" }, item.description)
+                                : null
+                            ]),
+                            h("input", {
+                              key: "cb",
+                              type: "checkbox",
+                              checked: !!effectiveOn,
+                              onChange: (e) =>
+                                setAdminUserPermEdit((s) => ({ ...s, [item.key]: e.target.checked })),
+                              className: "mt-1 h-4 w-4 shrink-0"
+                            })
+                          ]
+                        );
+                      })
+                    )
+                  ]);
+                }).filter(Boolean),
+                h("div", { key: "save-perms", className: "flex justify-end" }, [
+                  h(
+                    Button,
+                    {
+                      type: "button",
+                      loading: savingAdminUserPerms,
+                      onClick: () => void saveAdminUserPermissions()
+                    },
+                    "Save access for this admin"
+                  )
+                ])
+              ])
+            : null,
           viewUser.user.role === "seller"
             ? h("div", { key: "seller-actions", className: "mt-4 flex flex-wrap gap-2" }, [
                 h(

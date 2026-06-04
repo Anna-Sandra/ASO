@@ -61,7 +61,11 @@ import { AdminAuditEvent, recordAdminAuditEvent } from "./adminAuditEvent.model"
 import {
   ADMIN_PERMISSION_CATALOG,
   loadAdminPermissionsForRequest,
-  resolveAdminPermissions
+  loadGlobalAdminPermissions,
+  mergeAdminPermissionsWithUserOverrides,
+  pruneAdminPermissionOverrides,
+  resolveAdminPermissions,
+  resolveUserAdminPermissionOverrides
 } from "./adminPermissions";
 import { createPaystackRefund, getPaystackRefundById } from "../payments/payments.controller";
 import { applyProcessedPaystackRefundToOrder, isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
@@ -479,6 +483,32 @@ export const patchAdminUser = asyncHandler(async (req: Request, res: Response) =
   if (body.vendorSubscriptionExempt !== undefined) {
     (u as { vendorSubscriptionExempt: boolean }).vendorSubscriptionExempt = body.vendorSubscriptionExempt;
   }
+  if (body.clearAdminPermissionOverrides === true || body.adminPermissions !== undefined) {
+    if (req.user?.adminLevel !== "super") {
+      throw new HttpError(403, "Only the platform super admin can set per-admin permissions.");
+    }
+    if (normalizeUserRole(u.role) !== "admin") {
+      throw new HttpError(400, "Permission overrides apply only to administrator accounts.");
+    }
+    if (isSuperUserAdminEmail((u as { email?: string }).email)) {
+      throw new HttpError(400, "Super admin accounts always have full access.");
+    }
+    if (body.clearAdminPermissionOverrides === true) {
+      (u as { adminPermissions?: Record<string, boolean> }).adminPermissions = {};
+      u.markModified("adminPermissions");
+    } else if (body.adminPermissions !== undefined) {
+      const global = await loadGlobalAdminPermissions();
+      const existing = resolveUserAdminPermissionOverrides(
+        (u as { adminPermissions?: Record<string, unknown> }).adminPermissions
+      );
+      const merged = { ...existing, ...body.adminPermissions };
+      (u as { adminPermissions?: Record<string, boolean> }).adminPermissions = pruneAdminPermissionOverrides(
+        global,
+        merged
+      ) as Record<string, boolean>;
+      u.markModified("adminPermissions");
+    }
+  }
   await u.save();
   const parts: string[] = [];
   if (body.accountStatus !== undefined) parts.push(`accountStatus → ${body.accountStatus}`);
@@ -486,6 +516,8 @@ export const patchAdminUser = asyncHandler(async (req: Request, res: Response) =
   if (body.vendorSubscriptionExempt !== undefined) {
     parts.push(`vendorSubscriptionExempt → ${body.vendorSubscriptionExempt}`);
   }
+  if (body.clearAdminPermissionOverrides === true) parts.push("adminPermissions → global defaults");
+  else if (body.adminPermissions !== undefined) parts.push("adminPermissions updated");
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "user.patch",
@@ -570,6 +602,8 @@ export const revokeAdmin = asyncHandler(async (req: Request, res: Response) => {
   const listingCount = await Product.countDocuments({ sellerId: u._id });
   const nextRole: UserDoc["role"] = listingCount > 0 ? "seller" : "buyer";
   u.role = nextRole;
+  (u as { adminPermissions?: Record<string, boolean> }).adminPermissions = undefined;
+  u.markModified("adminPermissions");
   await u.save();
   const who = ((u.displayName || "").trim() || uEmail || u._id.toString()).slice(0, 80);
   await recordAdminAuditEvent({
@@ -1677,6 +1711,24 @@ export const getAdminUserSummary = asyncHandler(async (req: Request, res: Respon
   const uRole = (u as { role: string }).role;
   const uEmail = (u as { email?: string }).email;
   const aLevel = adminLevelForList(uEmail, uRole);
+  let permissionInfo: {
+    global: ReturnType<typeof resolveAdminPermissions>;
+    overrides: Partial<ReturnType<typeof resolveAdminPermissions>>;
+    effective: ReturnType<typeof resolveAdminPermissions>;
+    catalog: typeof ADMIN_PERMISSION_CATALOG;
+  } | undefined;
+  if (aLevel === "normal" && req.user?.adminLevel === "super") {
+    const global = await loadGlobalAdminPermissions();
+    const overrides = resolveUserAdminPermissionOverrides(
+      (u as { adminPermissions?: Record<string, unknown> }).adminPermissions
+    );
+    permissionInfo = {
+      global,
+      overrides,
+      effective: mergeAdminPermissionsWithUserOverrides(global, overrides),
+      catalog: ADMIN_PERMISSION_CATALOG
+    };
+  }
   res.json({
     user: {
       id: u._id.toString(),
@@ -1691,6 +1743,7 @@ export const getAdminUserSummary = asyncHandler(async (req: Request, res: Respon
       accountStatus: (u as { accountStatus?: string }).accountStatus ?? "active",
       createdAt: u.createdAt
     },
+    ...(permissionInfo ? { permissionInfo } : {}),
     activity: {
       ordersAsBuyer: orderCount,
       ordersTouchingSeller: sellOrderLines,

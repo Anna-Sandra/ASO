@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import { User } from "../auth/user.model";
 import { getOrCreateSettings } from "../platform/platformSettings.service";
 
 /** Permission keys for limited (non–super) admins. Super admins always have full access. */
@@ -171,6 +172,42 @@ export function resolveAdminPermissions(
   return out;
 }
 
+/** Per-admin overrides stored on the user document (only explicit keys). */
+export function resolveUserAdminPermissionOverrides(
+  stored: Record<string, unknown> | null | undefined
+): Partial<AdminPermissionsMap> {
+  const out: Partial<AdminPermissionsMap> = {};
+  if (!stored || typeof stored !== "object") return out;
+  for (const key of ADMIN_PERMISSION_KEYS) {
+    if (typeof stored[key] === "boolean") out[key] = stored[key];
+  }
+  return out;
+}
+
+export function mergeAdminPermissionsWithUserOverrides(
+  global: AdminPermissionsMap,
+  userOverrides: Partial<AdminPermissionsMap>
+): AdminPermissionsMap {
+  const out = { ...global };
+  for (const key of ADMIN_PERMISSION_KEYS) {
+    if (typeof userOverrides[key] === "boolean") out[key] = userOverrides[key] as boolean;
+  }
+  return out;
+}
+
+/** Drop override keys that match the global default (keeps user documents small). */
+export function pruneAdminPermissionOverrides(
+  global: AdminPermissionsMap,
+  overrides: Partial<AdminPermissionsMap>
+): Partial<AdminPermissionsMap> {
+  const out: Partial<AdminPermissionsMap> = {};
+  for (const key of ADMIN_PERMISSION_KEYS) {
+    if (typeof overrides[key] !== "boolean") continue;
+    if (overrides[key] !== global[key]) out[key] = overrides[key];
+  }
+  return out;
+}
+
 export function allAdminPermissionsTrue(): AdminPermissionsMap {
   return { ...DEFAULT_ADMIN_PERMISSIONS };
 }
@@ -180,11 +217,21 @@ export function permissionDeniedMessage(...keys: AdminPermissionKey[]): string {
   return `You do not have permission for: ${labels.join(", ")}.`;
 }
 
+export async function loadGlobalAdminPermissions(): Promise<AdminPermissionsMap> {
+  const doc = await getOrCreateSettings();
+  return resolveAdminPermissions(doc.adminPermissions as Record<string, unknown> | undefined);
+}
+
 export async function loadAdminPermissionsForRequest(req: Request): Promise<AdminPermissionsMap> {
   if (req.user?.role !== "admin") return { ...DEFAULT_ADMIN_PERMISSIONS };
   if (req.user.adminLevel === "super") return allAdminPermissionsTrue();
-  const doc = await getOrCreateSettings();
-  return resolveAdminPermissions(doc.adminPermissions as Record<string, unknown> | undefined);
+  const global = await loadGlobalAdminPermissions();
+  if (!req.user?.id) return global;
+  const u = await User.findById(req.user.id).select("adminPermissions").lean();
+  const overrides = resolveUserAdminPermissionOverrides(
+    (u as { adminPermissions?: Record<string, unknown> } | null)?.adminPermissions
+  );
+  return mergeAdminPermissionsWithUserOverrides(global, overrides);
 }
 
 export function requestHasAdminPermission(req: Request, ...keys: AdminPermissionKey[]): boolean {
