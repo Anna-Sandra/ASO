@@ -11,6 +11,7 @@ import { initialVendorSubscriptionOnApproval } from "../vendorSubscription/vendo
 import { promoteBuyerToSellerFromVendorApplication } from "../../utils/promoteVendorFromApplication";
 import { issueVendorActivationEmail, appOriginBase } from "../../utils/vendorApplicationActivation";
 import { buildVendorApprovedExistingAccountEmailHtml } from "../../utils/vendorActivationEmail";
+import { issuePasswordSetupEmail, randomTemporaryPassword } from "../../utils/passwordSetupEmail";
 import { sendEmail } from "../../utils/mailer";
 import { recordAdminAuditEvent } from "./adminAuditEvent.model";
 import { adminCreateVendorSchema } from "./admin.schemas";
@@ -76,14 +77,44 @@ export const postAdminCreateVendor = asyncHandler(async (req: Request, res: Resp
     }
 
     const app = await upsertApprovedVendorApplication(body, email, existing._id);
-    const passwordHash = password ? await bcrypt.hash(password, SALT_ROUNDS) : undefined;
-    const promoteResult = await promoteBuyerToSellerFromVendorApplication(app, passwordHash ? { passwordHash } : undefined);
+    const promoteResult = await promoteBuyerToSellerFromVendorApplication(app, undefined);
 
     if (promoteResult.kind === "blocked") {
       throw new HttpError(400, "This account cannot become a vendor.");
     }
     if (promoteResult.kind === "needs_activation") {
       throw new HttpError(400, "Could not promote this shopper account to vendor.");
+    }
+
+    if (password) {
+      const promotedUser = await User.findById(promoteResult.userId).select("+passwordHash");
+      if (promotedUser) {
+        promotedUser.passwordHash = await bcrypt.hash(randomTemporaryPassword(), SALT_ROUNDS);
+        await promotedUser.save();
+      }
+      const userId = new mongoose.Types.ObjectId(promoteResult.userId);
+      await issuePasswordSetupEmail({
+        userId,
+        email,
+        displayName: body.fullName.trim(),
+        accountLabel: "vendor"
+      });
+      await recordAdminAuditEvent({
+        actorId: req.user?.id,
+        action: "vendor.create",
+        title: `Vendor added — ${body.shopName.trim().slice(0, 60)}`,
+        detail: `${email} · existing shopper promoted · password setup email`
+      });
+      res.status(201).json({
+        ok: true,
+        mode: "existing_buyer",
+        sellerReady: true,
+        userId: promoteResult.userId,
+        passwordSetupEmailSent: true,
+        message:
+          "Vendor access enabled. We emailed them a link to set their own password before signing in."
+      });
+      return;
     }
 
     const signInUrl = `${appOriginBase()}/login`;
@@ -110,15 +141,13 @@ export const postAdminCreateVendor = asyncHandler(async (req: Request, res: Resp
       mode: "existing_buyer",
       sellerReady: true,
       userId: promoteResult.userId,
-      message: password
-        ? "Vendor access enabled. They can sign in with this email and the password you set."
-        : "Vendor access enabled. They can sign in with their existing shopper password."
+      message: "Vendor access enabled. They can sign in with their existing shopper password."
     });
     return;
   }
 
   if (password) {
-    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    const passwordHash = await bcrypt.hash(randomTemporaryPassword(), SALT_ROUNDS);
     const settings = await getOrCreateSettings();
     const subInit = initialVendorSubscriptionOnApproval(settings);
     const user = await User.create({
@@ -137,11 +166,18 @@ export const postAdminCreateVendor = asyncHandler(async (req: Request, res: Resp
     });
     await upsertApprovedVendorApplication(body, email, user._id);
 
+    await issuePasswordSetupEmail({
+      userId: user._id,
+      email,
+      displayName: body.fullName.trim(),
+      accountLabel: "vendor"
+    });
+
     await recordAdminAuditEvent({
       actorId: req.user?.id,
       action: "vendor.create",
       title: `Vendor added — ${body.shopName.trim().slice(0, 60)}`,
-      detail: `${email} · new account with password`
+      detail: `${email} · new account · password setup email`
     });
 
     res.status(201).json({
@@ -149,7 +185,9 @@ export const postAdminCreateVendor = asyncHandler(async (req: Request, res: Resp
       mode: "account",
       sellerReady: true,
       userId: user._id.toString(),
-      message: "Vendor account created. Share the email and password so they can sign in at /login."
+      passwordSetupEmailSent: true,
+      message:
+        "Vendor account created. We emailed them a link to set their own password — do not share an admin-chosen password."
     });
     return;
   }

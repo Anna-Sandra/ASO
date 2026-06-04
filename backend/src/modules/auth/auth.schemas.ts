@@ -77,11 +77,26 @@ export const forgotPasswordSchema = z.object({
   email: z.string().email().transform((s) => s.toLowerCase().trim())
 });
 
-export const resetPasswordSchema = z.object({
-  email: z.string().email().transform((s) => s.toLowerCase().trim()),
-  otp: z.string().trim().regex(/^\d{6}$/, "OTP must be 6 digits"),
-  newPassword: passwordSchema
-});
+export const resetPasswordSchema = z
+  .object({
+    email: z.string().email().transform((s) => s.toLowerCase().trim()),
+    otp: z.string().trim().optional(),
+    token: z.string().trim().optional(),
+    newPassword: passwordSchema
+  })
+  .superRefine((d, ctx) => {
+    const otp = (d.otp || "").trim();
+    const token = (d.token || "").trim();
+    const hasOtp = /^\d{6}$/.test(otp);
+    const hasToken = token.length >= 32;
+    if (hasOtp === hasToken) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter the 6-digit code from your email, or use the password link from your welcome email.",
+        path: ["otp"]
+      });
+    }
+  });
 
 export const profileUpdateSchema = z
   .object({

@@ -54,7 +54,7 @@ export function GhanaAccessGate({ children }) {
     return h(
       "div",
       { className: "flex min-h-screen items-center justify-center bg-night-950 text-slate-300" },
-      "Checking availability in Ghana…"
+      "Loading…"
     );
   }
 

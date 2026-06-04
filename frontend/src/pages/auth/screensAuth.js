@@ -841,11 +841,16 @@ export function ForgotPasswordPage() {
 
 export function ResetPasswordPage() {
   const loc = useLocation();
-  const [email, setEmail] = useState(loc.state?.email || "");
+  const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const setupToken = params.get("token") || "";
+  const emailFromUrl = params.get("email") || "";
+  const useSetupLink = Boolean(setupToken && setupToken.length >= 32);
+  const [email, setEmail] = useState(emailFromUrl || loc.state?.email || "");
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
   const nav = useNavigate();
 
   const onSubmit = async (e) => {
@@ -853,21 +858,56 @@ export function ResetPasswordPage() {
     setErr("");
     setLoading(true);
     try {
+      const json = { email: email.trim(), newPassword };
+      if (useSetupLink) json.token = setupToken.trim();
+      else json.otp = otp.trim();
       await apiFetch("/api/auth/reset-password", {
         method: "POST",
-        json: { email: email.trim(), otp: otp.trim(), newPassword }
+        json
       });
-      nav("/login", { replace: true });
+      setDone(true);
     } catch (ex) {
-      setErr(apiErrorMessage(ex, "Password reset failed. Check the code and your new password, then try again."));
+      setErr(
+        apiErrorMessage(
+          ex,
+          useSetupLink
+            ? "Could not set your password. The link may have expired — ask your admin for a new email."
+            : "Password reset failed. Check the code and your new password, then try again."
+        )
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  if (done) {
+    return h("div", { className: "mx-auto max-w-md px-4 py-16" }, [
+      h(GlassPanel, { key: "panel" }, [
+        h("h1", { key: "title", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "Password saved"),
+        h(
+          "p",
+          { key: "sub", className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
+          "You can sign in with your new password."
+        ),
+        h(Link, { key: "go", to: "/login", className: "mt-6 inline-block w-full" }, h(Button, { className: "w-full" }, "Sign in"))
+      ])
+    ]);
+  }
+
   return h("div", { className: "mx-auto max-w-md px-4 py-16" }, [
     h(GlassPanel, { key: "panel" }, [
-      h("h1", { key: "title", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" }, "New password"),
+      h(
+        "h1",
+        { key: "title", className: "font-display text-2xl font-bold text-slate-900 dark:text-white" },
+        useSetupLink ? "Set your password" : "New password"
+      ),
+      useSetupLink
+        ? h(
+            "p",
+            { key: "hint", className: "mt-2 text-sm text-slate-600 dark:text-slate-400" },
+            "Choose a password only you know. This link was sent when your account was created."
+          )
+        : null,
       h("form", { key: "form", className: "mt-6 space-y-4", onSubmit }, [
         h(
           Field,
@@ -876,15 +916,18 @@ export function ResetPasswordPage() {
             type: "email",
             value: email,
             onChange: (e) => setEmail(e.target.value),
-            required: true
+            required: true,
+            readOnly: useSetupLink && Boolean(emailFromUrl)
           })
         ),
-        h(Field, { key: "otp", label: "OTP code" }, h(OtpCodeInput, { value: otp, onChange: setOtp })),
+        useSetupLink
+          ? null
+          : h(Field, { key: "otp", label: "OTP code" }, h(OtpCodeInput, { value: otp, onChange: setOtp })),
         h(Field, { key: "newpw", label: "New password" }, h(TextInput, { type: "password", value: newPassword, onChange: (e) => setNewPassword(e.target.value), required: true, minLength: 8 })),
         err
           ? h(InlineNotice, { key: "err", variant: "error", onDismiss: () => setErr("") }, err)
           : null,
-        h(Button, { key: "submit", type: "submit", className: "w-full", loading }, "Update password")
+        h(Button, { key: "submit", type: "submit", className: "w-full", loading }, useSetupLink ? "Save password" : "Update password")
       ].filter(Boolean))
     ])
   ]);

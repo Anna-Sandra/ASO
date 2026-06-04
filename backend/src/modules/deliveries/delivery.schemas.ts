@@ -29,7 +29,8 @@ export const etaSchema = z.object({
 });
 export const adminCreateRiderSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8).max(200),
+  /** Ignored for login — a random temporary password is set and the rider sets their own via email link. */
+  password: z.union([z.literal(""), z.string().min(8).max(200)]).optional().default(""),
   displayName: z.string().max(120).optional(),
   phone: z.string().max(40).optional(),
   vehicleType: z.string().min(1).max(80)

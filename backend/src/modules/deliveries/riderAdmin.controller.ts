@@ -9,6 +9,7 @@ import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import { adminCreateRiderSchema } from "./delivery.schemas";
 import { adminRidersQuerySchema } from "../admin/admin.schemas";
 import { recordAdminAuditEvent } from "../admin/adminAuditEvent.model";
+import { issuePasswordSetupEmail, randomTemporaryPassword } from "../../utils/passwordSetupEmail";
 
 const SALT_ROUNDS = 12;
 
@@ -90,7 +91,7 @@ export const postAdminCreateRider = asyncHandler(async (req: Request, res: Respo
   const email = body.email.trim().toLowerCase();
   const existing = await User.findOne({ email }).lean();
   if (existing) throw new HttpError(409, "An account with this email already exists.");
-  const passwordHash = await bcrypt.hash(body.password, SALT_ROUNDS);
+  const passwordHash = await bcrypt.hash(randomTemporaryPassword(), SALT_ROUNDS);
   const user = await User.create({
     email,
     passwordHash,
@@ -104,20 +105,30 @@ export const postAdminCreateRider = asyncHandler(async (req: Request, res: Respo
     userId: user._id,
     vehicleType: body.vehicleType.trim()
   });
+  await issuePasswordSetupEmail({
+    userId: user._id,
+    email,
+    displayName: body.displayName?.trim() || "",
+    accountLabel: "rider"
+  });
+
   await recordAdminAuditEvent({
     actorId: req.user?.id,
     action: "rider.create",
     title: `Rider added — ${(body.displayName?.trim() || email).slice(0, 60)}`,
-    detail: email
+    detail: `${email} · password setup email sent`
   });
   res.status(201).json({
     ok: true,
+    passwordSetupEmailSent: true,
     user: {
       id: user._id.toString(),
       email: user.email,
       role: normalizeUserRole(user.role),
       displayName: user.displayName,
       phone: user.phone
-    }
+    },
+    message:
+      "Rider account created. We emailed them a secure link to set their own password — they should not use a password chosen by an admin."
   });
 });

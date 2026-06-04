@@ -952,7 +952,7 @@ export function AdminPage() {
   const [addVendorBusy, setAddVendorBusy] = useState(false);
   const [addVendorForm, setAddVendorForm] = useState({
     email: "",
-    password: "",
+    sendPasswordSetup: true,
     fullName: "",
     shopName: "",
     phone: "",
@@ -2331,28 +2331,23 @@ export function AdminPage() {
       await alert("Enter a valid email.", { variant: "error" });
       return;
     }
-    if (!password || password.length < 8) {
-      await alert("Password must be at least 8 characters.", { variant: "error" });
-      return;
-    }
     if (!vt) {
       await alert("Vehicle type is required (e.g. bicycle, motorcycle).", { variant: "error" });
       return;
     }
     setAddRiderBusy(true);
     try {
-      await apiFetch("/api/admin/riders", {
+      const data = await apiFetch("/api/admin/riders", {
         method: "POST",
         ...auth,
         json: {
           email,
-          password,
           displayName: addRiderForm.displayName.trim() || undefined,
           phone: addRiderForm.phone.trim() || undefined,
           vehicleType: vt
         }
       });
-      toast("Rider account created.", { variant: "success" });
+      toast(data?.message || "Rider account created. Password setup email sent.", { variant: "success" });
       setAddRiderOpen(false);
       setAddRiderForm({ email: "", password: "", displayName: "", phone: "", vehicleType: "" });
       await loadRiders();
@@ -2371,7 +2366,7 @@ export function AdminPage() {
       return;
     }
     const email = addVendorForm.email.trim().toLowerCase();
-    const password = addVendorForm.password;
+    const sendPasswordSetup = Boolean(addVendorForm.sendPasswordSetup);
     const fullName = addVendorForm.fullName.trim();
     const shopName = addVendorForm.shopName.trim();
     const phone = addVendorForm.phone.trim();
@@ -2391,12 +2386,6 @@ export function AdminPage() {
       await alert("Phone number is required.", { variant: "error" });
       return;
     }
-    if (password && password.length < 8) {
-      await alert("Password must be at least 8 characters, or leave blank to email an activation link.", {
-        variant: "error"
-      });
-      return;
-    }
     setAddVendorBusy(true);
     try {
       const data = await apiFetch("/api/admin/vendors", {
@@ -2404,7 +2393,7 @@ export function AdminPage() {
         ...auth,
         json: {
           email,
-          password: password || "",
+          password: sendPasswordSetup ? "send-setup-email" : "",
           fullName,
           shopName,
           phone,
@@ -2418,7 +2407,7 @@ export function AdminPage() {
       setAddVendorOpen(false);
       setAddVendorForm({
         email: "",
-        password: "",
+        sendPasswordSetup: true,
         fullName: "",
         shopName: "",
         phone: "",
@@ -3568,20 +3557,13 @@ export function AdminPage() {
         h(
           "p",
           { key: "h", className: "mb-3 text-xs text-slate-600 dark:text-slate-300" },
-          "Creates a courier login with rider role + vehicle profile. They can sign in at /login after you share the temporary password."
+          "Creates a courier account and emails them a secure link to set their own password. Do not share passwords manually."
         ),
         h(Field, { key: "em", label: "Email" }, h(TextInput, {
           type: "email",
           value: addRiderForm.email,
           disabled: addRiderBusy,
           onChange: (e) => setAddRiderForm((f) => ({ ...f, email: e.target.value }))
-        })),
-        h(Field, { key: "pw", label: "Temporary password (min 8)" }, h(TextInput, {
-          type: "password",
-          value: addRiderForm.password,
-          disabled: addRiderBusy,
-          autoComplete: "new-password",
-          onChange: (e) => setAddRiderForm((f) => ({ ...f, password: e.target.value }))
         })),
         h(Field, { key: "nm", label: "Display name (optional)" }, h(TextInput, {
           value: addRiderForm.displayName,
@@ -3920,7 +3902,7 @@ export function AdminPage() {
         h(
           "p",
           { key: "h", className: "mb-3 text-xs text-slate-600 dark:text-slate-300" },
-          "Creates an approved vendor. Set a password to hand them login details, or leave password empty to email an activation link (new email only)."
+          "Creates an approved vendor. Check “Send password setup email” to email a secure set-password link (recommended). Leave unchecked for new emails only: sends the standard vendor activation link instead."
         ),
         h(Field, { key: "em", label: "Email" }, h(TextInput, {
           type: "email",
@@ -3928,13 +3910,15 @@ export function AdminPage() {
           disabled: addVendorBusy,
           onChange: (e) => setAddVendorForm((f) => ({ ...f, email: e.target.value }))
         })),
-        h(Field, { key: "pw", label: "Password (optional, min 8)" }, h(TextInput, {
-          type: "password",
-          value: addVendorForm.password,
-          disabled: addVendorBusy,
-          autoComplete: "new-password",
-          onChange: (e) => setAddVendorForm((f) => ({ ...f, password: e.target.value }))
-        })),
+        h("label", { key: "pw-send", className: "flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200" }, [
+          h("input", {
+            type: "checkbox",
+            checked: Boolean(addVendorForm.sendPasswordSetup),
+            disabled: addVendorBusy,
+            onChange: (e) => setAddVendorForm((f) => ({ ...f, sendPasswordSetup: e.target.checked }))
+          }),
+          "Send password setup email (they choose their own password)"
+        ]),
         h(Field, { key: "fn", label: "Contact name" }, h(TextInput, {
           value: addVendorForm.fullName,
           disabled: addVendorBusy,

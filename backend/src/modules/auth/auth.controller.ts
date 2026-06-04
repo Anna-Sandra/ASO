@@ -40,6 +40,7 @@ import {
 } from "./jwt";
 import { issueCsrfToken } from "../../middleware/csrf";
 import { generateReferralCode, REFERRAL_REWARD_POINTS_EACH } from "../../utils/referral";
+import { resetPasswordSchema } from "./auth.schemas";
 
 type LeanUser = {
   _id: mongoose.Types.ObjectId;
@@ -919,17 +920,23 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
-  const { email, otp, newPassword } = req.body as { email: string; otp: string; newPassword: string };
+  const parsed = resetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) throw new HttpError(400, "Please check your password and confirmation, then try again.");
+  const { email, otp, token: setupToken, newPassword } = parsed.data;
   const addr = email.trim().toLowerCase();
   const user = await User.findOne({ email: addr });
   if (!user) {
     throw new HttpError(400, "No account found for this email. Check what you entered or create an account.");
   }
-  const tokenHash = sha256(otp);
+
+  const setupTrim = (setupToken || "").trim();
+  const otpTrim = (otp || "").trim();
+  const purpose = setupTrim.length >= 32 ? "password_setup" : "password_reset";
+  const tokenHash = sha256(setupTrim.length >= 32 ? setupTrim : otpTrim);
 
   const doc = await Token.findOne({
     userId: user._id,
-    purpose: "password_reset",
+    purpose,
     tokenHash,
     usedAt: null,
     revokedAt: null,
@@ -938,7 +945,9 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
   if (!doc) {
     throw new HttpError(
       400,
-      "That code is incorrect or has expired. Request a new code from Forgot password and try again."
+      purpose === "password_setup"
+        ? "This password link is invalid or has expired. Ask your platform admin to send a new welcome email."
+        : "That code is incorrect or has expired. Request a new code from Forgot password and try again."
     );
   }
 
