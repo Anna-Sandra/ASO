@@ -39,6 +39,8 @@ import {
   tryVerifyBootstrapRefreshToken
 } from "./jwt";
 import { issueCsrfToken } from "../../middleware/csrf";
+import { clearAdminAccessGateCookie, setAdminAccessGateCookie } from "../../middleware/adminGate";
+import { allowAuthEmailAttempt } from "../../utils/authEmailRateLimit";
 import { generateReferralCode, REFERRAL_REWARD_POINTS_EACH } from "../../utils/referral";
 import { resetPasswordSchema } from "./auth.schemas";
 
@@ -146,6 +148,7 @@ async function sendLoginSuccess(res: Response, user: HydratedDocument<UserDoc>, 
   const { refreshToken } = await issueRefreshToken(user._id);
 
   res.cookie("refreshToken", refreshToken, refreshCookieOptions());
+  if (role === "admin") setAdminAccessGateCookie(res, user._id.toString());
   const p = pickProfileFromUser(user as LeanUser);
   const recipient = String((user as { paystackTransferRecipientCode?: string }).paystackTransferRecipientCode || "").trim();
   const subacct = String((user as { paystackSubaccountCode?: string }).paystackSubaccountCode || "").trim();
@@ -187,6 +190,7 @@ function sendEnvBootstrapAdminLoginSuccess(res: Response, extra?: Record<string,
   const accessToken = signAccessToken({ sub, role: "admin", al: "super" });
   const bootstrapRefresh = signBootstrapRefreshToken();
   res.cookie("refreshToken", bootstrapRefresh, refreshCookieOptions());
+  setAdminAccessGateCookie(res, sub);
   const u = bootstrapAdminSessionUserJson();
   res.json({
     accessToken,
@@ -300,6 +304,9 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   };
   const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail) throw new HttpError(400, "A valid email address is required.");
+  if (!(await allowAuthEmailAttempt(`register:${cleanEmail}`, 8, 60 * 60 * 1000))) {
+    throw new HttpError(429, "Too many registration attempts for this email. Try again later.");
+  }
 
   const cleanDisplayNameRaw =
     typeof displayName === "string" ? displayName.trim().slice(0, 120) : typeof username === "string" ? username.trim().slice(0, 120) : "";
@@ -422,6 +429,9 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { identifier, password } = req.body as { identifier: string; password: string };
   const lower = identifier.trim().toLowerCase();
+  if (!(await allowAuthEmailAttempt(`login:${lower}`, 30, 15 * 60 * 1000))) {
+    throw new HttpError(429, "Too many sign-in attempts for this email. Wait a few minutes and try again.");
+  }
 
   /** JWT-only “platform admin” when MongoDB is down: no user row, no OTP. Not used when the DB is up (same credentials go through normal login + OTP). */
   if (mongoose.connection.readyState !== 1) {
@@ -526,6 +536,9 @@ export const verifyLoginOtp = asyncHandler(async (req: Request, res: Response) =
 export const resendVerificationOtp = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
   const addr = email.trim().toLowerCase();
+  if (!(await allowAuthEmailAttempt(`verify-resend:${addr}`, 6, 15 * 60 * 1000))) {
+    return res.json({ message: "If this account still needs verification, a new code was sent." });
+  }
   const generic = "If this account still needs verification, a new code was sent.";
   const user = await User.findOne({ email: addr });
   if (!user || user.emailVerifiedAt) {
@@ -556,6 +569,9 @@ export const resendVerificationOtp = asyncHandler(async (req: Request, res: Resp
 export const resendLoginOtp = asyncHandler(async (req: Request, res: Response) => {
   const { identifier, password } = req.body as { identifier: string; password: string };
   const lower = identifier.trim().toLowerCase();
+  if (!(await allowAuthEmailAttempt(`login-otp-resend:${lower}`, 8, 15 * 60 * 1000))) {
+    throw new HttpError(429, "Too many code requests. Wait a few minutes and try again.");
+  }
   const user = await User.findOne({ email: lower }).select("+passwordHash");
   if (!user) {
     throw new HttpError(401, "No account found with this email. Check for typos, or create an account.");
@@ -803,6 +819,7 @@ export const deleteAccount = asyncHandler(async (req: Request, res: Response) =>
   await Token.deleteMany({ userId: uidObj });
   await User.deleteOne({ _id: uidObj });
   res.clearCookie("refreshToken", refreshCookieOptions());
+  clearAdminAccessGateCookie(res);
   res.json({ message: "Account deleted" });
 });
 
@@ -828,6 +845,7 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
       const accessToken = signAccessToken({ sub, role: "admin", al: "super" });
       const bootstrapRefresh = signBootstrapRefreshToken();
       res.cookie("refreshToken", bootstrapRefresh, refreshCookieOptions());
+      setAdminAccessGateCookie(res, sub);
       res.json({ accessToken, refreshToken: bootstrapRefresh });
       return;
     }
@@ -851,6 +869,16 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
       continue;
     }
 
+    const acc = (user as { accountStatus?: string }).accountStatus;
+    if (acc && acc === "banned") {
+      lastAuthError = new HttpError(403, "This account is banned.");
+      continue;
+    }
+    if (acc && acc === "suspended") {
+      lastAuthError = new HttpError(403, "This account is suspended. Contact support if you think this is a mistake.");
+      continue;
+    }
+
     await Token.updateOne({ _id: existing._id }, { $set: { revokedAt: new Date() } });
 
     const role = normalizeUserRole(user.role);
@@ -858,6 +886,8 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
     const rotated = await issueRefreshToken(user._id);
 
     res.cookie("refreshToken", rotated.refreshToken, refreshCookieOptions());
+    if (role === "admin") setAdminAccessGateCookie(res, user._id.toString());
+    else clearAdminAccessGateCookie(res);
     res.json({ accessToken, refreshToken: rotated.refreshToken });
     return;
   }
@@ -879,12 +909,16 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
   }
 
   res.clearCookie("refreshToken", refreshCookieOptions());
+  clearAdminAccessGateCookie(res);
   res.json({ message: "Logged out" });
 });
 
 export const forgotPassword = asyncHandler(async (req: Request, res: Response) => {
   const { email } = req.body as { email: string };
   const addr = email.trim().toLowerCase();
+  if (!(await allowAuthEmailAttempt(`forgot:${addr}`, 6, 15 * 60 * 1000))) {
+    return res.json({ message: "If that account exists, a 6-digit OTP was sent." });
+  }
   const user = await User.findOne({ email: addr });
   const generic = "If that account exists, a 6-digit OTP was sent.";
   const devOtpInResponse = env.NODE_ENV !== "production";

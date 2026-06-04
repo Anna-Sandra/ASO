@@ -77,6 +77,16 @@ function splitAssistantMarkdown(text) {
   return parts.length ? parts : [{ type: "text", value: text }];
 }
 
+function isSafeAssistantExternalUrl(url) {
+  if (typeof url !== "string" || !/^https:\/\//i.test(url.trim())) return false;
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === "https:" && Boolean(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedAssistantImageUrl(url) {
   const base = String(getApiBase() || "").trim().replace(/\/$/, "");
   if (!base || typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
@@ -100,28 +110,33 @@ function BubbleContent({ mine, content }) {
         return h("span", { key: `t-${idx}` }, p.value || "");
       }
       if (p.type === "link" && p.to) {
-        const internal = String(p.to).startsWith("/");
-        return internal
-          ? h(
-              Link,
-              {
-                key: `l-${idx}`,
-                to: p.to,
-                className: "inline font-semibold text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-300"
-              },
-              p.label || p.to
-            )
-          : h(
-              "a",
-              {
-                key: `l-${idx}`,
-                href: p.to,
-                className: "inline font-semibold text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-300",
-                target: "_blank",
-                rel: "noreferrer"
-              },
-              p.label || p.to
-            );
+        const dest = String(p.to).trim();
+        const internal = dest.startsWith("/") && !dest.startsWith("//");
+        if (internal) {
+          return h(
+            Link,
+            {
+              key: `l-${idx}`,
+              to: dest,
+              className: "inline font-semibold text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-300"
+            },
+            p.label || dest
+          );
+        }
+        if (!isSafeAssistantExternalUrl(dest)) {
+          return h("span", { key: `l-${idx}`, className: "text-slate-500" }, p.label || "[link removed]");
+        }
+        return h(
+          "a",
+          {
+            key: `l-${idx}`,
+            href: dest,
+            className: "inline font-semibold text-sky-600 underline underline-offset-2 hover:text-sky-500 dark:text-sky-300",
+            target: "_blank",
+            rel: "noopener noreferrer"
+          },
+          p.label || dest
+        );
       }
       if (p.type === "img") {
         if (!isAllowedAssistantImageUrl(p.url)) {

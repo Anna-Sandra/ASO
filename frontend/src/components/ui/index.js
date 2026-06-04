@@ -1,4 +1,4 @@
-import React, { useId, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { h } from "utils/h";
 import { sanitizeErrorMessage } from "utils/userFacingError";
+import { swalError } from "utils/swal";
 
 const base =
   "tap-target inline-flex items-center justify-center gap-2 rounded-2xl font-medium transition-all duration-200 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base";
@@ -71,8 +72,31 @@ export function GlassCard({ className = "", children }) {
   return h("div", { className: `glass-strong rounded-3xl p-4 sm:p-5 ${className}`.trim() }, children);
 }
 
-/** Cute bordered notice for form/page errors and success (SweetAlert-style inline). */
+/** Inline notice for success / info / warning. Errors use SweetAlert2 (see utils/swal). */
 export function InlineNotice({ variant = "error", title, children, onDismiss, className = "", size = "md" }) {
+  const shownKeyRef = useRef("");
+
+  useEffect(() => {
+    if (variant !== "error") return;
+    const text =
+      typeof children === "string"
+        ? sanitizeErrorMessage(children, String(children))
+        : title
+          ? String(title)
+          : "Something went wrong. Please try again.";
+    if (!text) return;
+    const key = `${title || ""}|${text}`;
+    if (shownKeyRef.current === key) return;
+    shownKeyRef.current = key;
+    void swalError(text, { title: title || undefined }).then(() => {
+      onDismiss?.();
+    });
+  }, [variant, title, children, onDismiss]);
+
+  if (variant === "error") {
+    return null;
+  }
+
   const Icon =
     variant === "success" ? CheckCircle2 : variant === "warning" ? AlertTriangle : variant === "info" ? Info : AlertCircle;
   const palette =
@@ -80,25 +104,16 @@ export function InlineNotice({ variant = "error", title, children, onDismiss, cl
       ? "border-emerald-300/50 bg-gradient-to-br from-emerald-50/95 to-white text-emerald-900 dark:border-emerald-500/25 dark:from-emerald-950/50 dark:to-night-900/90 dark:text-emerald-100"
       : variant === "warning"
         ? "border-amber-300/50 bg-gradient-to-br from-amber-50/95 to-white text-amber-950 dark:border-amber-500/25 dark:from-amber-950/40 dark:to-night-900/90 dark:text-amber-100"
-        : variant === "info"
-          ? "border-sky-300/50 bg-gradient-to-br from-sky-50/95 to-white text-sky-950 dark:border-sky-500/25 dark:from-sky-950/40 dark:to-night-900/90 dark:text-sky-100"
-          : "border-rose-300/50 bg-gradient-to-br from-rose-50/95 to-white text-rose-950 dark:border-rose-500/25 dark:from-rose-950/45 dark:to-night-900/90 dark:text-rose-100";
+        : "border-sky-300/50 bg-gradient-to-br from-sky-50/95 to-white text-sky-950 dark:border-sky-500/25 dark:from-sky-950/40 dark:to-night-900/90 dark:text-sky-100";
   const iconWrap =
     variant === "success"
       ? "bg-emerald-200/80 text-emerald-800 dark:bg-emerald-800/50 dark:text-emerald-100"
       : variant === "warning"
         ? "bg-amber-200/80 text-amber-900 dark:bg-amber-800/50 dark:text-amber-100"
-        : variant === "info"
-          ? "bg-sky-200/80 text-sky-900 dark:bg-sky-800/50 dark:text-sky-100"
-          : "bg-rose-200/80 text-rose-900 dark:bg-rose-800/50 dark:text-rose-100";
+        : "bg-sky-200/80 text-sky-900 dark:bg-sky-800/50 dark:text-sky-100";
   const pad = size === "sm" ? "p-2.5 pr-8" : "p-4 pr-10";
   const textCls = size === "sm" ? "text-xs leading-snug" : "text-sm leading-relaxed";
-  const body =
-    variant === "error" || variant === "warning"
-      ? typeof children === "string"
-        ? sanitizeErrorMessage(children, String(children))
-        : children
-      : children;
+  const body = variant === "warning" && typeof children === "string" ? sanitizeErrorMessage(children, String(children)) : children;
   return h(
     "div",
     {

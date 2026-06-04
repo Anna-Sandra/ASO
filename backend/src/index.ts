@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import mongoose from "mongoose";
 import { createApp } from "./app";
 import { connectDb } from "./config/db";
+import { connectRedis, isRedisConfigured } from "./config/redis";
 import { env, getEmailTransportDiagnostics, isEmailTransportConfigured } from "./config/env";
 import { isOtpConsoleLogEnabled } from "./utils/otpLog";
 import { setupDeliverySockets } from "./modules/deliveries/delivery.socket";
@@ -22,6 +23,7 @@ function startBackgroundDb() {
 }
 
 async function main() {
+  await connectRedis();
   const app = createApp();
   const server = createServer(app);
   const io = new Server(server, {
@@ -35,6 +37,7 @@ async function main() {
   server.listen(port, listenHost, () => {
     // eslint-disable-next-line no-console
     console.log(`API listening on http://${listenHost}:${port} (PORT from env)`);
+    console.log(`[security] rate-limit store=${isRedisConfigured() ? "redis" : "memory"}`);
     startBackgroundDb();
     const emailDiag = getEmailTransportDiagnostics();
     console.log(

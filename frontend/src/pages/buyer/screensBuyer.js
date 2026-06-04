@@ -81,6 +81,7 @@ import {
 } from "components/products/ProductCustomizationPanel";
 import { cartLineSellerUnit, effectiveListUnitPrice, productAddonDefs } from "utils/productAddons";
 import { containsContactSharing, CONTACT_SHARING_BLOCKED_MESSAGE } from "utils/contactSharingGuard";
+import { getGuestOrderSecret, setGuestOrderSecret } from "utils/guestOrderSecret";
 import { SITE_NAME, SUPPORT_LABEL } from "config/brand";
 import { formatGhc } from "utils/money";
 import { TrackOrderModal } from "components/features/TrackOrderModal";
@@ -456,10 +457,7 @@ export function ProductDetailPage() {
   const [selectedAddonLabels, setSelectedAddonLabels] = useState([]);
   const [orderNotes, setOrderNotes] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
-  const guestReviewSecret =
-    orderIdFromUrl && typeof sessionStorage !== "undefined"
-      ? sessionStorage.getItem(guestOrderSecretStorageKey(orderIdFromUrl)) || ""
-      : "";
+  const guestReviewSecret = orderIdFromUrl ? getGuestOrderSecret(orderIdFromUrl) : "";
 
   useEffect(() => {
     if (!productId) return;
@@ -2704,10 +2702,6 @@ function validateMomoByProvider(provider, localRaw) {
   return "";
 }
 
-function guestOrderSecretStorageKey(orderId) {
-  return `guestOrderSecret:${orderId || ""}`;
-}
-
 export function CheckoutPage() {
   const { user, accessToken } = useAuth();
   const { items, subtotal } = useCart();
@@ -2832,12 +2826,8 @@ export function CheckoutPage() {
       });
       const order = checkoutRes.order;
       const guestAccessSecret = checkoutRes.guestAccessSecret;
-      if (guestAccessSecret && order && order.id) {
-        try {
-          sessionStorage.setItem(guestOrderSecretStorageKey(order.id), String(guestAccessSecret));
-        } catch {
-          /* ignore quota */
-        }
+      if (guestAccessSecret && order?.id) {
+        setGuestOrderSecret(order.id, guestAccessSecret);
       }
       const payEmail = accessToken
         ? (user && user.email && String(user.email).trim()) || ""
@@ -5242,10 +5232,7 @@ export function PaymentSuccessPage() {
       return;
     }
 
-    const guestSecret =
-      typeof sessionStorage !== "undefined"
-        ? sessionStorage.getItem(guestOrderSecretStorageKey(orderId)) || ""
-        : "";
+    const guestSecret = getGuestOrderSecret(orderId);
 
     if (!accessToken && !guestSecret) {
       setPhase("no_auth");

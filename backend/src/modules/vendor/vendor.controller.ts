@@ -249,8 +249,8 @@ export const recordVendorAnalyticsEvent = asyncHandler(async (req: Request, res:
 
 export const vendorAnalytics = asyncHandler(async (req: Request, res: Response) => {
   const sid = new mongoose.Types.ObjectId(req.user!.id);
-  const daysRaw = typeof req.query.days === "string" ? Number.parseInt(req.query.days, 10) : 30;
-  const { dayKeys, startUtc } = chartDayRange(Number.isFinite(daysRaw) ? daysRaw : 30);
+  const days = Math.min(365, Math.max(1, Number((req.query as { days?: number }).days) || 30));
+  const { dayKeys, startUtc } = chartDayRange(days);
   const commissionPct = await getEffectiveCommissionPercent();
 
   const productCount = await Product.countDocuments({ sellerId: sid });

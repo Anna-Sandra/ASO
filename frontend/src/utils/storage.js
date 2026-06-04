@@ -9,7 +9,8 @@ export const StorageKeys = {
   CSRF_TOKEN: "SHOPIQGH_csrf_token",
   CART: "SHOPIQGH_cart_v1",
   THEME: "SHOPIQGH-theme",
-  SAVE_SESSION: "SHOPIQGH_save_session"
+  SAVE_SESSION: "SHOPIQGH_save_session",
+  VENDOR_PROMO_DRAFT: "SHOPIQGH_vendor_promo_draft"
 };
 
 const LEGACY_KEYS = {
@@ -17,8 +18,14 @@ const LEGACY_KEYS = {
   [StorageKeys.REFRESH_TOKEN]: ["campusmart_refresh_token"],
   [StorageKeys.CART]: ["campusmart_cart_v1"],
   [StorageKeys.THEME]: ["campus-mart-theme"],
-  [StorageKeys.SAVE_SESSION]: ["campusmart_save_session"]
+  [StorageKeys.SAVE_SESSION]: ["campusmart_save_session"],
+  [StorageKeys.VENDOR_PROMO_DRAFT]: ["shopiqgh-vendor-promo-draft"]
 };
+
+/** Per-order guest checkout secret (localStorage). */
+export function guestOrderSecretStorageKey(orderId) {
+  return `SHOPIQGH_guest_order_secret_${String(orderId || "").trim()}`;
+}
 
 function hasWindow() {
   return typeof window !== "undefined";

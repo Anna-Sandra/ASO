@@ -9,6 +9,7 @@ import { tryResolvePublicUploadBaseUrl } from "../../utils/publicMediaUrl";
 import { cloudinary, isCloudinaryConfigured } from "../../config/cloudinary";
 import { assertUploadStorageAvailable } from "../../utils/uploadStorage";
 import { User, normalizeUserRole, publicPhoneForPaymentRole } from "../auth/user.model";
+import { assertUploadedFileKinds, assertUploadedFilesKinds } from "../../utils/validateUpload";
 
 const PUBLIC_UPLOAD_BASE_ERR =
   "Could not resolve public URL for uploads. Set API_PUBLIC_ORIGIN to your HTTPS API origin (e.g. https://your-service.onrender.com).";
@@ -73,6 +74,7 @@ export const uploadProductImages = asyncHandler(async (req: Request, res: Respon
   assertUploadStorageAvailable();
   const files = req.files as Express.Multer.File[] | undefined;
   if (!files?.length) throw new HttpError(400, "No image files received");
+  await assertUploadedFilesKinds(files, ["jpeg", "png", "webp", "gif"]);
 
   let urls: string[];
   if (isCloudinaryConfigured()) {
@@ -133,6 +135,7 @@ export const uploadVendorVerification = asyncHandler(async (req: Request, res: R
   assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
+  await assertUploadedFileKinds(file, ["jpeg", "png", "webp"]);
 
   const url = isCloudinaryConfigured()
     ? await cloudinaryUploadMulterFile(file, "vendor-verification", "auto")
@@ -164,6 +167,7 @@ export const uploadVendorSelfie = asyncHandler(async (req: Request, res: Respons
   assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
+  await assertUploadedFileKinds(file, ["jpeg", "png", "webp", "gif"]);
   const url = isCloudinaryConfigured()
     ? await cloudinaryUploadMulterFile(file, "vendor-selfies", "image")
     : `${requirePublicUploadBase(req)}/uploads/vendor-selfies/${file.filename}`;
@@ -200,6 +204,7 @@ export const uploadReportEvidence = asyncHandler(async (req: Request, res: Respo
   assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
+  await assertUploadedFileKinds(file, ["jpeg", "png", "webp"]);
 
   const url = isCloudinaryConfigured()
     ? await cloudinaryUploadMulterFile(file, "report-evidence", "image")
@@ -237,6 +242,7 @@ export const uploadBookPdf = asyncHandler(async (req: Request, res: Response) =>
   assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No file received");
+  await assertUploadedFileKinds(file, ["pdf"]);
 
   const url = isCloudinaryConfigured()
     ? await cloudinaryUploadMulterFile(file, "book-pdfs", "raw")
@@ -268,6 +274,7 @@ export const uploadDeliveryProof = asyncHandler(async (req: Request, res: Respon
   assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No image file received");
+  await assertUploadedFileKinds(file, ["jpeg", "png", "webp"]);
 
   const url = isCloudinaryConfigured()
     ? await cloudinaryUploadMulterFile(file, "delivery-proof", "image")
@@ -280,6 +287,7 @@ export const uploadProfileImage = asyncHandler(async (req: Request, res: Respons
   assertUploadStorageAvailable();
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new HttpError(400, "No image file received");
+  await assertUploadedFileKinds(file, ["jpeg", "png", "webp", "gif"]);
 
   const url = isCloudinaryConfigured()
     ? await cloudinaryUploadMulterFile(file, "avatars", "image")

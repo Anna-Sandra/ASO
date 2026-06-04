@@ -5,7 +5,8 @@ import helmet from "helmet";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import morgan from "morgan";
-import rateLimit from "express-rate-limit";
+import { createRateLimiter } from "./utils/createRateLimiter";
+import { requestSecurity } from "./middleware/requestSecurity";
 
 import { env } from "./config/env";
 import { authorize, optionalProtect, protect } from "./middleware/auth";
@@ -58,14 +59,15 @@ export function createApp() {
   // Respect one reverse proxy hop (common on hosting platforms/load balancers).
   app.set("trust proxy", 1);
 
-  const assistantChatRateLimit = rateLimit({
+  const assistantChatRateLimit = createRateLimiter({
     windowMs: env.ASSISTANT_CHAT_RATE_LIMIT_WINDOW_MS,
-    limit:
-      env.ASSISTANT_CHAT_RATE_LIMIT_MAX > 0
-        ? env.ASSISTANT_CHAT_RATE_LIMIT_MAX
-        : env.NODE_ENV === "production"
-          ? 45
-          : 400,
+    limit: (req) => {
+      if (env.ASSISTANT_CHAT_RATE_LIMIT_MAX > 0) return env.ASSISTANT_CHAT_RATE_LIMIT_MAX;
+      if (req.user) {
+        return env.NODE_ENV === "production" ? 45 : 400;
+      }
+      return env.NODE_ENV === "production" ? 12 : 200;
+    },
     standardHeaders: true,
     legacyHeaders: false,
     message: {
@@ -74,11 +76,40 @@ export function createApp() {
     }
   });
 
+  const apiPublicOrigin = (env.API_PUBLIC_ORIGIN || "").trim().replace(/\/$/, "");
+
   app.use(
     helmet({
-      crossOriginResourcePolicy: { policy: "cross-origin" }
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+      hsts: env.NODE_ENV === "production" ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+      contentSecurityPolicy:
+        env.NODE_ENV === "production"
+          ? {
+              directives: {
+                defaultSrc: ["'self'"],
+                baseUri: ["'self'"],
+                formAction: ["'self'"],
+                frameAncestors: ["'none'"],
+                objectSrc: ["'none'"],
+                scriptSrc: ["'self'"],
+                styleSrc: ["'self'", "'unsafe-inline'"],
+                imgSrc: ["'self'", "data:", "https:", "blob:"],
+                connectSrc: ["'self'", env.APP_ORIGIN, ...(apiPublicOrigin ? [apiPublicOrigin] : [])],
+                fontSrc: ["'self'", "https:", "data:"]
+              }
+            }
+          : false
     })
   );
+
+  const uploadRateLimit = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    limit: env.NODE_ENV === "production" ? 40 : 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "too_many_requests", message: "Too many uploads. Please wait and try again." }
+  });
   app.use(
     cors({
       origin: env.APP_ORIGIN,
@@ -88,13 +119,13 @@ export function createApp() {
   );
 
   app.use(
-    rateLimit({
+    createRateLimiter({
       windowMs: 15 * 60 * 1000,
-      limit: env.NODE_ENV === "production" ? 300 : 2000,
-      standardHeaders: true,
-      legacyHeaders: false
+      limit: env.NODE_ENV === "production" ? 300 : 2000
     })
   );
+
+  app.use(requestSecurity);
 
   app.use(morgan("dev"));
   app.use(cookieParser());
@@ -138,7 +169,16 @@ export function createApp() {
     verifyPaystackByReference
   );
 
-  app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+  app.use(
+    "/uploads",
+    (_req, res, next) => {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+      res.setHeader("Content-Disposition", "inline");
+      next();
+    },
+    express.static(path.join(process.cwd(), "uploads"), { dotfiles: "deny", index: false })
+  );
 
   app.get("/", (_req, res) => res.json({ ok: true, service: "backend-api" }));
   app.get("/health", (_req, res) => {
@@ -180,8 +220,8 @@ export function createApp() {
   app.get("/api/assistant/llm", getAssistantLlmStatus);
   app.post(
     "/api/assistant/chat",
-    assistantChatRateLimit,
     optionalProtect,
+    assistantChatRateLimit,
     validateBody(assistantChatSchema),
     postAssistantChat
   );
@@ -196,7 +236,7 @@ export function createApp() {
     uploadBookPdfMiddleware,
     uploadBookPdf
   );
-  app.use("/api/uploads", uploadRoutes);
+  app.use("/api/uploads", uploadRateLimit, uploadRoutes);
   app.use("/api/businesses", businessRoutes);
   app.use("/api/promotions", promotionPublicRoutes);
   app.use("/api/service-inquiries", serviceInquiryRoutes);
@@ -260,7 +300,11 @@ export function createApp() {
     validateQuery(adminRidersQuerySchema),
     listAdminRiders
   );
-  app.use("/api/admin", adminRoutes);
+  const adminRateLimit = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    limit: env.NODE_ENV === "production" ? 180 : 800
+  });
+  app.use("/api/admin", adminRateLimit, adminRoutes);
   app.use("/api/orders", orderRoutes);
   app.use("/api/vendor", vendorRoutes);
   app.use("/api/vendor-applications", vendorApplicationRoutes);

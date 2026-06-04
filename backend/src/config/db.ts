@@ -197,6 +197,7 @@ async function migrateConversationKindAndIndex() {
 
 export async function connectDb() {
   mongoose.set("strictQuery", true);
+  mongoose.set("sanitizeFilter", true);
   await mongoose.connect(env.MONGODB_URI, {
     serverSelectionTimeoutMS: 12_000,
     connectTimeoutMS: 12_000

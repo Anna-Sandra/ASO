@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { protect, authorize } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
-import { validateBody } from "../../middleware/validate";
+import { validateBody, validateQuery } from "../../middleware/validate";
+import { daysQuerySchema } from "../../schemas/commonQuery";
 import { orderStatusUpdateSchema } from "../orders/order.schemas";
 import { paystackPayoutAccountSchema, vendorAnalyticsEventBodySchema } from "./vendor.schemas";
 import vendorSubscriptionRoutes from "../vendorSubscription/vendorSubscription.routes";
@@ -68,7 +69,14 @@ router.post(
   validateBody(vendorAnalyticsEventBodySchema),
   recordVendorAnalyticsEvent
 );
-router.get("/analytics", protect, requireActiveAccount, authorize("seller", "admin"), vendorAnalytics);
+router.get(
+  "/analytics",
+  protect,
+  requireActiveAccount,
+  authorize("seller", "admin"),
+  validateQuery(daysQuerySchema),
+  vendorAnalytics
+);
 router.get("/reviews", protect, requireActiveAccount, authorize("seller", "admin"), listVendorReviews);
 
 router.get("/promotions", protect, requireActiveAccount, authorize("seller", "admin"), listVendorPromotions);

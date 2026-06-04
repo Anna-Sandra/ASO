@@ -1,13 +1,23 @@
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env";
 import { HttpError } from "../utils/httpError";
+import { ADMIN_GATE_COOKIE, verifyAdminGateCookie } from "./adminGate";
 
-/** When `ADMIN_ACCESS_SECRET` is set in .env, all `/api/admin` requests must send `X-Admin-Secret: <same>`. */
+/**
+ * Production requires `ADMIN_ACCESS_SECRET` (enforced at startup).
+ * Accepts matching `X-Admin-Secret` or the httpOnly gate cookie from admin sign-in.
+ */
 export function requireAdminEnvSecret(req: Request, _res: Response, next: NextFunction) {
-  if (!env.ADMIN_ACCESS_SECRET) return next();
-  const h = (req.headers["x-admin-secret"] || req.headers["x-admin-key"]) as string | undefined;
-  if (h !== env.ADMIN_ACCESS_SECRET) {
-    return next(new HttpError(403, "Invalid or missing admin secret header"));
+  const secret = (env.ADMIN_ACCESS_SECRET || "").trim();
+  if (!secret) {
+    if (env.NODE_ENV === "production") {
+      return next(new HttpError(503, "Admin API is not configured."));
+    }
+    return next();
   }
-  next();
+  const h = (req.headers["x-admin-secret"] || req.headers["x-admin-key"]) as string | undefined;
+  if (h === secret) return next();
+  const cookie = req.cookies?.[ADMIN_GATE_COOKIE] as string | undefined;
+  if (verifyAdminGateCookie(cookie)) return next();
+  return next(new HttpError(403, "Invalid or missing admin access verification."));
 }

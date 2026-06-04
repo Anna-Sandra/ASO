@@ -13,6 +13,12 @@ const envSchema = z.object({
   APP_ORIGIN: z.string().url(),
 
   /**
+   * Optional Redis URL (e.g. Upstash `rediss://…`) for distributed rate limits across API instances.
+   * When unset, limits are in-memory per process (weaker under horizontal scale).
+   */
+  REDIS_URL: z.string().optional().default(""),
+
+  /**
    * Public URL origin of **this API** as the browser would load it (e.g. https://api.example.com or http://localhost:4000).
    * Used to build absolute product image URLs for the shopping assistant. Defaults to http://localhost:PORT when empty.
    */
@@ -146,8 +152,8 @@ const envSchema = z.object({
     }),
 
   /**
-   * Optional. When set, all `/api/admin` requests require header `X-Admin-Secret: <this>` in addition
-   * to a JWT for user role `admin`. Set the same value in the frontend as `REACT_APP_ADMIN_API_KEY` for the SPA.
+   * Required in production (min 24 chars). Admin routes accept `X-Admin-Secret` or the httpOnly
+   * `adminAccessGate` cookie issued on admin sign-in (do not bundle this value in the SPA).
    */
   ADMIN_ACCESS_SECRET: z.string().optional().default(""),
 
@@ -246,6 +252,25 @@ const envSchema = z.object({
 });
 
 const _env = envSchema.parse(process.env);
+
+if (_env.NODE_ENV === "production") {
+  const adminSecret = (_env.ADMIN_ACCESS_SECRET || "").trim();
+  if (adminSecret.length < 24) {
+    throw new Error(
+      "ADMIN_ACCESS_SECRET must be set to at least 24 characters in production (admin API gate + sign-in cookie)."
+    );
+  }
+  if (_env.LOG_OTP_IN_CONSOLE) {
+    throw new Error("LOG_OTP_IN_CONSOLE must not be enabled in production.");
+  }
+  const bootEmail = (_env.BOOTSTRAP_ADMIN_EMAIL || "").trim();
+  if (bootEmail && (_env.BOOTSTRAP_ADMIN_PASSWORD || "").length < 16) {
+    throw new Error(
+      "BOOTSTRAP_ADMIN_PASSWORD must be at least 16 characters when BOOTSTRAP_ADMIN_EMAIL is set in production."
+    );
+  }
+}
+
 export const env = _env;
 
 const SUPER_EMAILS_NORMALIZED: string[] = (() => {

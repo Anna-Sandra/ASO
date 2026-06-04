@@ -1,6 +1,6 @@
 import { Router } from "express";
-import rateLimit from "express-rate-limit";
 import { env } from "../../config/env";
+import { createRateLimiter } from "../../utils/createRateLimiter";
 import { requireCsrf } from "../../middleware/csrf";
 import { protect } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
@@ -37,18 +37,24 @@ import {
 
 const router = Router();
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20 });
-const otpVerifyLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 50 });
+const authLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 20 });
+const otpVerifyLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 50 });
+const forgotPasswordLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: env.NODE_ENV === "production" ? 8 : 40
+});
+const registerLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  limit: env.NODE_ENV === "production" ? 12 : 80
+});
 /** Login is capped tighter in production; dev often hits 429 from refresh/StrictMode/typos. Successful 2xx logins do not count. */
-const loginLimiter = rateLimit({
+const loginLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   limit: env.NODE_ENV === "production" ? 25 : 200,
-  skipSuccessfulRequests: true,
-  standardHeaders: true,
-  legacyHeaders: false
+  skipSuccessfulRequests: true
 });
 
-router.post("/register", authLimiter, validateBody(registerSchema), register);
+router.post("/register", registerLimiter, validateBody(registerSchema), register);
 router.post("/verify-email", authLimiter, validateBody(verifyEmailSchema), verifyEmail);
 router.post(
   "/resend-verification-otp",
@@ -64,7 +70,7 @@ router.post("/refresh", authLimiter, requireCsrf, validateBody(refreshSchema), r
 router.post("/logout", authLimiter, requireCsrf, logout);
 
 router.post("/activate-account", authLimiter, validateBody(activateAccountSchema), activateAccount);
-router.post("/forgot-password", authLimiter, validateBody(forgotPasswordSchema), forgotPassword);
+router.post("/forgot-password", forgotPasswordLimiter, validateBody(forgotPasswordSchema), forgotPassword);
 router.post("/reset-password", authLimiter, validateBody(resetPasswordSchema), resetPassword);
 
 router.get("/me", protect, requireActiveAccount, getMe);

@@ -8,21 +8,6 @@ import { apiErrorMessage as buildApiErrorMessage } from "utils/userFacingError";
  * Set `REACT_APP_API_URL` in Vercel (or `.env`), then redeploy; there is no localhost fallback here.
  */
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/$/, "");
-const ADMIN_API_KEY = (process.env.REACT_APP_ADMIN_API_KEY || "").trim();
-
-/**
- * When `REACT_APP_ADMIN_API_KEY` matches the API `ADMIN_ACCESS_SECRET`, admin routes can be called
- * (defense in depth; role is still enforced on the server).
- * @param {string} path
- * @param {Headers} headers
- */
-function mergeAdminHeaders(path, headers) {
-  if (!ADMIN_API_KEY) return;
-  if (!path.includes("/api/admin")) return;
-  if (!headers.has("X-Admin-Secret")) {
-    headers.set("X-Admin-Secret", ADMIN_API_KEY);
-  }
-}
 
 export function getApiBase() {
   return API_BASE;
@@ -113,7 +98,6 @@ export async function apiFetch(path, opts = {}) {
   const retried = Boolean(opts._retriedAfterRefresh);
   const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
   const headers = new Headers(opts.headers || {});
-  mergeAdminHeaders(path, headers);
   const authHdr = String(headers.get("Authorization") || "").trim();
   if (!authHdr.startsWith("Bearer ")) {
     const sid = getOrCreateSaveSessionId();
@@ -162,7 +146,6 @@ export async function apiFetch(path, opts = {}) {
     if (nextToken) {
       const nextHeaders = new Headers(opts.headers || {});
       nextHeaders.set("Authorization", `Bearer ${nextToken}`);
-      mergeAdminHeaders(path, nextHeaders);
       return apiFetch(path, { ...opts, headers: nextHeaders, _retriedAfterRefresh: true });
     }
   }

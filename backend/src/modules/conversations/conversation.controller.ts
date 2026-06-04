@@ -136,7 +136,7 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
   if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
     throw new HttpError(403, "Messages are only available for buyer or seller accounts");
   }
-  const role = resolveMsgInbox(accountRole, (req.query as { as?: unknown }).as);
+  const role = resolveMsgInbox(accountRole, (req.query as { as?: "buyer" | "seller" }).as);
   const uid = new mongoose.Types.ObjectId(req.user!.id);
 
   if (role === "buyer") {
@@ -318,7 +318,7 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
   if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
     throw new HttpError(403, "Only buyers and sellers can send messages");
   }
-  const role = resolveMsgInbox(accountRole, (req.query as { as?: unknown }).as);
+  const role = resolveMsgInbox(accountRole, (req.query as { as?: "buyer" | "seller" }).as);
   if (!mongoose.isValidObjectId(peerUserId)) throw new HttpError(400, "Invalid peer user id");
   const peerOid = new mongoose.Types.ObjectId(peerUserId);
   const myOid = new mongoose.Types.ObjectId(req.user!.id);

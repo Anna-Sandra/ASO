@@ -15,8 +15,7 @@ import { h } from "utils/h";
 import { Button, Field, InlineNotice, TextArea, TextInput } from "components/ui";
 import { formatGhc } from "utils/money";
 import { SITE_NAME } from "config/brand";
-
-const DRAFT_KEY = "shopiqgh-vendor-promo-draft";
+import { StorageKeys, storageGetJSON, storageRemove, storageSetJSON } from "utils/storage";
 const DESC_MAX = 300;
 const TERMS_MAX = 300;
 
@@ -43,12 +42,7 @@ function fmtPreviewDate(iso) {
 }
 
 function readDraft() {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  return storageGetJSON(StorageKeys.VENDOR_PROMO_DRAFT, null);
 }
 
 function PromoPhonePreview({ form, storeLabel, product, offerLabel }) {
@@ -235,7 +229,7 @@ export function VendorPromoCreateStudio({ products, inventoryErr, onCancel, onSu
   });
 
   const saveDraftLocal = () => {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draftPayload()));
+    storageSetJSON(StorageKeys.VENDOR_PROMO_DRAFT, draftPayload());
     toast("Draft saved on this device.", { variant: "success" });
   };
 
@@ -302,7 +296,7 @@ export function VendorPromoCreateStudio({ products, inventoryErr, onCancel, onSu
         headers: { Authorization: `Bearer ${accessToken}` },
         json: body
       });
-      localStorage.removeItem(DRAFT_KEY);
+      storageRemove(StorageKeys.VENDOR_PROMO_DRAFT);
       toast("Promo submitted — admin will review before it goes live on shop & deals.", { variant: "success" });
       onSuccess?.();
     } catch (e) {

@@ -12,7 +12,7 @@ export const getNotificationSummary = asyncHandler(async (req: Request, res: Res
 });
 
 export const getNotifications = asyncHandler(async (req: Request, res: Response) => {
-  const unreadOnly = String(req.query.unread || "").toLowerCase() === "true";
+  const unreadOnly = Boolean((req.query as { unread?: boolean }).unread);
   const query: Record<string, unknown> = { userId: new mongoose.Types.ObjectId(req.user!.id) };
   if (unreadOnly) query.read = false;
 
