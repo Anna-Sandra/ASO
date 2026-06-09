@@ -17,7 +17,6 @@ import {
   Edit3,
   Eye,
   FileText,
-  Filter as FilterIcon,
   Flag,
   Image as ImageIcon,
   LayoutDashboard,
@@ -69,9 +68,7 @@ import {
   ThemeToggleButton
 } from "components/ui";
 
-/* -------------------------------------------------------------------------- */
-/*  Constants                                                                 */
-/* -------------------------------------------------------------------------- */
+
 
 const REPORT_CATS = {
   item_not_delivered: "Item not delivered",
@@ -1639,6 +1636,7 @@ export function AdminPage() {
     ordersSearch,
     reportsPage,
     reportsTab,
+    reportsPriority,
     reportsSearch,
     conversationsPage
   ]);
@@ -1689,6 +1687,22 @@ export function AdminPage() {
   useEffect(() => setListingsPage(1), [listingsTab, listingsSearch]);
   useEffect(() => setOrdersPage(1), [ordersTab, ordersSearch]);
   useEffect(() => setReportsPage(1), [reportsTab, reportsPriority, reportsSearch]);
+
+  /* Debounced admin search — filters apply as you type; no separate Apply button needed */
+  useEffect(() => {
+    const t = window.setTimeout(() => setUsersSearch(usersSearchInput.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [usersSearchInput]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setRidersSearch(ridersSearchInput.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [ridersSearchInput]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setReportsSearch(reportsSearchInput.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [reportsSearchInput]);
 
   /* ---------------- Guards ---------------- */
 
@@ -3105,17 +3119,7 @@ export function AdminPage() {
                 h("option", { key: "a", value: "active" }, "Active"),
                 h("option", { key: "s", value: "suspended" }, "Suspended"),
                 h("option", { key: "b", value: "banned" }, "Banned")
-              ]),
-              h(
-                "button",
-                {
-                  key: "go",
-                  type: "submit",
-                  className:
-                    "inline-flex items-center gap-1 rounded-2xl border border-slate-300/70 bg-white/50 px-3 py-2 text-sm font-medium hover:bg-white/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-                },
-                [h(FilterIcon, { key: "i", className: "h-4 w-4" }), "Apply"]
-              )
+              ])
             ]
           )
         ]
@@ -3494,17 +3498,7 @@ export function AdminPage() {
                 h("option", { key: "all", value: "all" }, "Email: any"),
                 h("option", { key: "y", value: "yes" }, "Verified"),
                 h("option", { key: "n", value: "no" }, "Not verified")
-              ]),
-              h(
-                "button",
-                {
-                  key: "go",
-                  type: "submit",
-                  className:
-                    "inline-flex items-center gap-1 rounded-2xl border border-slate-300/70 bg-white/50 px-3 py-2 text-sm font-medium hover:bg-white/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-                },
-                [h(FilterIcon, { key: "i", className: "h-4 w-4" }), "Apply"]
-              )
+              ])
             ]
           )
         ]
@@ -5321,16 +5315,6 @@ export function AdminPage() {
                   "rounded-2xl border border-slate-300/70 bg-white/60 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-white/80 focus:border-sky-400 focus:outline-none dark:border-white/10 dark:bg-night-900/60 dark:text-slate-200"
               },
               REPORT_PRIORITY_OPTS.map((o) => h("option", { key: o.id, value: o.id }, o.label))
-            ),
-            h(
-              "button",
-              {
-                key: "go",
-                type: "submit",
-                className:
-                  "rounded-2xl border border-slate-300/70 bg-white/50 px-3 py-2 text-sm font-medium hover:bg-white/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-              },
-              "Apply"
             )
           ]
         )
