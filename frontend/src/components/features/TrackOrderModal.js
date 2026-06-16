@@ -43,7 +43,7 @@ export function resolveBuyerOrderRef(raw, orders, userPhone) {
     }
     const paidLike = (s) => ["paid", "processing", "sent_for_delivery", "delivered"].includes(s);
     const latest = [...(orders || [])]
-      .filter((o) => paidLike(o.status))
+      .filter((o) => paidLike(o.status) && o.fulfillmentMode !== "onsite")
       .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0];
     if (!latest) {
       return { error: "No paid orders found to track on this account yet." };

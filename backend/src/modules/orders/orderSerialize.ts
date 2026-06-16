@@ -167,6 +167,7 @@ export function serializeOrder(o: Record<string, unknown>, opts?: SerializeOrder
       typeof (o as { refundFulfillmentWasDelivered?: unknown }).refundFulfillmentWasDelivered === "boolean"
         ? (o as { refundFulfillmentWasDelivered: boolean }).refundFulfillmentWasDelivered
         : null,
+    fulfillmentMode: (o as { fulfillmentMode?: string }).fulfillmentMode === "onsite" ? "onsite" : "delivery",
     deliveredAt: (o as { deliveredAt?: Date | null }).deliveredAt ?? null,
     buyerConfirmedReceiptAt: (o as { buyerConfirmedReceiptAt?: Date | null }).buyerConfirmedReceiptAt ?? null,
     pointsRedeemed: Number((o as { pointsRedeemed?: number }).pointsRedeemed) || 0,

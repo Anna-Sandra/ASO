@@ -20,6 +20,7 @@ import type { VendorAnalyticsEventType } from "./vendorAnalyticsEvent.model";
 import { VendorAnalyticsEvent } from "./vendorAnalyticsEvent.model";
 import { topSearchTermsForSeller } from "../products/shopSearchImpression.service";
 import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
+import { isOnsiteFulfillmentOrder } from "../orders/orderFulfillment";
 import { sendOrderDeliveredEmails } from "../../utils/orderDeliveredEmail";
 
 const PAID_ORDER_STATUSES = ["paid", "processing", "sent_for_delivery", "delivered"] as const;
@@ -114,11 +115,21 @@ export const updateVendorOrderStatus = asyncHandler(async (req: Request, res: Re
     if (status === "processing" && order.status !== "paid") {
       throw new HttpError(400, "You can only start preparing after the order is paid.");
     }
-    if (status === "sent_for_delivery" && !["paid", "processing"].includes(order.status)) {
-      throw new HttpError(400, "Mark the order as preparing before sending it for delivery.");
+    if (status === "sent_for_delivery") {
+      if (isOnsiteFulfillmentOrder(order)) {
+        throw new HttpError(400, "Service orders are fulfilled on-site — mark as completed instead.");
+      }
+      if (!["paid", "processing"].includes(order.status)) {
+        throw new HttpError(400, "Mark the order as preparing before sending it for delivery.");
+      }
     }
-    if (status === "delivered" && !["paid", "processing", "sent_for_delivery"].includes(order.status)) {
-      throw new HttpError(400, "Complete the earlier delivery steps before marking delivered.");
+    if (status === "delivered") {
+      const allowedPrev = isOnsiteFulfillmentOrder(order)
+        ? ["paid", "processing"]
+        : ["paid", "processing", "sent_for_delivery"];
+      if (!allowedPrev.includes(order.status)) {
+        throw new HttpError(400, "Complete the earlier fulfillment steps before marking delivered.");
+      }
     }
     order.status = status as typeof order.status;
     if (status === "delivered") {

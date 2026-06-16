@@ -62,6 +62,7 @@ import {
   canAddProductToCart,
   usesRequestInsteadOfCart,
   isServicesCategory,
+  cartRequiresDelivery,
   supportsCartCustomizationNotes,
   productBadge,
   browseFilterEmptyHint,
@@ -93,7 +94,7 @@ import { RestaurantContextPanel } from "components/marketplace/RestaurantContext
 import { productSocialProofLines, productStoreContext } from "utils/productStore";
 import { buyerDisplayPrice } from "utils/checkoutPricing";
 import { computeCheckoutBreakdown, useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
-import { buyerOrderFulfillmentPillClass, formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
+import { buyerOrderFulfillmentPillClass, formatOrderFulfillmentLabel, isOnsiteOrder } from "utils/orderStatusDisplay";
 import { h, f } from "utils/h";
 import {
   Button,
@@ -2743,6 +2744,7 @@ export function CheckoutPage() {
   const [dropoffHint, setDropoffHint] = useState("");
   const pricingOpts = useCheckoutPricingOptions();
   const hasBlockedLine = items.some((p) => usesRequestInsteadOfCart(p));
+  const needsDelivery = cartRequiresDelivery(items);
 
   const breakdown =
     pricingOpts && subtotal > 0
@@ -2812,13 +2814,15 @@ export function CheckoutPage() {
       }
     }
     const dropLabel = String(dropoffLabel || "").trim();
-    if (!dropLabel) {
-      setErr("Enter where we should deliver (hostel, hall, landmark, or address).");
-      return;
-    }
-    if (dropoffLat == null || dropoffLng == null) {
-      setErr('Tap "Use my location" so couriers can find you on the live delivery map.');
-      return;
+    if (needsDelivery) {
+      if (!dropLabel) {
+        setErr("Enter where we should deliver (hostel, hall, landmark, or address).");
+        return;
+      }
+      if (dropoffLat == null || dropoffLng == null) {
+        setErr('Tap "Use my location" so couriers can find you on the live delivery map.');
+        return;
+      }
     }
     setLoading(true);
     try {
@@ -2831,9 +2835,13 @@ export function CheckoutPage() {
             ? { selectedAddonLabels: p.selectedAddonLabels }
             : {})
         })),
-        dropoffLabel: dropLabel,
-        dropoffLatitude: dropoffLat,
-        dropoffLongitude: dropoffLng,
+        ...(needsDelivery
+          ? {
+              dropoffLabel: dropLabel,
+              dropoffLatitude: dropoffLat,
+              dropoffLongitude: dropoffLng
+            }
+          : {}),
         ...(accessToken && redeemPts > 0 ? { redeemPoints: redeemPts } : {}),
         ...(!accessToken
           ? {
@@ -3100,43 +3108,59 @@ export function CheckoutPage() {
         ])
       : null,
 
-    h("div", { key: "dropoff", className: "mt-3 space-y-2 rounded-xl border border-sky-500/25 bg-sky-500/5 p-3 dark:border-sky-400/20 dark:bg-sky-950/20" }, [
-      h("p", { key: "dlab", className: "flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-sky-800 dark:text-sky-200" }, [
-        h(MapPin, { key: "ic", className: "h-3.5 w-3.5", "aria-hidden": true }),
-        "Delivery drop-off"
-      ]),
-      h(Field, { key: "addr", label: "Where should we deliver?" }, h(TextInput, {
-        value: dropoffLabel,
-        onChange: (e) => setDropoffLabel(e.target.value),
-        placeholder: "e.g. East Legon, Pent Hostel, Room 12"
-      })),
-      h(
-        Button,
-        {
-          key: "loc",
-          type: "button",
-          variant: "ghost",
-          className: "!w-full !justify-center !rounded-xl !border !border-sky-400/40 !text-xs !font-semibold",
-          loading: locatingDropoff,
-          onClick: useMyDropoffLocation
-        },
-        [h(Crosshair, { key: "ic", className: "h-4 w-4" }), locatingDropoff ? "Getting location…" : "Use my location"]
-      ),
-      dropoffLat != null && dropoffLng != null
-        ? h(
-            "p",
-            { key: "ok", className: "text-[11px] font-medium text-emerald-700 dark:text-emerald-300" },
-            "GPS pinned — shown on your live delivery map."
-          )
-        : null,
-      dropoffHint
-        ? h("p", { key: "hint", className: "text-[11px] text-amber-800 dark:text-amber-200" }, dropoffHint)
-        : h(
-            "p",
-            { key: "sub", className: "text-[11px] text-slate-500 dark:text-slate-400" },
-            "Required for courier tracking. Your rider sees this pin after payment."
-          )
-    ]),
+    needsDelivery
+      ? h("div", { key: "dropoff", className: "mt-3 space-y-2 rounded-xl border border-sky-500/25 bg-sky-500/5 p-3 dark:border-sky-400/20 dark:bg-sky-950/20" }, [
+          h("p", { key: "dlab", className: "flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-sky-800 dark:text-sky-200" }, [
+            h(MapPin, { key: "ic", className: "h-3.5 w-3.5", "aria-hidden": true }),
+            "Delivery drop-off"
+          ]),
+          h(Field, { key: "addr", label: "Where should we deliver?" }, h(TextInput, {
+            value: dropoffLabel,
+            onChange: (e) => setDropoffLabel(e.target.value),
+            placeholder: "e.g. East Legon, Pent Hostel, Room 12"
+          })),
+          h(
+            Button,
+            {
+              key: "loc",
+              type: "button",
+              variant: "ghost",
+              className: "!w-full !justify-center !rounded-xl !border !border-sky-400/40 !text-xs !font-semibold",
+              loading: locatingDropoff,
+              onClick: useMyDropoffLocation
+            },
+            [h(Crosshair, { key: "ic", className: "h-4 w-4" }), locatingDropoff ? "Getting location…" : "Use my location"]
+          ),
+          dropoffLat != null && dropoffLng != null
+            ? h(
+                "p",
+                { key: "ok", className: "text-[11px] font-medium text-emerald-700 dark:text-emerald-300" },
+                "GPS pinned — shown on your live delivery map."
+              )
+            : null,
+          dropoffHint
+            ? h("p", { key: "hint", className: "text-[11px] text-amber-800 dark:text-amber-200" }, dropoffHint)
+            : h(
+                "p",
+                { key: "sub", className: "text-[11px] text-slate-500 dark:text-slate-400" },
+                "Required for courier tracking. Your rider sees this pin after payment."
+              )
+        ])
+      : h(
+          "div",
+          {
+            key: "onsite",
+            className: "mt-3 rounded-xl border border-violet-500/25 bg-violet-500/5 p-3 dark:border-violet-400/20 dark:bg-violet-950/20"
+          },
+          [
+            h("p", { key: "olab", className: "text-[10px] font-bold uppercase tracking-wide text-violet-800 dark:text-violet-200" }, "On-site service"),
+            h(
+              "p",
+              { key: "ohint", className: "mt-1 text-[11px] leading-snug text-slate-600 dark:text-slate-300" },
+              "No courier delivery — coordinate time and place with the provider after payment (use order messages if needed)."
+            )
+          ]
+        ),
 
     err ? h(InlineNotice, { key: "err", variant: "error", className: "mt-3", onDismiss: () => setErr("") }, err) : null,
 
@@ -4903,6 +4927,15 @@ export function BuyerOrdersPage() {
         .reduce((sum, o) => sum + (Number(o.total) || 0), 0),
     [orders]
   );
+  const hasDeliverableOrders = useMemo(
+    () =>
+      orders.some(
+        (o) =>
+          !isOnsiteOrder(o) &&
+          ["paid", "processing", "sent_for_delivery", "delivered"].includes(o.status)
+      ),
+    [orders]
+  );
 
   return h(f, null, [
     h(
@@ -4918,6 +4951,7 @@ export function BuyerOrdersPage() {
       accessToken &&
         !loading &&
         !err &&
+        hasDeliverableOrders &&
         h(GlassCard, {
           key: "track-invite",
           className:
@@ -5154,7 +5188,8 @@ export function BuyerOrdersPage() {
                       )
                     )
                   ]),
-                ["paid", "processing", "sent_for_delivery", "delivered"].includes(o.status)
+                ["paid", "processing", "sent_for_delivery", "delivered"].includes(o.status) &&
+                  !isOnsiteOrder(o)
                   ? h(
                       "div",
                       {
@@ -5220,7 +5255,7 @@ export function BuyerOrdersPage() {
         setTrackModalOpen(false);
         setTrackPresetOrderId(null);
       },
-      orders,
+      orders: orders.filter((o) => !isOnsiteOrder(o)),
       initialOrderId: trackPresetOrderId
     })
   ]);

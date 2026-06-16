@@ -11,6 +11,7 @@ import { Product, type ProductDoc } from "../products/product.model";
 import { enrichPublicProducts, foodMenuStoreFilter, activeStoreBusinessIds } from "../products/product.publicSerialize";
 import { User, normalizeUserRole } from "../auth/user.model";
 import { withContacts, type WithContactsOpts } from "./orderSerialize";
+import { fulfillmentModeForProductCategories } from "./orderFulfillment";
 
 function buyerPaymentDetailsOpts(req: Request): WithContactsOpts {
   const role = normalizeUserRole(req.user?.role);
@@ -204,6 +205,21 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
   const hasDropCoords =
     dropLat != null && dropLng != null && Number.isFinite(Number(dropLat)) && Number.isFinite(Number(dropLng));
 
+  const fulfillmentMode = fulfillmentModeForProductCategories(validated.map((v) => v.p.category));
+  const isOnsite = fulfillmentMode === "onsite";
+
+  if (!isOnsite) {
+    if (!dropoffLabel) {
+      throw new HttpError(400, "Enter a delivery drop-off address (hostel, hall, landmark, or street).");
+    }
+    if (!hasDropCoords) {
+      throw new HttpError(
+        400,
+        "Pin your delivery location — dropoffLatitude and dropoffLongitude are required together."
+      );
+    }
+  }
+
   const order = await Order.create({
     buyerId: buyerId ?? null,
     ...(guestContact ? { guestContact } : {}),
@@ -217,13 +233,14 @@ export const checkout = asyncHandler(async (req: Request, res: Response) => {
     status: "pending_payment",
     pointsRedeemed: redeemPts,
     firstOrderDiscountApplied: firstOrderApplied,
-    ...(hasDropCoords
+    fulfillmentMode,
+    ...(!isOnsite && hasDropCoords
       ? {
           dropoffLatitude: Number(dropLat),
           dropoffLongitude: Number(dropLng),
           dropoffLabel
         }
-      : dropoffLabel
+      : !isOnsite && dropoffLabel
         ? { dropoffLabel }
         : {})
   });

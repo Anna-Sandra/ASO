@@ -104,6 +104,8 @@ export interface OrderDoc {
   refundFulfillmentWasDelivered?: boolean;
   /** When rider/vendor marked order delivered (buyer confirm / payout window). */
   deliveredAt?: Date | null;
+  /** `onsite` = service-only orders (no courier / live map). Defaults to delivery for legacy rows. */
+  fulfillmentMode?: "delivery" | "onsite";
   /** Buyer delivery drop-off captured at checkout (copied to Delivery on first track). */
   dropoffLatitude?: number | null;
   dropoffLongitude?: number | null;
@@ -236,6 +238,7 @@ const orderSchema = new Schema<OrderDoc>(
     refundStockRestored: { type: Boolean, default: false },
     refundFulfillmentWasDelivered: { type: Boolean },
     deliveredAt: { type: Date, default: null },
+    fulfillmentMode: { type: String, enum: ["delivery", "onsite"], default: "delivery" },
     dropoffLatitude: { type: Number, default: null },
     dropoffLongitude: { type: Number, default: null },
     dropoffLabel: { type: String, default: "", trim: true, maxlength: 500 },

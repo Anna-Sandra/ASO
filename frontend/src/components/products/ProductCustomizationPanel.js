@@ -67,7 +67,9 @@ export function ProductCustomizationPanel({
   const [customizeOpen, setCustomizeOpen] = useState(hasVendorOptions);
 
   const isFood = product.category === "food_drinks";
-  const { adds, removals } = splitAddonsByKind(defs);
+  const isService = product.category === "services";
+  const { adds, removals: rawRemovals } = splitAddonsByKind(defs);
+  const removals = isService ? [] : rawRemovals;
   const baseList = Math.max(0, Number(product.price) || 0);
   const listUnit = effectiveListUnitPrice(product, selectedLabels);
   const delta = addonDeltaFromDefs(defs, selectedLabels);
@@ -126,7 +128,7 @@ export function ProductCustomizationPanel({
       : null;
 
   const customizeTitle = isFood ? "Customize your meal" : "Customize this service";
-  const addsTitle = isFood ? "Add-ons" : "Add-ons";
+  const addsTitle = isFood ? "Add-ons" : "Optional add-ons";
   const removalsTitle = isFood ? "Removals" : "Remove / adjust";
 
   return h(

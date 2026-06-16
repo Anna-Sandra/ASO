@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import type { HydratedDocument } from "mongoose";
 import { Delivery, DELIVERY_STAGES, type DeliveryDoc, type DeliveryStage } from "./delivery.model";
 import { Order, type OrderDoc, type OrderStatus } from "../orders/order.model";
+import { isOnsiteFulfillmentOrder } from "../orders/orderFulfillment";
 import { RiderProfile } from "./riderProfile.model";
 import { User, publicPhoneForPaymentRole } from "../auth/user.model";
 import { HttpError } from "../../utils/httpError";
@@ -104,6 +105,7 @@ function applyOrderDropoffToDelivery(d: HydratedDocument<DeliveryDoc>, order: Hy
 }
 
 export async function ensureDeliveryForOrder(order: HydratedDocument<OrderDoc>): Promise<HydratedDocument<DeliveryDoc> | null> {
+  if (isOnsiteFulfillmentOrder(order)) return null;
   if (!isPaidLike(order.status)) return null;
 
   let d = await Delivery.findOne({ orderId: order._id });
@@ -159,6 +161,7 @@ async function persistAndBroadcast(
 }
 
 export async function mirrorOrderStatusToDelivery(order: HydratedDocument<OrderDoc>): Promise<void> {
+  if (isOnsiteFulfillmentOrder(order)) return;
   if (!isPaidLike(order.status)) return;
 
   const dInit = await ensureDeliveryForOrder(order);
@@ -225,6 +228,9 @@ export async function assignRiderToDelivery(params: {
   const { orderId, riderUserId } = params;
   const order = await Order.findById(orderId);
   if (!order) throw new HttpError(404, "Order not found");
+  if (isOnsiteFulfillmentOrder(order)) {
+    throw new HttpError(400, "This order is fulfilled on-site — courier delivery does not apply.");
+  }
   const d0 = await ensureDeliveryForOrder(order);
   if (!d0) throw new HttpError(400, "Delivery tracking starts after payment.");
   const d = await Delivery.findById(d0._id);

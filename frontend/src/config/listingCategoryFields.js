@@ -279,8 +279,9 @@ export const LISTING_FORM_META = {
     draftHelp:
       "Services still go through moderation. Buyers often continue in Messages — reply promptly after approval.",
     showAddons: true,
+    addonsAllowRemove: false,
     addonsLabel: "Service add-ons (optional extras buyers can select)",
-    addonsHint: "e.g. Express delivery +GHS 10, Extra revision +GHS 20"
+    addonsHint: "e.g. Rush turnaround +GHS 10, Extra revision +GHS 20"
   }
 };
 

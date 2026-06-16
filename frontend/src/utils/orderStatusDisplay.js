@@ -3,7 +3,12 @@
  * "Delivered · Refunded" only when the refund completed after the order was already marked delivered.
  */
 
-function humanizeRawOrderStatus(s) {
+function humanizeRawOrderStatus(s, o) {
+  if (isOnsiteOrder(o)) {
+    if (s === "delivered") return "Completed";
+    if (s === "sent_for_delivery") return "In progress";
+    if (s === "processing") return "In progress";
+  }
   return String(s || "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
@@ -16,10 +21,16 @@ function refundWasPostDelivery(o) {
   return String(o.status || "") === "delivered";
 }
 
+/** Service-only orders — no courier / live map tracking. */
+export function isOnsiteOrder(o) {
+  return o?.fulfillmentMode === "onsite";
+}
+
 /** Primary label: order status, or refund-aware text when fully refunded. */
 export function formatOrderFulfillmentLabel(o) {
   const rs = o.refundStatus || "none";
-  if (rs !== "refunded") return humanizeRawOrderStatus(o.status);
+  if (rs !== "refunded") return humanizeRawOrderStatus(o.status, o);
+  if (isOnsiteOrder(o) && refundWasPostDelivery(o)) return "Completed · Refunded";
   return refundWasPostDelivery(o) ? "Delivered · Refunded" : "Refunded";
 }
 

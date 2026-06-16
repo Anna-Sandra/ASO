@@ -89,6 +89,17 @@ export function isServicesCategory(entity) {
   return entity.category === "services";
 }
 
+/** Cart contains only service listings — fulfilled on-site, no courier delivery. */
+export function cartIsOnsiteOnly(items) {
+  if (!Array.isArray(items) || items.length === 0) return false;
+  return items.every((p) => isServicesCategory(p));
+}
+
+/** Whether checkout needs a delivery drop-off (address + GPS). */
+export function cartRequiresDelivery(items) {
+  return !cartIsOnsiteOnly(items);
+}
+
 /** Legacy: food used call-to-order. Listings now use real prices — keep helper for compatibility (always false). */
 export function isFoodCallToOrderCategory() {
   return false;

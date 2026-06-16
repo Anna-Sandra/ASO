@@ -56,7 +56,7 @@ import {
 import { LISTING_STOCK_WHEN_AVAILABLE } from "config/listingStock";
 import { formatGhc } from "utils/money";
 import { containsContactSharing, CONTACT_SHARING_BLOCKED_MESSAGE } from "utils/contactSharingGuard";
-import { formatOrderFulfillmentLabel } from "utils/orderStatusDisplay";
+import { formatOrderFulfillmentLabel, isOnsiteOrder } from "utils/orderStatusDisplay";
 import { h, f } from "utils/h";
 import {
   Badge,
@@ -77,8 +77,21 @@ import {
 const MAX_PRODUCT_IMAGES = 500;
 /** Must match backend `MAX_PRODUCT_IMAGES_PER_UPLOAD`. */
 const UPLOAD_IMAGES_CHUNK = 40;
-function vendorAddonPriceLabel(kind) {
-  return kind === "remove" ? "Discount when removed (GHS, 0 or negative)" : "Extra charge (GHS)";
+function vendorAddonPriceLabel(kind, isService = false) {
+  if (kind === "remove") {
+    return isService ? "Price adjustment (GHS, 0 or negative)" : "Discount when removed (GHS, 0 or negative)";
+  }
+  return isService ? "Extra charge (GHS)" : "Extra charge (GHS)";
+}
+
+function vendorFormatAddonRow(a, isService = false) {
+  const kind = a.kind === "remove" ? "remove" : "add";
+  const d = Number(a.priceDelta) || 0;
+  const prefix =
+    kind === "remove" ? (isService ? "Exclude · " : "Remove · ") : isService ? "Add-on · " : "Add · ";
+  if (d === 0) return `${prefix}${a.label} (no price change)`;
+  if (d > 0) return `${prefix}${a.label} +${formatGhc(d)}`;
+  return `${prefix}${a.label} ${formatGhc(d)}`;
 }
 
 function vendorAddonsPayload(addons) {
@@ -93,15 +106,6 @@ function vendorAddonsPayload(addons) {
       };
     })
     .filter((a) => a.label);
-}
-
-function vendorFormatAddonRow(a) {
-  const kind = a.kind === "remove" ? "remove" : "add";
-  const d = Number(a.priceDelta) || 0;
-  const prefix = kind === "remove" ? "Remove · " : "Add · ";
-  if (d === 0) return `${prefix}${a.label} (no price change)`;
-  if (d > 0) return `${prefix}${a.label} +${formatGhc(d)}`;
-  return `${prefix}${a.label} ${formatGhc(d)}`;
 }
 
 function vendorListingAddonsBlock(
@@ -119,7 +123,12 @@ function vendorListingAddonsBlock(
   setAddonPrice
 ) {
   if (!meta.showAddons) return null;
-  const isRemove = addonKind === "remove";
+  const isService = Boolean(meta.isService);
+  const allowRemove = !isService && meta.addonsAllowRemove !== false;
+  const isRemove = allowRemove && addonKind === "remove";
+  const defaultHint = isService
+    ? "Optional paid extras buyers can tick on checkout (e.g. rush turnaround, extra revision)."
+    : "Buyers tap to add extras or remove ingredients on the product page; price updates automatically.";
   return h(
     "div",
     { key: "addons-section", className: "space-y-3 rounded-2xl border border-slate-200 p-4 dark:border-white/10" },
@@ -129,7 +138,7 @@ function vendorListingAddonsBlock(
         h(
           "p",
           { key: "addon-hint", className: "mt-1 text-xs text-slate-500 dark:text-slate-400" },
-          meta.addonsHint || "Buyers tap to add extras or remove ingredients on the product page; price updates automatically."
+          meta.addonsHint || defaultHint
         )
       ]),
       addons.length > 0
@@ -144,7 +153,11 @@ function vendorListingAddonsBlock(
                   className: "flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 dark:bg-white/5"
                 },
                 [
-                  h("span", { key: "lbl", className: "text-sm text-slate-800 dark:text-slate-200" }, vendorFormatAddonRow(a)),
+                  h(
+                    "span",
+                    { key: "lbl", className: "text-sm text-slate-800 dark:text-slate-200" },
+                    vendorFormatAddonRow(a, isService)
+                  ),
                   h(
                     "button",
                     {
@@ -160,47 +173,56 @@ function vendorListingAddonsBlock(
             )
           )
         : null,
-      h("div", { key: "kind-row", className: "flex flex-wrap gap-2" }, [
-        h(
-          "button",
-          {
-            key: "kind-add",
-            type: "button",
-            onClick: () => setAddonKind("add"),
-            className: `rounded-full px-3 py-1.5 text-xs font-semibold ${
-              !isRemove
-                ? "bg-sky-600 text-white"
-                : "border border-slate-200 bg-white text-slate-600 dark:border-white/15 dark:bg-night-900 dark:text-slate-300"
-            }`
-          },
-          "Add extra"
-        ),
-        h(
-          "button",
-          {
-            key: "kind-remove",
-            type: "button",
-            onClick: () => setAddonKind("remove"),
-            className: `rounded-full px-3 py-1.5 text-xs font-semibold ${
-              isRemove
-                ? "bg-rose-600 text-white"
-                : "border border-slate-200 bg-white text-slate-600 dark:border-white/15 dark:bg-night-900 dark:text-slate-300"
-            }`
-          },
-          "Remove ingredient"
-        )
-      ]),
+      allowRemove
+        ? h("div", { key: "kind-row", className: "flex flex-wrap gap-2" }, [
+            h(
+              "button",
+              {
+                key: "kind-add",
+                type: "button",
+                onClick: () => setAddonKind("add"),
+                className: `rounded-full px-3 py-1.5 text-xs font-semibold ${
+                  !isRemove
+                    ? "bg-sky-600 text-white"
+                    : "border border-slate-200 bg-white text-slate-600 dark:border-white/15 dark:bg-night-900 dark:text-slate-300"
+                }`
+              },
+              isService ? "Paid extra" : "Add extra"
+            ),
+            h(
+              "button",
+              {
+                key: "kind-remove",
+                type: "button",
+                onClick: () => setAddonKind("remove"),
+                className: `rounded-full px-3 py-1.5 text-xs font-semibold ${
+                  isRemove
+                    ? "bg-rose-600 text-white"
+                    : "border border-slate-200 bg-white text-slate-600 dark:border-white/15 dark:bg-night-900 dark:text-slate-300"
+                }`
+              },
+              "Remove ingredient"
+            )
+          ])
+        : null,
       h("div", { key: "addon-add", className: "flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-2" }, [
         h(
           "div",
           { key: "lbl-w", className: "min-w-0 flex-1" },
           h(
             Field,
-            { key: "addon-lbl-field", label: isRemove ? "Ingredient to remove" : "Extra name" },
+            {
+              key: "addon-lbl-field",
+              label: isRemove ? "Ingredient to remove" : isService ? "Add-on name" : "Extra name"
+            },
             h(TextInput, {
               value: addonLabel,
               onChange: (e) => setAddonLabel(e.target.value),
-              placeholder: isRemove ? "e.g. Wele, Shito, Onions" : "e.g. Extra chicken, Avocado"
+              placeholder: isRemove
+                ? "e.g. Wele, Shito, Onions"
+                : isService
+                  ? "e.g. Rush turnaround, Extra revision"
+                  : "e.g. Extra chicken, Avocado"
             })
           )
         ),
@@ -209,7 +231,7 @@ function vendorListingAddonsBlock(
           { key: "pr-w", className: "w-full sm:w-44" },
           h(
             Field,
-            { key: "addon-price-field", label: vendorAddonPriceLabel(addonKind) },
+            { key: "addon-price-field", label: vendorAddonPriceLabel(addonKind, isService) },
             h(TextInput, {
               type: "number",
               step: "0.01",
@@ -236,7 +258,7 @@ function vendorListingAddonsBlock(
             },
             className: "mb-1 rounded-xl bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 sm:shrink-0"
           },
-          "Add option"
+          isService ? "Add add-on" : "Add option"
         )
       ])
     ]
@@ -2334,6 +2356,7 @@ export function VendorOrdersPage() {
         { className: "divide-y divide-slate-100 dark:divide-white/10" },
         orders.map((o) => {
           const status = normalizeOrderStatus(o.status);
+          const onsite = isOnsiteOrder(o);
           const lines = o.items || [];
           const line = lines[0];
           const lineLabel =
@@ -2412,19 +2435,33 @@ export function VendorOrdersPage() {
                         "Mark processing"
                       ),
                     status === "processing" &&
-                      h(
-                        Button,
-                        {
-                          key: "sent_for_delivery",
-                          variant: "ghost",
-                          className:
-                            "!min-h-[32px] !px-2.5 !py-1 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
-                          type: "button",
-                          onClick: () => updateStatus(o.id, "sent_for_delivery")
-                        },
-                        "Sent for delivery"
-                      ),
-                    status === "sent_for_delivery" &&
+                      (onsite
+                        ? h(
+                            Button,
+                            {
+                              key: "complete",
+                              variant: "ghost",
+                              className:
+                                "!min-h-[32px] !px-2.5 !py-1 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                              type: "button",
+                              onClick: () => updateStatus(o.id, "delivered")
+                            },
+                            "Mark complete"
+                          )
+                        : h(
+                            Button,
+                            {
+                              key: "sent_for_delivery",
+                              variant: "ghost",
+                              className:
+                                "!min-h-[32px] !px-2.5 !py-1 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                              type: "button",
+                              onClick: () => updateStatus(o.id, "sent_for_delivery")
+                            },
+                            "Sent for delivery"
+                          )),
+                    !onsite &&
+                      status === "sent_for_delivery" &&
                       h(
                         Button,
                         {
@@ -2436,6 +2473,20 @@ export function VendorOrdersPage() {
                           onClick: () => updateStatus(o.id, "delivered")
                         },
                         "Delivered"
+                      ),
+                    onsite &&
+                      status === "sent_for_delivery" &&
+                      h(
+                        Button,
+                        {
+                          key: "del-onsite",
+                          variant: "ghost",
+                          className:
+                            "!min-h-[32px] !px-2.5 !py-1 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
+                          type: "button",
+                          onClick: () => updateStatus(o.id, "delivered")
+                        },
+                        "Mark complete"
                       ),
                     h(Button, {
                       key: "to-msg",
@@ -2455,7 +2506,7 @@ export function VendorOrdersPage() {
                     ])
                   ].filter(Boolean)
                 ),
-                ["paid", "processing", "sent_for_delivery"].includes(status)
+                !onsite && ["paid", "processing", "sent_for_delivery"].includes(status)
                   ? h(VendorCourierAssign, {
                       key: `cc-${o.id}`,
                       accessToken,
