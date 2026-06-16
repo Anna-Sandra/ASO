@@ -56,9 +56,10 @@ function assertOwner(req: Request, b: BusinessDoc) {
 function serializeBusiness(b: BusinessDoc) {
   const id = b._id instanceof mongoose.Types.ObjectId ? b._id.toString() : String(b._id);
   const ownerId = b.ownerId instanceof mongoose.Types.ObjectId ? b.ownerId.toString() : String(b.ownerId);
+  const isServiceStore = b.businessType === "service_provider";
   /** Lean docs may omit keys; match schema defaults so JSON never drops flags (undefined strips in JSON.stringify). */
-  const pickupAvailable = b.pickupAvailable == null ? true : Boolean(b.pickupAvailable);
-  const deliveryAvailable = b.deliveryAvailable == null ? false : Boolean(b.deliveryAvailable);
+  const pickupAvailable = isServiceStore ? false : b.pickupAvailable == null ? true : Boolean(b.pickupAvailable);
+  const deliveryAvailable = isServiceStore ? false : b.deliveryAvailable == null ? false : Boolean(b.deliveryAvailable);
   return {
     id,
     ownerId,
@@ -78,8 +79,8 @@ function serializeBusiness(b: BusinessDoc) {
     tags: b.tags,
     deliveryAvailable,
     pickupAvailable,
-    estimatedDeliveryMins: b.estimatedDeliveryMins,
-    deliveryFee: b.deliveryFee,
+    estimatedDeliveryMins: isServiceStore ? null : b.estimatedDeliveryMins,
+    deliveryFee: isServiceStore ? null : b.deliveryFee,
     settings: b.settings,
     createdAt: b.createdAt,
     updatedAt: b.updatedAt
@@ -306,10 +307,10 @@ export const createMyBusiness = asyncHandler(async (req: Request, res: Response)
     deliveryRadiusKm: body.deliveryRadiusKm ?? null,
     operatingHours: (body.operatingHours ?? {}) as Record<string, BusinessDayHours>,
     tags: body.tags ?? [],
-    deliveryAvailable: body.deliveryAvailable,
-    pickupAvailable: body.pickupAvailable,
-    estimatedDeliveryMins: body.estimatedDeliveryMins ?? null,
-    deliveryFee: body.deliveryFee ?? null,
+    deliveryAvailable: body.businessType === "service_provider" ? false : body.deliveryAvailable,
+    pickupAvailable: body.businessType === "service_provider" ? false : body.pickupAvailable,
+    estimatedDeliveryMins: body.businessType === "service_provider" ? null : (body.estimatedDeliveryMins ?? null),
+    deliveryFee: body.businessType === "service_provider" ? null : (body.deliveryFee ?? null),
     settings: (body.settings ?? {}) as Record<string, unknown>
   });
   const b = doc.toObject() as BusinessDoc;
@@ -383,6 +384,16 @@ export const updateMyBusinessByKey = asyncHandler(async (req: Request, res: Resp
         doc.name = nm;
         doc.slug = await ensureUniqueSlug(slugBaseFromName(nm));
       }
+    }
+  }
+
+  if (doc.businessType === "service_provider") {
+    doc.pickupAvailable = false;
+    doc.deliveryAvailable = false;
+    doc.deliveryFee = null;
+    doc.estimatedDeliveryMins = null;
+    if (doc.settings && typeof doc.settings === "object") {
+      doc.settings = { ...(doc.settings as Record<string, unknown>), liveLocationEnabled: false };
     }
   }
 

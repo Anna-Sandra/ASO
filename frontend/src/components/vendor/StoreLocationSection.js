@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Crosshair, MapPin, Radio } from "lucide-react";
 import { useGeolocation } from "hooks/useGeolocation";
+import { isServiceProviderStore } from "config/catalog";
 import { h } from "utils/h";
 import { Button, Field, TextInput } from "components/ui";
 import { clearStorefrontDraftSection, readStorefrontDraft, writeStorefrontDraft } from "utils/vendorStorefrontDraft";
@@ -19,12 +20,15 @@ function movedEnough(prev, lat, lng) {
 }
 
 /**
- * Inline store location: label + live GPS pin for buyers, riders, and dispatch maps.
+ * Inline store location: label + GPS pin for shoppers (and live sync for dispatch on product stores).
  */
 export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
+  const isServiceStore = isServiceProviderStore(business);
   const geo = business?.geoLocation;
   const [label, setLabel] = useState(business?.locationLabel ? String(business.locationLabel) : "");
-  const [liveEnabled, setLiveEnabled] = useState(Boolean(business?.settings?.liveLocationEnabled));
+  const [liveEnabled, setLiveEnabled] = useState(
+    isServiceProviderStore(business) ? false : Boolean(business?.settings?.liveLocationEnabled)
+  );
   const { position, error, watching, getOnce, startWatch, clearWatch, setError } = useGeolocation();
   const onSaveRef = useRef(onSave);
   const lastLiveSaveRef = useRef({ at: 0, lat: null, lng: null });
@@ -42,10 +46,13 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
           ? String(business.locationLabel)
           : ""
     );
-    setLiveEnabled(Boolean(business?.settings?.liveLocationEnabled));
-  }, [business?.id, business?.updatedAt, business?.locationLabel, business?.settings?.liveLocationEnabled, storeSlug]);
+    setLiveEnabled(
+      isServiceProviderStore(business) ? false : Boolean(business?.settings?.liveLocationEnabled)
+    );
+  }, [business?.id, business?.updatedAt, business?.businessType, business?.locationLabel, business?.settings?.liveLocationEnabled, storeSlug]);
 
   const saveLivePosition = (lat, lng) => {
+    if (isServiceStore) return;
     const now = Date.now();
     const prev = lastLiveSaveRef.current;
     if (now - prev.at < LIVE_SAVE_MS && !movedEnough(prev, lat, lng)) return;
@@ -54,7 +61,7 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
   };
 
   useEffect(() => {
-    if (!business?.settings?.liveLocationEnabled) {
+    if (isServiceStore || !business?.settings?.liveLocationEnabled) {
       clearWatch();
       return undefined;
     }
@@ -62,7 +69,7 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
       saveLivePosition(lat, lng);
     });
     return () => clearWatch();
-  }, [business?.id, business?.settings?.liveLocationEnabled, startWatch, clearWatch]);
+  }, [business?.id, business?.settings?.liveLocationEnabled, isServiceStore, startWatch, clearWatch]);
 
   const displayLat = position?.lat ?? geo?.lat;
   const displayLng = position?.lng ?? geo?.lng;
@@ -80,7 +87,7 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
       await persist(
         {
           geoLocation: { lat, lng },
-          locationLabel: label.trim() || business?.locationLabel || "Store location"
+          locationLabel: label.trim() || business?.locationLabel || (isServiceStore ? "Service location" : "Store location")
         },
         { silent: false, reload: true }
       );
@@ -120,12 +127,18 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
         h("div", null, [
           h("div", { className: "flex items-center gap-2 text-sky-600 dark:text-sky-300" }, [
             h(MapPin, { className: "h-5 w-5" }),
-            h("h2", { className: "font-display text-lg font-bold text-slate-900 dark:text-white" }, "Store location")
+            h(
+              "h2",
+              { className: "font-display text-lg font-bold text-slate-900 dark:text-white" },
+              isServiceStore ? "Service location" : "Store location"
+            )
           ]),
           h(
             "p",
             { className: "mt-1 max-w-xl text-xs leading-relaxed text-slate-500 dark:text-slate-400" },
-            "Pin your store on the map so buyers know where to pick up, and riders can navigate during delivery. Live location syncs about once per minute while enabled."
+            isServiceStore
+              ? "Pin where you usually meet clients or run the service so buyers know the area. Coordinate exact time in Messages after they book."
+              : "Pin your store on the map so buyers know where to pick up, and riders can navigate during delivery. Live location syncs about once per minute while enabled."
           )
         ]),
         hasPin
@@ -141,7 +154,7 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
             )
           : null
       ]),
-      h(Field, { key: "lbl", label: "Location name (shown to shoppers)", className: "mt-4" }, [
+      h(Field, { key: "lbl", label: isServiceStore ? "Location name (shown to buyers)" : "Location name (shown to shoppers)", className: "mt-4" }, [
         h(TextInput, {
           value: label,
           onChange: (e) => {
@@ -149,7 +162,7 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
             setLabel(next);
             if (storeSlug) writeStorefrontDraft(storeSlug, { locationLabel: next });
           },
-          placeholder: "e.g. University Main Gate, Block A"
+          placeholder: isServiceStore ? "e.g. East Legon studio, Campus Barber Shop" : "e.g. University Main Gate, Block A"
         })
       ]),
       h("div", { key: "acts", className: "mt-3 flex flex-wrap gap-2" }, [
@@ -163,21 +176,23 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
           { type: "button", variant: "outline", className: "gap-2", disabled: saving, onClick: () => void useCurrentOnce() },
           [h(Crosshair, { className: "h-4 w-4" }), " Use current location"]
         ),
-        h(
-          Button,
-          {
-            type: "button",
-            variant: watching || liveEnabled ? "primary" : "outline",
-            className: "gap-2",
-            disabled: saving,
-            onClick: () => void toggleLive()
-          },
-          [
-            h(Radio, { className: `h-4 w-4 ${watching ? "animate-pulse" : ""}` }),
-            watching || liveEnabled ? " Live location on" : " Share live location"
-          ]
-        )
-      ]),
+        !isServiceStore
+          ? h(
+              Button,
+              {
+                type: "button",
+                variant: watching || liveEnabled ? "primary" : "outline",
+                className: "gap-2",
+                disabled: saving,
+                onClick: () => void toggleLive()
+              },
+              [
+                h(Radio, { className: `h-4 w-4 ${watching ? "animate-pulse" : ""}` }),
+                watching || liveEnabled ? " Live location on" : " Share live location"
+              ]
+            )
+          : null
+      ].filter(Boolean)),
       hasPin
         ? h(
             "div",
@@ -204,7 +219,9 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
         : h(
             "p",
             { key: "empty", className: "mt-4 text-xs text-slate-500 dark:text-slate-400" },
-            "No GPS pin yet. Use current location or turn on live sharing so dispatch can track your store."
+            isServiceStore
+              ? "No location pinned yet. Use current location so buyers know your general area."
+              : "No GPS pin yet. Use current location or turn on live sharing so dispatch can track your store."
           ),
       error ? h("p", { key: "err", className: "mt-2 text-xs font-medium text-rose-600 dark:text-rose-300" }, error) : null
     ]

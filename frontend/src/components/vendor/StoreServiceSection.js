@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Truck } from "lucide-react";
+import { isServiceProviderStore } from "config/catalog";
 import { h } from "utils/h";
 import { Button, Field, TextInput } from "components/ui";
 import { clearStorefrontDraftSection, readStorefrontDraft, writeStorefrontDraft } from "utils/vendorStorefrontDraft";
@@ -16,6 +17,7 @@ function serviceFromBusiness(business) {
 
 /** Pickup / delivery options — edited on the storefront page (not in account settings). */
 export function StoreServiceSection({ business, storeSlug, onSave, saving }) {
+  const isService = isServiceProviderStore(business);
   const [pickup, setPickup] = useState(Boolean(business?.pickupAvailable));
   const [delivery, setDelivery] = useState(Boolean(business?.deliveryAvailable));
   const [fee, setFee] = useState(business?.deliveryFee != null ? String(business.deliveryFee) : "");
@@ -57,6 +59,8 @@ export function StoreServiceSection({ business, storeSlug, onSave, saving }) {
     });
     if (ok !== false) clearStorefrontDraftSection(storeSlug, "service");
   };
+
+  if (isService) return null;
 
   return h(
     "section",

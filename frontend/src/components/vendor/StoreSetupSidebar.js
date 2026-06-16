@@ -1,28 +1,32 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, Package, Plus } from "lucide-react";
+import { isServiceProviderStore } from "config/catalog";
 import { h } from "utils/h";
 import { storeStatusLabel } from "utils/storeStatus";
 
 function buildSetupChecks(business) {
   const geo = business?.geoLocation;
   const hasGeo = geo && Number.isFinite(Number(geo.lat)) && Number.isFinite(Number(geo.lng));
+  const isService = isServiceProviderStore(business);
   return [
     { id: "logo", label: "Logo uploaded", done: Boolean(business?.logoUrl), href: "#store-branding" },
     { id: "banner", label: "Banner uploaded", done: Boolean(business?.bannerUrl), href: "#store-branding" },
     {
       id: "location",
-      label: "Live map pin",
+      label: isService ? "Service location" : "Live map pin",
       done: hasGeo || Boolean(String(business?.locationLabel || "").trim()),
       href: "#store-location"
     },
-    {
-      id: "service",
-      label: "Pickup or delivery",
-      done: Boolean(business?.pickupAvailable || business?.deliveryAvailable),
-      href: "#store-service"
-    }
-  ];
+    isService
+      ? null
+      : {
+          id: "service",
+          label: "Pickup or delivery",
+          done: Boolean(business?.pickupAvailable || business?.deliveryAvailable),
+          href: "#store-service"
+        }
+  ].filter(Boolean);
 }
 
 export function StoreSetupSidebar({ business, listingCount, reviewCount, slug, onSubmit, canSubmit }) {

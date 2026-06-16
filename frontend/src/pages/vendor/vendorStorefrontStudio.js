@@ -5,7 +5,7 @@ import { apiFetch, apiUploadProductImages, fetchBusinessStorefront, linkListings
 import { useAuth, useNotice } from "context";
 import { h } from "utils/h";
 import { buildStoreListingBlocks, prepareStorefrontListingGroups, StorefrontProductCard } from "pages/marketplace/marketplaceHubScreens";
-import { storeUsesMenuSections } from "config/catalog";
+import { storeUsesMenuSections, isServiceProviderStore } from "config/catalog";
 import { Button, Field, GlassPanel, InlineNotice, TextArea } from "components/ui";
 import { StoreLocationSection } from "components/vendor/StoreLocationSection";
 import { StoreServiceSection } from "components/vendor/StoreServiceSection";
@@ -223,6 +223,7 @@ export function VendorStorefrontManagePage() {
   );
 
   const isFoodMenu = storeUsesMenuSections(business?.businessType);
+  const isServiceStore = isServiceProviderStore(business);
 
   const menuBlocks = useMemo(
     () => buildStoreListingBlocks({ business, orderedSectionIds, grouped, unassigned }),
@@ -472,7 +473,9 @@ export function VendorStorefrontManagePage() {
               storeStatusLabel(business?.status)
             )
           ]),
-          h("p", { className: "mt-1 text-sm text-slate-500" }, "Branding, GPS pin, service options, and menu — all on this page.")
+          h("p", { className: "mt-1 text-sm text-slate-500" }, isServiceStore
+            ? "Branding, service location, and listings — all on this page."
+            : "Branding, GPS pin, service options, and menu — all on this page.")
         ]),
         h("div", { className: "flex flex-wrap gap-2" }, [
           canSubmitForApproval
@@ -584,7 +587,9 @@ export function VendorStorefrontManagePage() {
                         writeStorefrontDraft(storeSlug, { description: next });
                       },
                       rows: 3,
-                      placeholder: "e.g. Fresh local meals, made to order. Open Mon–Sat."
+                      placeholder: isServiceStore
+                        ? "e.g. Photography, tutoring, and design — book via Messages after checkout."
+                        : "e.g. Fresh local meals, made to order. Open Mon–Sat."
                     })
                   ),
                   h(
@@ -605,7 +610,9 @@ export function VendorStorefrontManagePage() {
           ]
         ),
         h(StoreLocationSection, { business, storeSlug, onSave: patchBusiness, saving: savingPatch }),
-        h(StoreServiceSection, { business, storeSlug, onSave: patchBusiness, saving: savingPatch }),
+        !isServiceStore
+          ? h(StoreServiceSection, { business, storeSlug, onSave: patchBusiness, saving: savingPatch })
+          : null,
         h(
           "section",
           {
@@ -655,14 +662,16 @@ export function VendorStorefrontManagePage() {
                 h(
                   "h2",
                   { className: "font-display text-lg font-bold text-slate-900 dark:text-white" },
-                  isFoodMenu ? "Menu & listings" : "Store listings"
+                  isFoodMenu ? "Menu & listings" : isServiceStore ? "Service listings" : "Store listings"
                 ),
                 h(
                   "p",
                   { className: "mt-0.5 text-xs text-slate-500" },
                   isFoodMenu
                     ? "Dishes and items shoppers see on your public menu."
-                    : "Products shoppers see on your public store."
+                    : isServiceStore
+                      ? "Services shoppers see on your public store."
+                      : "Products shoppers see on your public store."
                 )
               ]),
               h(
@@ -704,7 +713,7 @@ export function VendorStorefrontManagePage() {
                         to: `/vendor/products/new?store=${encodeURIComponent(storeSlug)}`,
                         className: "inline-block text-sm font-bold text-sky-600 hover:underline"
                       },
-                      "+ Add your first product"
+                      "+ Add your first listing"
                     )
                   ])
                 )

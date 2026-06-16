@@ -1,9 +1,27 @@
 import { formatGhc } from "utils/money";
+import { isServiceProviderStore } from "config/catalog";
 
 /**
  * Public-store copy for pickup / delivery (shared by shopper storefront + vendor preview).
  */
 export function buildStoreFulfillmentDisplay(business) {
+  if (isServiceProviderStore(business)) {
+    const label = business?.locationLabel?.trim();
+    const locationSnippet = label
+      ? `On-site at ${label} — message the provider to confirm time.`
+      : "On-site service — message the provider to confirm where and when.";
+    return {
+      pickupOk: false,
+      deliveryOk: false,
+      etaRange: null,
+      deliveryFeeText: null,
+      serviceSnippet: "On-site service",
+      fulfillmentTile: "On-site — coordinate with provider",
+      locationSnippet,
+      heroChips: [{ key: "onsite", label: "On-site service", icon: "pickup" }]
+    };
+  }
+
   const pickupOk = Boolean(business?.pickupAvailable);
   const deliveryOk = Boolean(business?.deliveryAvailable);
 

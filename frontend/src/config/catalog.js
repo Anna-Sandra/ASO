@@ -60,6 +60,12 @@ export function storeUsesMenuSections(businessType) {
   return businessType === "food_restaurant";
 }
 
+/** Service-provider storefronts — listings are fulfilled on-site, not via courier. */
+export function isServiceProviderStore(business) {
+  if (!business || typeof business !== "object") return false;
+  return business.businessType === "service_provider";
+}
+
 /** Marketplace category for listings on a store of this type (matches backend `primaryProductCategoryForBusinessType`). */
 export function productCategoryForBusinessType(businessType) {
   switch (businessType) {

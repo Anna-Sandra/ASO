@@ -60,7 +60,7 @@ export function productTileDeliveryHints(product) {
     out.push({ key: "eta", label: "10–30 min" });
   }
   const fee = store?.deliveryFeeGhs != null ? Number(store.deliveryFeeGhs) : null;
-  if (store?.deliveryAvailable && fee != null && fee > 0) {
+  if (store?.businessType !== "service_provider" && store?.deliveryAvailable && fee != null && fee > 0) {
     out.push({ key: "fee", label: `${formatGhc(fee)} delivery` });
   }
   return out;

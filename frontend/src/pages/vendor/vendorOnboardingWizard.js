@@ -44,7 +44,7 @@ export function VendorOnboardingPage() {
           businessType,
           description: description.trim(),
           status: "draft",
-          pickupAvailable: true,
+          pickupAvailable: businessType === "service_provider" ? false : true,
           deliveryAvailable: false
         }
       });
