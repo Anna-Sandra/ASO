@@ -2,6 +2,12 @@
   "name": "shopiqgh-frontend",
   "version": "0.1.0",
   "private": true,
+  "overrides": {
+    "@tootallnate/once": "^3.0.0",
+    "nth-check": "^2.1.1",
+    "serialize-javascript": "^7.0.5",
+    "underscore": "^1.13.8"
+  },
   "dependencies": {
     "leaflet": "^1.9.4",
     "lucide-react": "^0.544.0",
