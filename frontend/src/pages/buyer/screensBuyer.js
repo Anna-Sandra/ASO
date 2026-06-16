@@ -109,18 +109,6 @@ import {
   ThemeToggleButton
 } from "components/ui";
 
-/** Service listings have no fixed storefront price — buyer contacts vendor. */
-function buyerServicePricingPanel() {
-  return h(GlassPanel, { key: "svc-price", className: "!border-amber-500/25 !bg-amber-500/10" }, [
-    h("h3", { className: "text-sm font-semibold text-amber-950 dark:text-amber-50" }, "Pricing"),
-    h(
-      "p",
-      { className: "mt-1 text-xs leading-relaxed text-amber-950/90 dark:text-amber-100/90" },
-      "No fixed online price — use the request form on this page. Sign in to send a request, or buy other priced items as a guest."
-    )
-  ]);
-}
-
 function buyerFoodCallPricingPanel() {
   return h(GlassPanel, { key: "food-c2o", className: "!border-violet-500/25 !bg-violet-500/10" }, [
     h("h3", { className: "text-sm font-semibold text-violet-950 dark:text-violet-50" }, "Pricing"),
@@ -737,13 +725,13 @@ export function ProductDetailPage() {
   const unitPayTotal = !offlineListing ? buyerDisplayPrice(customizedListPx, pricingOpts, 1) : null;
 
   const pricingPanel =
-    svc || foodC2O
-      ? svc
-        ? buyerServicePricingPanel()
-        : buyerFoodCallPricingPanel()
+    foodC2O
+      ? buyerFoodCallPricingPanel()
       : showsCustomizeUi
         ? null
-        : h("span", { key: "pr", className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx));
+        : !offlineListing
+          ? h("span", { key: "pr", className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx))
+          : null;
 
   return h(f, null, [
     h(
