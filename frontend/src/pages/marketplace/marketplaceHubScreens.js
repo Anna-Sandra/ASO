@@ -726,12 +726,15 @@ export function StorefrontProductCard({ product, business, vendorMode = false })
   const quote = typeof cat === "string" && isOfflineQuoteCategory({ category: cat });
   const foodCall = typeof cat === "string" && isFoodCallToOrderCategory({ category: cat });
 
+  const listPrice = Number(product.price || 0);
   const priceLabel =
     quote || foodCall
       ? foodCall
         ? "Buy"
         : "Quote / request"
-      : formatGhc(buyerDisplayPrice(Number(product.price || 0), pricingOpts, 1));
+      : vendorMode
+        ? formatGhc(listPrice)
+        : formatGhc(buyerDisplayPrice(listPrice, pricingOpts, 1));
 
   const desc = String(product.description || "").trim();
   const descShort = desc.length > 72 ? `${desc.slice(0, 70)}…` : desc || "Tap to view details on SHOPIQGH.";
