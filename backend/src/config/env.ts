@@ -31,7 +31,7 @@ const envSchema = z.object({
 
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
-  JWT_ACCESS_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+  JWT_ACCESS_TTL_MINUTES: z.coerce.number().int().positive().default(60),
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
   COOKIE_SECURE: z

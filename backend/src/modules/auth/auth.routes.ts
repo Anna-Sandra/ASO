@@ -39,6 +39,13 @@ import {
 const router = Router();
 
 const authLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 20 });
+/** Refresh + CSRF are on the hot path for staying signed in — do not share the tight auth bucket. */
+const csrfLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 120 });
+const refreshLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: env.NODE_ENV === "production" ? 120 : 300,
+  skipSuccessfulRequests: true
+});
 const otpVerifyLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, limit: 50 });
 const forgotPasswordLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
@@ -66,8 +73,8 @@ router.post(
 router.post("/verify-login-otp", otpVerifyLimiter, validateBody(verifyLoginOtpSchema), verifyLoginOtp);
 router.post("/resend-login-otp", loginLimiter, validateBody(loginSchema), resendLoginOtp);
 router.post("/login", loginLimiter, validateBody(loginSchema), login);
-router.get("/csrf", authLimiter, csrfToken);
-router.post("/refresh", authLimiter, requireCsrf, validateBody(refreshSchema), refresh);
+router.get("/csrf", csrfLimiter, csrfToken);
+router.post("/refresh", refreshLimiter, requireCsrf, validateBody(refreshSchema), refresh);
 router.post("/logout", authLimiter, requireCsrf, logout);
 
 router.post("/activate-account", authLimiter, validateBody(activateAccountSchema), activateAccount);

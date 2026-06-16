@@ -4,8 +4,13 @@ import { storageGet, storageRemove, storageSet, StorageKeys } from "utils/storag
 const API_BASE = (process.env.REACT_APP_API_URL || "").replace(/\/$/, "");
 const REFRESH_LOCK_NAME = "shopiqgh-auth-refresh";
 const REFRESH_LOCK_STALE_MS = 25_000;
+/** Skip server refresh when access JWT still has more than this many seconds left. */
+const ACCESS_REFRESH_MIN_REMAINING_SEC = 120;
+/** Minimum gap between successful refresh rotations (avoids multi-tab / interval storms). */
+const MIN_REFRESH_INTERVAL_MS = 90_000;
 
 let refreshPromise = null;
+let lastSuccessfulRefreshAt = 0;
 
 function emitTokenUpdate(token) {
   if (typeof window === "undefined") return;
@@ -100,8 +105,14 @@ async function refreshTokensOnce() {
 
     const { res, data } = result;
 
+    if (res.status === 429) {
+      const fallback = readValidAccessToken() || (beforeAccess && !isAccessTokenExpired(beforeAccess) ? beforeAccess : null);
+      if (fallback) return fallback;
+    }
+
     if (res.ok && data?.accessToken) {
       persistTokens(data);
+      lastSuccessfulRefreshAt = Date.now();
       return data.accessToken;
     }
 
@@ -111,6 +122,7 @@ async function refreshTokensOnce() {
         result = await postRefresh(attempts[i], csrfToken);
         if (result.res.ok && result.data?.accessToken) {
           persistTokens(result.data);
+          lastSuccessfulRefreshAt = Date.now();
           return result.data.accessToken;
         }
       } catch {
@@ -173,15 +185,29 @@ export async function refreshSessionTokens() {
 
   refreshPromise = withRefreshLock(async () => {
     const valid = readValidAccessToken();
+    if (valid && !isAccessTokenExpired(valid, ACCESS_REFRESH_MIN_REMAINING_SEC)) {
+      return valid;
+    }
     const storedRefresh = storageGet(StorageKeys.REFRESH_TOKEN);
     if (!valid && !storedRefresh) {
       return null;
+    }
+    if (
+      valid &&
+      !isAccessTokenExpired(valid, 30) &&
+      Date.now() - lastSuccessfulRefreshAt < MIN_REFRESH_INTERVAL_MS
+    ) {
+      return valid;
     }
     const token = await refreshTokensOnce();
     if (token) return token;
 
     const stillValid = readValidAccessToken();
     if (stillValid) return stillValid;
+
+    if (valid && !isAccessTokenExpired(valid, 15)) {
+      return valid;
+    }
 
     storageRemove(StorageKeys.ACCESS_TOKEN);
     storageRemove(StorageKeys.REFRESH_TOKEN);

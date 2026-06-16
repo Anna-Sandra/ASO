@@ -195,15 +195,16 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (typeof window === "undefined" || !accessToken) return undefined;
+    const REFRESH_AHEAD_SEC = 180;
     const refreshIfSoon = () => {
       const t = readStoredAccessToken();
-      if (!t || !isAccessTokenExpired(t, 300)) return;
+      if (!t || !isAccessTokenExpired(t, REFRESH_AHEAD_SEC)) return;
       void refreshSessionTokens().then((next) => {
         if (next) void loadUserForToken(next);
       });
     };
     refreshIfSoon();
-    const id = window.setInterval(refreshIfSoon, 60_000);
+    const id = window.setInterval(refreshIfSoon, 90_000);
     return () => window.clearInterval(id);
   }, [accessToken, loadUserForToken]);
 
