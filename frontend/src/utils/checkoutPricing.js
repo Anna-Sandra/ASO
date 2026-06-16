@@ -43,6 +43,20 @@ export function buyerDisplayPrice(listUnitPrice, opts, qty = 1) {
 }
 
 /**
+ * Buyer-facing marginal cost between two seller list unit totals (e.g. with vs without an add-on).
+ * @param {number} fromListUnit
+ * @param {number} toListUnit
+ * @param {{ commissionPercent: number, paystackFeePercent: number, paystackFeeFixedGhs: number } | null | undefined} opts
+ */
+export function buyerDisplayMarginalDelta(fromListUnit, toListUnit, opts) {
+  const from = Math.max(0, Number(fromListUnit) || 0);
+  const to = Math.max(0, Number(toListUnit) || 0);
+  if (from === to) return 0;
+  if (!opts) return Math.ceil(to - from);
+  return buyerDisplayPrice(to, opts, 1) - buyerDisplayPrice(from, opts, 1);
+}
+
+/**
  * Cart / checkout breakdown (buyer sees `total` only in UI).
  */
 export function computeCheckoutBreakdown(subtotal, commissionPercent, paystackFeePercent, paystackFeeFixedGhs) {

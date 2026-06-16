@@ -1,9 +1,8 @@
 import React, { useState } from "react";
 import { Check, ChevronDown, Square } from "lucide-react";
 import { formatGhc } from "utils/money";
-import { buyerDisplayPrice } from "utils/checkoutPricing";
+import { buyerDisplayPrice, buyerDisplayMarginalDelta } from "utils/checkoutPricing";
 import {
-  addonDeltaFromDefs,
   effectiveListUnitPrice,
   productAddonDefs,
   splitAddonsByKind,
@@ -12,12 +11,34 @@ import {
 
 const h = React.createElement;
 
-/** @param {number} delta */
-function formatDeltaSuffix(delta) {
-  const n = Number(delta) || 0;
-  if (n === 0) return "";
-  if (n > 0) return `(+${formatGhc(n)})`;
-  return `(-GH₵${Math.ceil(Math.abs(n))})`;
+/**
+ * Buyer-facing add-on suffix (fees included) — cost of having this option on vs off.
+ * @param {{ price?: number; addons?: unknown[] }} product
+ * @param {string[]} selectedLabels
+ * @param {{ label: string; priceDelta: number }} def
+ * @param {{ commissionPercent: number; paystackFeePercent: number; paystackFeeFixedGhs: number } | null | undefined} pricingOpts
+ */
+function formatBuyerAddonSuffix(product, selectedLabels, def, pricingOpts) {
+  const listDelta = Number(def.priceDelta) || 0;
+  if (listDelta === 0) return "";
+  const norm = (s) => String(s).trim().toLowerCase();
+  const lbl = String(def.label).trim();
+  const isSelected = selectedLabels.some((s) => norm(s) === norm(lbl));
+  const withoutThis = isSelected
+    ? effectiveListUnitPrice(
+        product,
+        selectedLabels.filter((s) => norm(s) !== norm(lbl))
+      )
+    : effectiveListUnitPrice(product, selectedLabels);
+  const withThis = isSelected
+    ? effectiveListUnitPrice(product, selectedLabels)
+    : effectiveListUnitPrice(product, toggleAddonLabel(selectedLabels, lbl));
+  const buyerDelta = pricingOpts
+    ? buyerDisplayMarginalDelta(withoutThis, withThis, pricingOpts)
+    : Math.ceil(withThis - withoutThis);
+  if (buyerDelta === 0) return "";
+  if (buyerDelta > 0) return `(+${formatGhc(buyerDelta)})`;
+  return `(-${formatGhc(Math.abs(buyerDelta))})`;
 }
 
 /**
@@ -70,9 +91,7 @@ export function ProductCustomizationPanel({
   const isService = product.category === "services";
   const { adds, removals: rawRemovals } = splitAddonsByKind(defs);
   const removals = isService ? [] : rawRemovals;
-  const baseList = Math.max(0, Number(product.price) || 0);
   const listUnit = effectiveListUnitPrice(product, selectedLabels);
-  const delta = addonDeltaFromDefs(defs, selectedLabels);
   const payUnit = pricingOpts ? buyerDisplayPrice(listUnit, pricingOpts, 1) : Math.ceil(listUnit);
 
   const toggle = (label) => {
@@ -84,7 +103,7 @@ export function ProductCustomizationPanel({
 
   const optionRow = (def) => {
     const checked = isOn(def.label);
-    const suffix = formatDeltaSuffix(def.priceDelta);
+    const suffix = formatBuyerAddonSuffix(product, selectedLabels, def, pricingOpts);
     return h(
       "button",
       {
@@ -220,14 +239,7 @@ export function ProductCustomizationPanel({
         },
         [
           h("p", { className: "text-xs font-medium text-slate-600 dark:text-slate-400" }, "Your price"),
-          h("p", { key: "tot", className: "text-2xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(payUnit)),
-          delta !== 0
-            ? h(
-                "p",
-                { key: "brk", className: "mt-1 text-xs text-slate-600 dark:text-slate-400" },
-                `Base ${formatGhc(baseList)} ${delta > 0 ? "+" : ""}${formatGhc(Math.abs(delta))} options`
-              )
-            : null
+          h("p", { key: "tot", className: "text-2xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(payUnit))
         ]
       )
     ]
