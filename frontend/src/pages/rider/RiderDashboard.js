@@ -130,7 +130,7 @@ export default function RiderDashboard() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [accessToken]);
 
   const onLogout = async () => {
