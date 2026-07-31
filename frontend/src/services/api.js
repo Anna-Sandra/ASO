@@ -44,7 +44,7 @@ function shouldSkip401Refresh(path) {
 
 function needsAdminGate(path) {
   const p = path.startsWith("/") ? path : `/${path}`;
-  return p.startsWith("/api/admin");
+  return p.startsWith("/api/admin") || /\/admin(\/|$)/.test(p);
 }
 
 function needsCsrf(path, method = "GET") {
