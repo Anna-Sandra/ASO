@@ -7,7 +7,6 @@ import {
   Navigation2,
   Package,
   RefreshCw,
-  Wallet,
   XCircle
 } from "lucide-react";
 import { useAuth, useTheme } from "context";
@@ -22,7 +21,6 @@ import { h } from "utils/h";
  * PATCH /api/deliveries/:orderId/accept          -> { assignment } (rider accepts a new assignment)
  * PATCH /api/deliveries/:orderId/decline         -> { ok: true }   (rider declines a new assignment)
  * PATCH /api/deliveries/:orderId/status  {status}-> { assignment } (status: "picked_up" | "delivered")
- * GET   /api/deliveries/rider/earnings           -> { completedCount, totalEarnings, currency }
  *
  * If your routes/field names differ, the small getters below (getAddress,
  * getFee, getAcceptance) are the only places you should need to edit —
@@ -68,10 +66,6 @@ export default function RiderDashboard() {
   const [selOrderId, setSelOrderId] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
-  const [earnings, setEarnings] = useState(null);
-  const [earningsErr, setEarningsErr] = useState("");
-  const [earningsLoading, setEarningsLoading] = useState(false);
-
   // Per-order action state, e.g. { [orderId]: { loading: true, error: "" } }
   const [actionState, setActionState] = useState({});
 
@@ -103,22 +97,6 @@ export default function RiderDashboard() {
     [accessToken]
   );
 
-  const loadEarnings = useCallback(async () => {
-    if (!accessToken) return;
-    setEarningsLoading(true);
-    setEarningsErr("");
-    try {
-      const d = await apiFetch("/api/deliveries/rider/earnings", {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
-      setEarnings(d);
-    } catch (ex) {
-      setEarningsErr(apiErrorMessage(ex, "Could not load earnings"));
-    } finally {
-      setEarningsLoading(false);
-    }
-  }, [accessToken]);
-
   useEffect(() => {
     if (!accessToken) return undefined;
     let cancelled = false;
@@ -126,12 +104,10 @@ export default function RiderDashboard() {
       if (cancelled) return;
       await loadAssignments();
     })();
-    loadEarnings();
     return () => {
       cancelled = true;
     };
-    
-  }, [accessToken]);
+  }, [accessToken, loadAssignments]);
 
   const onLogout = async () => {
     try {
@@ -186,7 +162,6 @@ export default function RiderDashboard() {
         setAssignments((prev) =>
           prev.map((a) => (a.orderId === orderId ? { ...a, orderStatus: nextStatus } : a))
         );
-        if (nextStatus === "delivered") loadEarnings();
       }
     });
 
@@ -268,62 +243,6 @@ export default function RiderDashboard() {
             )
           ])
         ].filter(Boolean)
-      ),
-
-      // ── Earnings summary ────────────────────────────────────
-      h(
-        "div",
-        {
-          key: "earnings",
-          className:
-            "flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/5"
-        },
-        [
-          h("div", { key: "left", className: "flex items-center gap-3" }, [
-            h(
-              "div",
-              {
-                key: "ic",
-                className:
-                  "flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-              },
-              h(Wallet, { className: "h-5 w-5" })
-            ),
-            h("div", { key: "txt" }, [
-              h(
-                "p",
-                { key: "lab", className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" },
-                "Earnings"
-              ),
-              earningsLoading
-                ? h("p", { key: "val", className: "text-sm text-slate-500" }, "Loading…")
-                : earningsErr
-                  ? h("p", { key: "val", className: "text-sm text-amber-600 dark:text-amber-400" }, earningsErr)
-                  : h("p", { key: "val", className: "text-lg font-semibold text-slate-900 dark:text-white" }, [
-                      formatMoney(earnings?.totalEarnings, earnings?.currency || "GHS"),
-                      h(
-                        "span",
-                        { key: "cnt", className: "ml-2 text-xs font-normal text-slate-500 dark:text-slate-400" },
-                        `${earnings?.completedCount ?? 0} completed`
-                      )
-                    ])
-            ])
-          ]),
-          h(
-            "button",
-            {
-              key: "refresh",
-              type: "button",
-              onClick: () => loadEarnings(),
-              className:
-                "inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-white/15 dark:bg-night-900 dark:text-slate-300 dark:hover:bg-night-900/80"
-            },
-            [
-              h(RefreshCw, { key: "ic", className: `h-3.5 w-3.5 ${earningsLoading ? "animate-spin" : ""}` }),
-              h("span", { key: "tx" }, "Refresh")
-            ]
-          )
-        ]
       ),
 
       // ── Error / empty states ────────────────────────────────
