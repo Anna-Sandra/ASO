@@ -292,10 +292,10 @@ const sellerThreads: ThreadRow[] = [...threads];
 if (supportIdForSeller && !supportIdForSeller.equals(uid)) {
 
   const sconv = await Conversation.findOne({
-    buyerId: supportIdForSeller,   
-    sellerId: uid,                 
-    kind: "support"
-  }).lean();
+  buyerId: uid,                  
+  sellerId: supportIdForSeller, 
+  kind: "support"
+}).lean();
 
   const rawS = sortMessagesAsc((sconv?.messages as MsgRow[]) || []);
 
@@ -350,40 +350,77 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
   assertNoContactSharing(trimmedText);
 
   if (supportId && peerOid.equals(supportId)) {
-    const buyerId = myOid;
-    const sellerId = supportId;
-    let conv = await Conversation.findOne({ buyerId, sellerId, kind: "support" });
-    if (!conv) conv = await Conversation.create({ buyerId, sellerId, kind: "support", messages: [] });
-    conv.messages.push({
-      senderId: myOid,
-      senderRole: "buyer",
-      text: trimmedText,
-      createdAt: new Date()
+
+  const buyerId = myOid;        // person contacting support
+  const sellerId = supportId;   // admin/support account
+
+  const senderRole = accountRole === "seller"
+    ? "seller"
+    : "buyer";
+
+
+  let conv = await Conversation.findOne({
+    buyerId,
+    sellerId,
+    kind: "support"
+  });
+
+
+  if (!conv) {
+    conv = await Conversation.create({
+      buyerId,
+      sellerId,
+      kind: "support",
+      messages: []
     });
-    await conv.save();
-    fireNotification(supportId, {
-      type: "message_received",
-      title: "Support message",
-      message: "Someone sent a message to SHOPIQGH support.",
-      orderId: undefined
-    });
-    const raw = sortMessagesAsc(conv.messages as MsgRow[]);
-    const messages = raw.map((m) => ({
-      senderRole: m.senderRole,
-      text: m.text,
-      createdAt: m.createdAt,
-      senderLabel: m.senderRole === "buyer" ? "You" : "Support"
-    }));
-    res.json({
-      conversation: {
-        peerUserId: supportId.toString(),
-        peerDisplayName: DEFAULT_SUPPORT_LABEL,
-        updatedAt: conv.updatedAt,
-        messages
-      }
-    });
-    return;
   }
+
+
+  conv.messages.push({
+    senderId: myOid,
+    senderRole,
+    text: trimmedText,
+    createdAt: new Date()
+  });
+
+
+  await conv.save();
+
+
+  fireNotification(supportId, {
+    type: "message_received",
+    title: "Support message",
+    message: "Someone sent a message to SHOPIQGH support.",
+    orderId: undefined
+  });
+
+
+  const raw = sortMessagesAsc(conv.messages as MsgRow[]);
+
+
+  const messages = raw.map((m) => ({
+    senderRole: m.senderRole,
+    text: m.text,
+    createdAt: m.createdAt,
+    senderLabel:
+      m.senderId.toString() === myOid.toString()
+        ? "You"
+        : "Support"
+  }));
+
+
+  res.json({
+    conversation:{
+      peerUserId: supportId.toString(),
+      peerDisplayName: DEFAULT_SUPPORT_LABEL,
+      updatedAt: conv.updatedAt,
+      messages
+    }
+  });
+
+
+  return;
+}
 
   let buyerId: mongoose.Types.ObjectId;
   let sellerId: mongoose.Types.ObjectId;
