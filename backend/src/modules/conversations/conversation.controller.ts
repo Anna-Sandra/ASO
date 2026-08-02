@@ -115,7 +115,7 @@ function sortMessagesAsc(messages: MsgRow[]) {
 
 function latestOrderSnippetForPair(orders: LeanOrder[], buyerId: string, sellerId: string): { itemSummary: string; touch: Date } {
   const relevant = orders.filter((o) => {
-    if (o.buyerId.toString() !== buyerId) return false;
+   if (!o.buyerId || o.buyerId.toString() !== buyerId) return false;
     return (o.items || []).some((it) => it.sellerId.toString() === sellerId);
   });
   if (!relevant.length) return { itemSummary: "", touch: new Date(0) };
@@ -147,11 +147,14 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
       .lean()) as unknown as LeanOrder[];
 
     const sellerIds = new Set<string>();
-    for (const o of orders) {
-      for (const it of o.items || []) {
-        sellerIds.add(it.sellerId.toString());
-      }
+
+for (const o of orders) {
+  for (const it of o.items || []) {
+    if (it.sellerId) {
+      sellerIds.add(it.sellerId.toString());
     }
+  }
+}
     const sidList = [...sellerIds].map((s) => new mongoose.Types.ObjectId(s));
     const names = await displayNameMap(sidList);
     const convs = await Conversation.find({ buyerId: uid, sellerId: { $in: sidList }, kind: "order" }).lean();
@@ -233,8 +236,10 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
 
   const buyerIds = new Set<string>();
   for (const o of orders) {
+  if (o.buyerId) {
     buyerIds.add(o.buyerId.toString());
   }
+}
   const bidList = [...buyerIds].map((s) => new mongoose.Types.ObjectId(s));
   const names = await displayNameMap(bidList);
   const convs = await Conversation.find({ sellerId: uid, buyerId: { $in: bidList }, kind: "order" }).lean();
