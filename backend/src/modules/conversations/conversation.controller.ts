@@ -282,26 +282,41 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
   threads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   const supportIdForSeller = await getPrimarySupportAdminId();
-  const sellerThreads: ThreadRow[] = [...threads];
-  if (supportIdForSeller && !supportIdForSeller.equals(uid)) {
-    const sconv = await Conversation.findOne({ buyerId: uid, sellerId: supportIdForSeller, kind: "support" }).lean();
-    const rawS = sortMessagesAsc((sconv?.messages as MsgRow[]) || []);
-    const sMessages = rawS.map((m) => ({
-      senderRole: m.senderRole,
-      text: m.text,
-      createdAt: m.createdAt,
-      senderLabel: m.senderRole === "buyer" ? "You" : "Support"
-    }));
-    const convTouchS = sconv?.updatedAt ? new Date(sconv.updatedAt).getTime() : 0;
-    sellerThreads.unshift({
-      peerUserId: supportIdForSeller.toString(),
-      peerDisplayName: DEFAULT_SUPPORT_LABEL,
-      itemSummary: "Account help, payouts, safety",
-      updatedAt: new Date(convTouchS || 0),
-      messages: sMessages,
-      isSupport: true
-    });
-  }
+const sellerThreads: ThreadRow[] = [...threads];
+
+if (supportIdForSeller && !supportIdForSeller.equals(uid)) {
+
+  const sconv = await Conversation.findOne({
+    buyerId: supportIdForSeller,   
+    sellerId: uid,                 
+    kind: "support"
+  }).lean();
+
+  const rawS = sortMessagesAsc((sconv?.messages as MsgRow[]) || []);
+
+  const sMessages = rawS.map((m) => ({
+    senderRole: m.senderRole,
+    text: m.text,
+    createdAt: m.createdAt,
+    senderLabel:
+      m.senderRole === "seller"
+        ? "You"
+        : "Support"
+  }));
+
+  const convTouchS = sconv?.updatedAt
+    ? new Date(sconv.updatedAt).getTime()
+    : 0;
+
+  sellerThreads.unshift({
+    peerUserId: supportIdForSeller.toString(),
+    peerDisplayName: DEFAULT_SUPPORT_LABEL,
+    itemSummary: "Account help, payouts, safety",
+    updatedAt: new Date(convTouchS || 0),
+    messages: sMessages,
+    isSupport: true
+  });
+}
 
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({ threads: sellerThreads });
@@ -505,11 +520,21 @@ export const openListingConversation = asyncHandler(async (req: Request, res: Re
 
 export const getSupportPeer = asyncHandler(async (req: Request, res: Response) => {
   const role = req.user!.role;
+
   if (role !== "buyer" && role !== "seller") {
     throw new HttpError(403, "Support messaging is only for buyers and sellers.");
   }
+
   const id = await getPrimarySupportAdminId();
-  if (!id) throw new HttpError(503, "Support is not available yet. Configure an admin account.");
+
+  if (!id) {
+    throw new HttpError(503, "Support is not available yet. Configure an admin account.");
+  }
+
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
-  res.json({ supportUserId: id.toString(), label: DEFAULT_SUPPORT_LABEL });
+
+  res.json({
+    supportUserId: id.toString(),
+    label: DEFAULT_SUPPORT_LABEL
+  });
 });
