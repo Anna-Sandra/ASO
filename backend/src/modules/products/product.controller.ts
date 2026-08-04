@@ -537,15 +537,15 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
   const current = await Product.findById(oid).select("category").lean();
   if (!current) throw new HttpError(404, "Product not found");
 
-  const cat = String((current as { category?: string }).category ?? "");
+  const cat = (current as { category?: ProductCategory }).category;
   const activeIds = await activeStoreBusinessIds();
   const relatedBase = { ...buyerCandidateFilter, ...foodMenuStoreFilter(activeIds) };
 
   const similarRaw = await Product.find({
-    ...relatedBase,
-    _id: { $ne: oid },
-    category: cat
-  })
+  ...relatedBase,
+  _id: { $ne: oid },
+  category: cat as ProductCategory
+})
     .sort({ updatedAt: -1 })
     .limit(14)
     .lean();
@@ -585,8 +585,13 @@ export const getRelatedProducts = asyncHandler(async (req: Request, res: Respons
   });
   const togetherEnriched = await enrichPublicProducts(togetherRaw);
 
-  const similarLabel = REC_CATEGORY_LABEL[cat] || (cat ? cat.replace(/_/g, " ") : "this category");
-
+  const similarLabel =
+  cat && cat in REC_CATEGORY_LABEL
+    ? REC_CATEGORY_LABEL[cat as keyof typeof REC_CATEGORY_LABEL]
+    : cat
+      ? cat.replace(/_/g, " ")
+      : "this category";
+      
   res.json({
     explore: {
       title: "Explore your interests",
