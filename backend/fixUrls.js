@@ -1,13 +1,4 @@
-/**
- * One-off migration: replace a dev API origin in stored media URL strings.
- *
- * From backend/:
- *   set REPLACE_UPLOAD_URL_FROM=http://localhost:4000
- *   set REPLACE_UPLOAD_URL_TO=https://your-api.onrender.com
- *   node fixUrls.js
- *
- * Uses MONGODB_URI from backend/.env (via dotenv). Do not hardcode credentials.
- */
+
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 const { MongoClient } = require("mongodb");
