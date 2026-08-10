@@ -127,12 +127,6 @@ export default function RiderDashboard() {
   const display =
     String(user?.displayName || "").trim() || (user?.email && user.email.split("@")[0]) || "Rider";
   const riderId = user?.id || user?._id ? `RDR-${String(user.id || user._id).slice(-4).toUpperCase()}` : "RDR-····";
-  const rating =
-    typeof user?.rating === "number"
-      ? user.rating.toFixed(1)
-      : typeof user?.riderRating === "number"
-        ? user.riderRating.toFixed(1)
-        : "4.8";
   const photo =
     (user?.profileImageUrl && String(user.profileImageUrl).trim()) ||
     (user?.photoUrl && String(user.photoUrl).trim()) ||
