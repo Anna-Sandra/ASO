@@ -3,6 +3,22 @@ import { User } from "../auth/user.model";
 import { roundMoney, splitLineGross } from "../../utils/commission";
 import { isPaystackRefundRemoteSettled } from "../payments/paystackRefundSync";
 import { redactContactSharingInText } from "../../utils/contactSharingGuard";
+import type { OrderPaymentStatus } from "./order.model";
+
+/** Resolve escrow payment status for API responses (backfills legacy rows). */
+export function effectivePaymentStatus(o: {
+  paymentStatus?: unknown;
+  status?: unknown;
+  paystackPayoutStatus?: unknown;
+}): OrderPaymentStatus {
+  const raw = o.paymentStatus;
+  if (raw === "pending" || raw === "held" || raw === "released") return raw;
+  const payout = String(o.paystackPayoutStatus || "");
+  if (payout === "complete" || payout === "partial" || payout === "skipped") return "released";
+  const st = String(o.status || "");
+  if (["paid", "processing", "sent_for_delivery", "delivered"].includes(st)) return "held";
+  return "pending";
+}
 
 export function serializePaymentDetails(p: unknown): Record<string, unknown> | null {
   if (!p || typeof p !== "object") return null;
@@ -134,6 +150,17 @@ export function serializeOrder(o: Record<string, unknown>, opts?: SerializeOrder
     serviceFeeTotal: platformFeeTotal,
     processingFeeTotal,
     status: o.status,
+    paymentStatus: effectivePaymentStatus(o),
+    deliveryConfirmation: (() => {
+      const dc = (o as { deliveryConfirmation?: { confirmed?: boolean; confirmedBy?: unknown; confirmedAt?: Date | null } })
+        .deliveryConfirmation;
+      const confirmedBy = dc?.confirmedBy;
+      return {
+        confirmed: Boolean(dc?.confirmed),
+        confirmedBy: confirmedBy ? String(confirmedBy) : null,
+        confirmedAt: dc?.confirmedAt ?? null
+      };
+    })(),
     paymentMethod: o.paymentMethod ?? null,
     paymentReference: o.paymentReference ?? null,
     paymentDetails: serializePaymentDetails(o.paymentDetails),

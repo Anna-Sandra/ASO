@@ -24,6 +24,8 @@ import { roundMoney, splitLineGross } from "../../utils/commission";
 import { User, normalizeUserRole, publicPhoneForPaymentRole, type UserDoc, type RiderApplicationStatus } from "../auth/user.model";
 import { Order, type OrderDoc } from "../orders/order.model";
 import { isOrderExcludedFromRevenueMetrics, withContacts } from "../orders/orderSerialize";
+import { setOrderPaymentHeld, isDeliveryConfirmedForPayout } from "../orders/orderEscrow";
+import { runVendorPayoutsForOrder } from "../payments/paystackPayouts";
 import { Product } from "../products/product.model";
 import { Business, type BusinessDoc } from "../businesses/business.model";
 import { Conversation } from "../conversations/conversation.model";
@@ -78,6 +80,7 @@ import { applyProcessedPaystackRefundToOrder, isPaystackRefundRemoteSettled } fr
 import { conversationMessageSchema } from "../conversations/conversation.schemas";
 import { getPrimarySupportAdminId } from "../conversations/supportPeer";
 import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
+import { fireNotification } from "../notifications/notification.service";
 import { RiderProfile } from "../deliveries/riderProfile.model";
 import { Delivery } from "../deliveries/delivery.model";
 
@@ -1953,6 +1956,7 @@ export const markAdminOrderPaid = asyncHandler(async (req: Request, res: Respons
   const uniqueSellerIds = [...new Set(o.items.map((it) => it.sellerId.toString()))];
   o.confirmedSellerIds = uniqueSellerIds.map((s) => new mongoose.Types.ObjectId(s));
   o.status = "paid";
+  setOrderPaymentHeld(o);
 
   for (const it of o.items) {
     await Product.updateOne({ _id: it.productId }, { $inc: { stock: -it.quantity } });
@@ -1974,6 +1978,206 @@ export const markAdminOrderPaid = asyncHandler(async (req: Request, res: Respons
     includePrivateContactDetails: true
   });
   res.json({ order: out });
+});
+
+/**
+ * Orders ready for escrow release: payment held + delivered + rider (or onsite) delivery confirmation.
+ */
+export const listPendingVendorPayments = asyncHandler(async (_req: Request, res: Response) => {
+  const commissionPercent = await getEffectiveCommissionPercent();
+  const heldOrLegacy = {
+    $or: [{ paymentStatus: "held" as const }, { paymentStatus: { $exists: false } }]
+  };
+  const notRefunded = {
+    refundStatus: { $nin: ["refunded", "refund_processing"] as Array<"refunded" | "refund_processing"> }
+  };
+  const notAlreadyPaidOut = {
+    $or: [
+      { paystackPayoutStatus: { $exists: false } },
+      { paystackPayoutStatus: { $in: ["none", "in_progress"] as Array<"none" | "in_progress"> } }
+    ]
+  };
+
+  const rows = await Order.find({
+    status: "delivered",
+    paymentStatus: { $ne: "released" },
+    "deliveryConfirmation.confirmed": true,
+    ...heldOrLegacy,
+    ...notRefunded,
+    ...notAlreadyPaidOut
+  } as Record<string, unknown>)
+    .sort({ deliveredAt: -1, updatedAt: -1 })
+    .limit(100)
+    .lean();
+
+  const onsiteHeld = await Order.find({
+    status: "delivered",
+    fulfillmentMode: "onsite",
+    paymentStatus: { $ne: "released" },
+    $and: [
+      heldOrLegacy,
+      {
+        $or: [
+          { "deliveryConfirmation.confirmed": { $ne: true } },
+          { deliveryConfirmation: { $exists: false } }
+        ]
+      },
+      notRefunded,
+      notAlreadyPaidOut
+    ]
+  } as Record<string, unknown>)
+    .sort({ deliveredAt: -1 })
+    .limit(50)
+    .lean();
+
+  const byId = new Map<string, (typeof rows)[number]>();
+  for (const r of [...rows, ...onsiteHeld]) {
+    const ps = String((r as { paystackPayoutStatus?: string }).paystackPayoutStatus || "none");
+    if (ps === "complete" || ps === "partial" || ps === "skipped") continue;
+    if ((r as { paymentStatus?: string }).paymentStatus === "released") continue;
+    byId.set(String(r._id), r);
+  }
+  const merged = [...byId.values()];
+
+  const deliveryIds = merged.map((r) => r._id);
+  const deliveries = await Delivery.find({ orderId: { $in: deliveryIds } })
+    .select("orderId assignedRiderId deliveredAt currentStage")
+    .lean();
+  const deliveryByOrder = new Map(
+    deliveries.map((d) => [
+      String(d.orderId),
+      d as {
+        orderId: mongoose.Types.ObjectId;
+        assignedRiderId?: mongoose.Types.ObjectId | null;
+        deliveredAt?: Date | null;
+        currentStage?: string;
+      }
+    ])
+  );
+
+  const riderIds = [
+    ...new Set(
+      [
+        ...deliveries.map((d) => (d.assignedRiderId ? String(d.assignedRiderId) : "")),
+        ...merged.map((r) =>
+          r.deliveryConfirmation?.confirmedBy ? String(r.deliveryConfirmation.confirmedBy) : ""
+        )
+      ].filter(Boolean)
+    )
+  ];
+  const riders = riderIds.length
+    ? await User.find({ _id: { $in: riderIds } }).select("displayName email phone").lean()
+    : [];
+  const riderById = new Map(riders.map((u) => [String(u._id), u]));
+
+  const withBuyer = await withContacts(merged as unknown as Record<string, unknown>[], {
+    includeBuyerPaymentDetails: true,
+    includePrivateContactDetails: true
+  });
+
+  const orders = withBuyer.map((serialized) => {
+    const raw = byId.get(serialized.id);
+    const del = deliveryByOrder.get(serialized.id);
+    const confirmedById = raw?.deliveryConfirmation?.confirmedBy
+      ? String(raw.deliveryConfirmation.confirmedBy)
+      : del?.assignedRiderId
+        ? String(del.assignedRiderId)
+        : null;
+    const riderUser = confirmedById ? riderById.get(confirmedById) : null;
+    const platformFeeTotal = Number(serialized.platformFeeTotal) || 0;
+    const sellerProceedsTotal = Number(serialized.sellerProceedsTotal) || 0;
+    const total = Number(serialized.total) || 0;
+    return {
+      ...serialized,
+      commissionPercent,
+      platformFeeTotal,
+      sellerProceedsTotal,
+      vendorPayoutAmount: sellerProceedsTotal,
+      deliveryStatus: del?.currentStage || (raw?.status === "delivered" ? "delivered" : "unknown"),
+      deliveryConfirmation: {
+        confirmed: Boolean(raw?.deliveryConfirmation?.confirmed) || raw?.fulfillmentMode === "onsite",
+        confirmedBy: confirmedById,
+        confirmedAt: raw?.deliveryConfirmation?.confirmedAt ?? del?.deliveredAt ?? raw?.deliveredAt ?? null,
+        riderName:
+          (riderUser as { displayName?: string } | undefined)?.displayName ||
+          (confirmedById ? "Rider" : raw?.fulfillmentMode === "onsite" ? "On-site" : "—")
+      },
+      locationTracking: del?.currentStage === "delivered" || raw?.status === "delivered" ? "Completed" : "In progress",
+      amount: total
+    };
+  });
+
+  res.json({ orders, commissionPercent });
+});
+
+/** Admin releases escrowed funds to vendor(s) after rider delivery confirmation. */
+export const releaseVendorPayment = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!mongoose.isValidObjectId(id)) throw new HttpError(400, "Invalid order id");
+  const order = await Order.findById(id);
+  if (!order) throw new HttpError(404, "Order not found");
+
+  const paymentStatus = order.paymentStatus || (["paid", "processing", "sent_for_delivery", "delivered"].includes(order.status) ? "held" : "pending");
+  if (paymentStatus === "released") {
+    throw new HttpError(400, "Vendor payment already released for this order.");
+  }
+  if (paymentStatus !== "held") {
+    throw new HttpError(400, "Payment is not held in escrow for this order.");
+  }
+  if (order.status !== "delivered") {
+    throw new HttpError(400, "Order must be delivered before releasing vendor payment.");
+  }
+  if (!isDeliveryConfirmedForPayout(order)) {
+    throw new HttpError(403, "Rider must confirm delivery before vendor payment can be released.");
+  }
+  if (order.refundStatus === "refunded" || order.refundStatus === "refund_processing") {
+    throw new HttpError(400, "Cannot release payment while a refund is in progress or completed.");
+  }
+
+  // Ensure escrow field is set for legacy rows before transfer lock
+  if (!order.paymentStatus || order.paymentStatus === "pending") {
+    order.paymentStatus = "held";
+    await order.save();
+  }
+
+  const payout = await runVendorPayoutsForOrder(id, { force: true });
+
+  order.paymentStatus = "released";
+  await order.save();
+
+  const sellerIds = [...new Set(order.items.map((it) => it.sellerId.toString()))];
+  for (const sid of sellerIds) {
+    const proceeds = roundMoney(
+      order.items.filter((it) => it.sellerId.toString() === sid).reduce((s, it) => s + Number(it.sellerProceeds || 0), 0)
+    );
+    fireNotification(new mongoose.Types.ObjectId(sid), {
+      type: "seller_payout",
+      title: "Payment released",
+      message: `Order ${id.slice(-8)} — platform released your payout (≈ GHS ${proceeds.toFixed(2)}).${
+        payout.ran ? ` Transfer status: ${payout.status || "submitted"}.` : payout.message ? ` ${payout.message}` : ""
+      }`,
+      orderId: order._id
+    });
+  }
+
+  await recordAdminAuditEvent({
+    actorId: req.user?.id,
+    action: "order.release_vendor_payment",
+    title: `Vendor payment released — …${id.slice(-8)}`,
+    detail: payout.ran
+      ? `Paystack transfer ${payout.status || "done"}`
+      : payout.message || "Marked released (no transfer run)"
+  });
+
+  const [out] = await withContacts([order.toObject() as unknown as Record<string, unknown>], {
+    includeBuyerPaymentDetails: true,
+    includePrivateContactDetails: true
+  });
+  res.json({
+    ok: true,
+    order: { ...out, paymentStatus: "released" },
+    payout
+  });
 });
 
 export const patchAdminOrder = asyncHandler(async (req: Request, res: Response) => {

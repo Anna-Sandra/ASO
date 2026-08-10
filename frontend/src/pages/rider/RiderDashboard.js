@@ -1,14 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import {
-  CheckCircle2,
-  Clock,
-  LogOut,
-  Navigation2,
-  Package,
-  RefreshCw,
-  XCircle
-} from "lucide-react";
+import { Clock, LogOut, Navigation2, Package, RefreshCw } from "lucide-react";
 import { useAuth, useTheme } from "context";
 import { apiFetch, apiErrorMessage } from "services/api";
 import { DeliveryLive } from "components/features/DeliveryLive";
@@ -16,31 +7,50 @@ import { ThemeToggleButton } from "components/ui";
 import { h } from "utils/h";
 
 /**
- * ── Backend contract this page assumes ──────────────────────────────────
- * GET   /api/deliveries/rider/assignments        -> { assignments: [...] }
- * PATCH /api/deliveries/:orderId/accept          -> { assignment } (rider accepts a new assignment)
- * PATCH /api/deliveries/:orderId/decline         -> { ok: true }   (rider declines a new assignment)
- * PATCH /api/deliveries/:orderId/status  {status}-> { assignment } (status: "picked_up" | "delivered")
- *
- * If your routes/field names differ, the small getters below (getAddress,
- * getFee, getAcceptance) are the only places you should need to edit —
- * everything else reads through them.
- * ─────────────────────────────────────────────────────────────────────── */
+ * Backend contract:
+ * GET  /api/deliveries/rider/assignments
+ * PATCH /api/deliveries/order/:orderId/stage  { stage }
+ * POST /api/deliveries/order/:orderId/confirm-delivery
+ * POST /api/deliveries/order/:orderId/rider-location
+ * Live map + handoff controls live in DeliveryLive (mode="rider").
+ */
 
-const STATUS_FLOW = ["assigned", "picked_up", "delivered"];
+const STAGE_LABELS = {
+  order_placed: "Order placed",
+  confirmed: "Confirmed",
+  preparing: "Preparing",
+  ready_for_pickup: "Ready for pickup",
+  picked_up: "Picked up",
+  on_the_way: "On the way",
+  delivered: "Delivered",
+  cancelled: "Cancelled"
+};
 
 function getAddress(a) {
-  return a.deliveryAddress || a.address || a.customerAddress || a.dropoffAddress || "";
+  return (
+    a.dropoffLabel ||
+    a.delivery?.dropoffLabel ||
+    a.deliveryAddress ||
+    a.address ||
+    a.customerAddress ||
+    a.dropoffAddress ||
+    ""
+  );
 }
 
-function getFee(a) {
-  const v = a.deliveryFee ?? a.riderFee ?? a.fee ?? null;
-  return typeof v === "number" ? v : null;
+function getStage(a) {
+  return a.deliveryStage || a.delivery?.currentStage || "";
 }
 
-function getAcceptance(a) {
-  // "pending" -> rider hasn't accepted/declined yet; anything else counts as accepted.
-  return a.riderAcceptance || (a.orderStatus === "assigned" ? "pending" : "accepted");
+function navigateUrl(a) {
+  const label = getAddress(a);
+  const lat = a.dropoffLatitude ?? a.delivery?.dropoffLatitude;
+  const lng = a.dropoffLongitude ?? a.delivery?.dropoffLongitude;
+  if (typeof lat === "number" && typeof lng === "number" && Number.isFinite(lat) && Number.isFinite(lng)) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${lat},${lng}`)}`;
+  }
+  if (!label) return null;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(label)}`;
 }
 
 function formatMoney(n, currency = "GHS") {
@@ -52,11 +62,6 @@ function formatMoney(n, currency = "GHS") {
   }
 }
 
-function navigateUrl(address) {
-  if (!address) return null;
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
-}
-
 export default function RiderDashboard() {
   const { accessToken, user, logout } = useAuth();
   const { dark, toggle } = useTheme();
@@ -65,13 +70,6 @@ export default function RiderDashboard() {
   const [err, setErr] = useState("");
   const [selOrderId, setSelOrderId] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-
-  // Per-order action state, e.g. { [orderId]: { loading: true, error: "" } }
-  const [actionState, setActionState] = useState({});
-
-  const setOrderAction = (orderId, patch) => {
-    setActionState((prev) => ({ ...prev, [orderId]: { ...prev[orderId], ...patch } }));
-  };
 
   const loadAssignments = useCallback(
     async ({ silent } = {}) => {
@@ -104,8 +102,12 @@ export default function RiderDashboard() {
       if (cancelled) return;
       await loadAssignments();
     })();
+    const t = setInterval(() => {
+      void loadAssignments({ silent: true });
+    }, 45000);
     return () => {
       cancelled = true;
+      clearInterval(t);
     };
   }, [accessToken, loadAssignments]);
 
@@ -116,54 +118,6 @@ export default function RiderDashboard() {
       /* ignore */
     }
   };
-
-  const runOrderAction = async (orderId, { url, method = "PATCH", body, onDone }) => {
-    setOrderAction(orderId, { loading: true, error: "" });
-    try {
-      const d = await apiFetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          ...(body ? { "Content-Type": "application/json" } : {})
-        },
-        ...(body ? { body: JSON.stringify(body) } : {})
-      });
-      onDone?.(d);
-      setOrderAction(orderId, { loading: false, error: "" });
-    } catch (ex) {
-      setOrderAction(orderId, { loading: false, error: apiErrorMessage(ex, "Action failed") });
-    }
-  };
-
-  const handleAccept = (orderId) =>
-    runOrderAction(orderId, {
-      url: `/api/deliveries/${orderId}/accept`,
-      onDone: () => {
-        setAssignments((prev) =>
-          prev.map((a) => (a.orderId === orderId ? { ...a, riderAcceptance: "accepted" } : a))
-        );
-      }
-    });
-
-  const handleDecline = (orderId) =>
-    runOrderAction(orderId, {
-      url: `/api/deliveries/${orderId}/decline`,
-      onDone: () => {
-        setAssignments((prev) => prev.filter((a) => a.orderId !== orderId));
-        setSelOrderId((prev) => (prev === orderId ? "" : prev));
-      }
-    });
-
-  const handleAdvanceStatus = (orderId, nextStatus) =>
-    runOrderAction(orderId, {
-      url: `/api/deliveries/${orderId}/status`,
-      body: { status: nextStatus },
-      onDone: () => {
-        setAssignments((prev) =>
-          prev.map((a) => (a.orderId === orderId ? { ...a, orderStatus: nextStatus } : a))
-        );
-      }
-    });
 
   const display =
     String(user?.displayName || "").trim() || (user?.email && user.email.split("@")[0]) || "Courier";
@@ -179,8 +133,6 @@ export default function RiderDashboard() {
     h(
       "div",
       { className: "mx-auto flex max-w-4xl flex-col gap-8" },
-
-      // ── Header ──────────────────────────────────────────────
       h(
         "header",
         {
@@ -211,13 +163,12 @@ export default function RiderDashboard() {
               h(
                 "p",
                 { key: "sub", className: "text-xs text-slate-500 dark:text-slate-400" },
-                "Courier workspace · Live map & handoff controls"
+                "Courier workspace · Live map & delivery confirmation"
               )
             ])
           ]),
           h("div", { key: "actions", className: "flex flex-wrap items-center gap-2" }, [
             h(ThemeToggleButton, { key: "th", dark, onToggle: toggle }),
-            
             h(
               "button",
               {
@@ -236,7 +187,6 @@ export default function RiderDashboard() {
         ].filter(Boolean)
       ),
 
-      // ── Error / empty states ────────────────────────────────
       err
         ? h(
             "p",
@@ -252,11 +202,10 @@ export default function RiderDashboard() {
         ? h(
             "p",
             { key: "empty", className: "text-sm text-slate-500 dark:text-slate-400" },
-            "No active courier assignments yet. Sellers or admins attach you to orders from their dashboards using your user ID — then reload this page."
+            "No active courier assignments yet. After a vendor or admin assigns you to a paid order, it appears here — tap Refresh if you just got assigned."
           )
         : null,
 
-      // ── Assignment tabs + panel ─────────────────────────────
       assignments.length > 0
         ? h(
             "div",
@@ -267,7 +216,7 @@ export default function RiderDashboard() {
                 { key: "tabsrow", className: "flex flex-wrap items-center gap-2" },
                 [
                   ...assignments.map((a) => {
-                    const pending = getAcceptance(a) === "pending";
+                    const stage = getStage(a);
                     return h(
                       "button",
                       {
@@ -278,13 +227,10 @@ export default function RiderDashboard() {
                           "rounded-full px-4 py-1.5 text-xs font-semibold transition",
                           selOrderId === a.orderId
                             ? "bg-sky-600 text-white"
-                            : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-white/15 dark:bg-night-900 dark:text-slate-300 dark:hover:bg-night-900/80",
-                          pending && selOrderId !== a.orderId ? "ring-1 ring-amber-400/70" : ""
-                        ]
-                          .filter(Boolean)
-                          .join(" ")
+                            : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-white/15 dark:bg-night-900 dark:text-slate-300 dark:hover:bg-night-900/80"
+                        ].join(" ")
                       },
-                      `#${String(a.orderId).slice(-8)} · ${(a.orderStatus || "").replace(/_/g, " ")}`
+                      `#${String(a.orderId).slice(-8)} · ${(STAGE_LABELS[stage] || stage || "assigned").toLowerCase()}`
                     );
                   }),
                   h(
@@ -304,15 +250,14 @@ export default function RiderDashboard() {
                 ]
               ),
 
-              selected ? h(AssignmentPanel, {
-                key: "panel",
-                assignment: selected,
-                accessToken,
-                actionState: actionState[selected.orderId] || {},
-                onAccept: () => handleAccept(selected.orderId),
-                onDecline: () => handleDecline(selected.orderId),
-                onAdvanceStatus: (next) => handleAdvanceStatus(selected.orderId, next)
-              }) : null
+              selected
+                ? h(AssignmentPanel, {
+                    key: `panel-${selected.orderId}`,
+                    assignment: selected,
+                    accessToken,
+                    onDeliveryUpdate: () => loadAssignments({ silent: true })
+                  })
+                : null
             ].filter(Boolean)
           )
         : null
@@ -320,17 +265,10 @@ export default function RiderDashboard() {
   );
 }
 
-function AssignmentPanel({ assignment: a, accessToken, actionState, onAccept, onDecline, onAdvanceStatus }) {
-  const pending = getAcceptance(a) === "pending";
+function AssignmentPanel({ assignment: a, accessToken, onDeliveryUpdate }) {
   const address = getAddress(a);
-  const fee = getFee(a);
-  const mapsUrl = navigateUrl(address);
-  const busy = Boolean(actionState.loading);
-
-  const currentIdx = STATUS_FLOW.indexOf(a.orderStatus);
-  const nextStatus = currentIdx >= 0 && currentIdx < STATUS_FLOW.length - 1 ? STATUS_FLOW[currentIdx + 1] : null;
-  const nextLabel =
-    nextStatus === "picked_up" ? "Mark picked up" : nextStatus === "delivered" ? "Mark delivered" : null;
+  const stage = getStage(a);
+  const mapsUrl = navigateUrl(a);
 
   return h(
     "div",
@@ -339,12 +277,11 @@ function AssignmentPanel({ assignment: a, accessToken, actionState, onAccept, on
         "space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-night-900/50"
     },
     [
-      // Info row: address / fee / navigate
       h(
         "div",
         { key: "info", className: "flex flex-wrap items-start justify-between gap-3" },
         [
-          h("div", { key: "addr", className: "min-w-0" }, [
+          h("div", { key: "addr", className: "min-w-0 space-y-1" }, [
             h(
               "p",
               { key: "lab", className: "text-[10px] font-bold uppercase tracking-wide text-slate-500" },
@@ -353,21 +290,32 @@ function AssignmentPanel({ assignment: a, accessToken, actionState, onAccept, on
             h(
               "p",
               { key: "val", className: "text-sm font-medium text-slate-800 dark:text-slate-100" },
-              address || "Not provided"
-            )
-          ]),
-          h("div", { key: "right", className: "flex items-center gap-2" }, [
-            fee != null
-              ? h(
-                  "span",
-                  {
-                    key: "fee",
-                    className:
-                      "rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300"
-                  },
-                  formatMoney(fee)
-                )
+              address || "Not provided — open the map below for drop-off pin"
+            ),
+            a.itemSummary
+              ? h("p", { key: "items", className: "text-xs text-slate-500 dark:text-slate-400" }, a.itemSummary)
               : null,
+            a.total != null
+              ? h(
+                  "p",
+                  { key: "tot", className: "text-xs font-semibold text-emerald-700 dark:text-emerald-300" },
+                  formatMoney(a.total, a.currency || "GHS")
+                )
+              : null
+          ]),
+          h("div", { key: "right", className: "flex flex-wrap items-center gap-2" }, [
+            h(
+              "span",
+              {
+                key: "cur",
+                className:
+                  "inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 dark:bg-white/10 dark:text-slate-300"
+              },
+              [
+                h(Clock, { key: "ic", className: "h-3.5 w-3.5" }),
+                h("span", { key: "tx" }, STAGE_LABELS[stage] || stage.replace(/_/g, " ") || "Assigned")
+              ]
+            ),
             mapsUrl
               ? h(
                   "a",
@@ -389,90 +337,19 @@ function AssignmentPanel({ assignment: a, accessToken, actionState, onAccept, on
         ]
       ),
 
-      actionState.error
-        ? h(
-            "p",
-            {
-              key: "aerr",
-              className:
-                "rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300"
-            },
-            actionState.error
-          )
-        : null,
-
-      // Accept / decline OR status advance controls
-      pending
-        ? h("div", { key: "accept-row", className: "flex flex-wrap gap-2" }, [
-            h(
-              "button",
-              {
-                key: "accept",
-                type: "button",
-                disabled: busy,
-                onClick: onAccept,
-                className:
-                  "inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-              },
-              [
-                h(CheckCircle2, { key: "ic", className: "h-4 w-4" }),
-                h("span", { key: "tx" }, busy ? "Working…" : "Accept")
-              ]
-            ),
-            h(
-              "button",
-              {
-                key: "decline",
-                type: "button",
-                disabled: busy,
-                onClick: onDecline,
-                className:
-                  "inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:bg-rose-500/20"
-              },
-              [
-                h(XCircle, { key: "ic", className: "h-4 w-4" }),
-                h("span", { key: "tx" }, "Decline")
-              ]
-            )
-          ])
-        : h("div", { key: "status-row", className: "flex flex-wrap items-center gap-3" }, [
-            h(
-              "span",
-              {
-                key: "cur",
-                className:
-                  "inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 dark:bg-white/10 dark:text-slate-300"
-              },
-              [
-                h(Clock, { key: "ic", className: "h-3.5 w-3.5" }),
-                h("span", { key: "tx" }, (a.orderStatus || "").replace(/_/g, " ") || "assigned")
-              ]
-            ),
-            nextLabel
-              ? h(
-                  "button",
-                  {
-                    key: "advance",
-                    type: "button",
-                    disabled: busy,
-                    onClick: () => onAdvanceStatus(nextStatus),
-                    className:
-                      "inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
-                  },
-                  busy ? "Working…" : nextLabel
-                )
-              : h(
-                  "span",
-                  { key: "done", className: "text-xs font-medium text-emerald-600 dark:text-emerald-400" },
-                  "Delivered — nice work"
-                )
-          ]),
-
-      // Live map / handoff
       h(
         "div",
-        { key: "live", className: "rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5" },
-        h(DeliveryLive, { mode: "rider", accessToken, orderId: a.orderId, variant: "embedded" })
+        {
+          key: "live",
+          className: "rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"
+        },
+        h(DeliveryLive, {
+          mode: "rider",
+          accessToken,
+          orderId: a.orderId,
+          variant: "embedded",
+          onUpdate: onDeliveryUpdate
+        })
       )
     ].filter(Boolean)
   );

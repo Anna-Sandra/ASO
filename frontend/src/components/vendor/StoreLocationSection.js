@@ -5,12 +5,14 @@ import { isServiceProviderStore } from "config/catalog";
 import { h } from "utils/h";
 import { Button, Field, TextInput } from "components/ui";
 import { clearStorefrontDraftSection, readStorefrontDraft, writeStorefrontDraft } from "utils/vendorStorefrontDraft";
+import {
+  formatGhanaCoords,
+  googleMapsUrl,
+  osmEmbedUrl,
+  reverseGeocodeGhana
+} from "utils/ghanaGeo";
 
 const LIVE_SAVE_MS = 60_000;
-
-function mapsUrl(lat, lng) {
-  return `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}`;
-}
 
 function movedEnough(prev, lat, lng) {
   if (!prev) return true;
@@ -29,6 +31,7 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
   const [liveEnabled, setLiveEnabled] = useState(
     isServiceProviderStore(business) ? false : Boolean(business?.settings?.liveLocationEnabled)
   );
+  const [resolvingPlace, setResolvingPlace] = useState(false);
   const { position, error, watching, getOnce, startWatch, clearWatch, setError } = useGeolocation();
   const onSaveRef = useRef(onSave);
   const lastLiveSaveRef = useRef({ at: 0, lat: null, lng: null });
@@ -50,6 +53,32 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
       isServiceProviderStore(business) ? false : Boolean(business?.settings?.liveLocationEnabled)
     );
   }, [business?.id, business?.updatedAt, business?.businessType, business?.locationLabel, business?.settings?.liveLocationEnabled, storeSlug]);
+
+  // If we already have GPS but only coords / a generic placeholder, resolve a place name once.
+  useEffect(() => {
+    const lat = geo?.lat;
+    const lng = geo?.lng;
+    if (lat == null || lng == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return;
+    const current = String(label || business?.locationLabel || "").trim();
+    const looksGeneric =
+      !current ||
+      /^store location$/i.test(current) ||
+      /^service location$/i.test(current) ||
+      /^-?\d+\.\d+,\s*-?\d+\.\d+$/.test(current);
+    if (!looksGeneric) return;
+    let cancelled = false;
+    (async () => {
+      const place = await reverseGeocodeGhana(lat, lng);
+      if (cancelled || !place) return;
+      setLabel(place);
+      if (storeSlug) writeStorefrontDraft(storeSlug, { locationLabel: place });
+      await onSaveRef.current?.({ locationLabel: place }, { silent: true, reload: false });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolve once per pin
+  }, [business?.id, geo?.lat, geo?.lng]);
 
   const saveLivePosition = (lat, lng) => {
     if (isServiceStore) return;
@@ -74,6 +103,8 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
   const displayLat = position?.lat ?? geo?.lat;
   const displayLng = position?.lng ?? geo?.lng;
   const hasPin = displayLat != null && displayLng != null && Number.isFinite(Number(displayLat));
+  const embedSrc = hasPin ? osmEmbedUrl(displayLat, displayLng) : "";
+  const placeLabel = String(label || business?.locationLabel || "").trim();
 
   const persist = async (patch, opts) => {
     if (!onSaveRef.current) return;
@@ -82,17 +113,33 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
 
   const useCurrentOnce = async () => {
     setError("");
+    setResolvingPlace(true);
     try {
       const { lat, lng } = await getOnce();
+      let place = "";
+      try {
+        place = await reverseGeocodeGhana(lat, lng);
+      } catch {
+        place = "";
+      }
+      const nextLabel =
+        place ||
+        label.trim() ||
+        String(business?.locationLabel || "").trim() ||
+        (isServiceStore ? "Service location" : "Store location");
+      setLabel(nextLabel);
+      if (storeSlug) writeStorefrontDraft(storeSlug, { locationLabel: nextLabel });
       await persist(
         {
           geoLocation: { lat, lng },
-          locationLabel: label.trim() || business?.locationLabel || (isServiceStore ? "Service location" : "Store location")
+          locationLabel: nextLabel
         },
         { silent: false, reload: true }
       );
     } catch {
       /* error state set in hook */
+    } finally {
+      setResolvingPlace(false);
     }
   };
 
@@ -145,12 +192,12 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
           ? h(
               "a",
               {
-                href: mapsUrl(displayLat, displayLng),
+                href: googleMapsUrl(displayLat, displayLng, placeLabel),
                 target: "_blank",
                 rel: "noopener noreferrer",
                 className: "text-xs font-bold text-sky-600 hover:underline dark:text-sky-300"
               },
-              "Open in Maps →"
+              "Open in Google Maps →"
             )
           : null
       ]),
@@ -168,13 +215,22 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
       h("div", { key: "acts", className: "mt-3 flex flex-wrap gap-2" }, [
         h(
           Button,
-          { type: "button", variant: "outline", className: "gap-2", disabled: saving, onClick: () => void saveLabel() },
+          { type: "button", variant: "outline", className: "gap-2", disabled: saving || resolvingPlace, onClick: () => void saveLabel() },
           "Save name"
         ),
         h(
           Button,
-          { type: "button", variant: "outline", className: "gap-2", disabled: saving, onClick: () => void useCurrentOnce() },
-          [h(Crosshair, { className: "h-4 w-4" }), " Use current location"]
+          {
+            type: "button",
+            variant: "outline",
+            className: "gap-2",
+            disabled: saving || resolvingPlace,
+            onClick: () => void useCurrentOnce()
+          },
+          [
+            h(Crosshair, { className: "h-4 w-4" }),
+            resolvingPlace ? " Finding place…" : " Use current location"
+          ]
         ),
         !isServiceStore
           ? h(
@@ -199,20 +255,45 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
             {
               key: "coords",
               className:
-                "mt-4 rounded-xl border border-emerald-200/80 bg-emerald-50/80 px-4 py-3 text-xs dark:border-emerald-500/25 dark:bg-emerald-950/30"
+                "mt-4 overflow-hidden rounded-xl border border-emerald-200/80 bg-emerald-50/80 dark:border-emerald-500/25 dark:bg-emerald-950/30"
             },
             [
-              h("p", { className: "font-bold text-emerald-900 dark:text-emerald-100" }, "Pinned on map"),
-              h(
-                "p",
-                { className: "mt-1 font-mono text-emerald-800/90 dark:text-emerald-200/90" },
-                `${Number(displayLat).toFixed(5)}, ${Number(displayLng).toFixed(5)}`
-              ),
-              position?.accuracyM != null
-                ? h("p", { className: "mt-1 text-emerald-700/80 dark:text-emerald-300/80" }, `Accuracy ~${Math.round(position.accuracyM)} m`)
-                : null,
-              watching
-                ? h("p", { className: "mt-2 font-semibold text-emerald-700 dark:text-emerald-300" }, "Live sync on (updates periodically)")
+              h("div", { key: "txt", className: "px-4 py-3 text-xs" }, [
+                h("p", { className: "font-bold text-emerald-900 dark:text-emerald-100" }, "Pinned on map"),
+                h(
+                  "p",
+                  { className: "mt-1 text-sm font-medium text-emerald-950 dark:text-emerald-50" },
+                  placeLabel || "Resolving street / area…"
+                ),
+                h(
+                  "p",
+                  { className: "mt-1 font-mono text-[10px] text-emerald-800/70 dark:text-emerald-200/70" },
+                  formatGhanaCoords(displayLat, displayLng)
+                ),
+                position?.accuracyM != null
+                  ? h(
+                      "p",
+                      { className: "mt-1 text-emerald-700/80 dark:text-emerald-300/80" },
+                      `Accuracy ~${Math.round(position.accuracyM)} m`
+                    )
+                  : null,
+                watching
+                  ? h(
+                      "p",
+                      { className: "mt-2 font-semibold text-emerald-700 dark:text-emerald-300" },
+                      "Live sync on (updates periodically)"
+                    )
+                  : null
+              ]),
+              embedSrc
+                ? h("iframe", {
+                    key: "map",
+                    title: "Store location map",
+                    src: embedSrc,
+                    className: "h-48 w-full border-t border-emerald-200/70 dark:border-emerald-500/20",
+                    loading: "lazy",
+                    referrerPolicy: "no-referrer-when-downgrade"
+                  })
                 : null
             ]
           )

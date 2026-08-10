@@ -1,11 +1,8 @@
 import mongoose from "mongoose";
 import { Order } from "./order.model";
 import { User } from "../auth/user.model";
-import { runVendorPayoutsForOrder } from "../payments/paystackPayouts";
 import { fireNotification } from "../notifications/notification.service";
 import { runReferralSettlementForPaidOrder } from "./referralSettlement";
-
-const PAID_LIKE = ["paid", "processing", "sent_for_delivery", "delivered"];
 
 /**
  * After Paystack/Stripe marks an order paid: loyalty points accrual + redeem deduction (stored on order).
@@ -49,7 +46,7 @@ export async function runLoyaltySettlementForPaidOrder(orderId: mongoose.Types.O
   void runReferralSettlementForPaidOrder(orderId);
 }
 
-/** After buyer confirms receipt (or auto-confirm): legacy Paystack transfers if split disabled. */
-export async function maybeReleaseVendorPayoutAfterConfirm(orderId: string): Promise<void> {
-  await runVendorPayoutsForOrder(orderId);
+/** Buyer receipt confirm is optional UX only — vendor payout requires admin release after rider delivery confirmation. */
+export async function maybeReleaseVendorPayoutAfterConfirm(_orderId: string): Promise<void> {
+  /* no-op: escrow holds funds until admin releases via /api/admin/orders/:id/release-vendor-payment */
 }

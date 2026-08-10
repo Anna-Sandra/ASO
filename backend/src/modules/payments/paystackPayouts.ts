@@ -168,18 +168,32 @@ export async function mergePaystackCheckoutSplitIntoInitializeBody(
 /**
  * **Legacy:** for each unique seller on the order, `POST /transfer` → “Send vendor share to
  * Vendor A’s bank” using their registered recipient code. Idempotent: `in_progress` → `complete` | `partial` | `skipped`.
+ *
+ * Escrow: only runs for delivered orders with `paymentStatus: "held"` (admin release).
+ * Pass `force: true` from admin release to ignore `PAYSTACK_AUTO_VENDOR_PAYOUT`.
  */
-export async function runVendorPayoutsForOrder(orderId: string): Promise<void> {
-  if (!env.PAYSTACK_AUTO_VENDOR_PAYOUT) return;
-  if (!mongoose.isValidObjectId(orderId)) return;
+export async function runVendorPayoutsForOrder(
+  orderId: string,
+  opts?: { force?: boolean }
+): Promise<{ ran: boolean; status?: string; message?: string }> {
+  if (!opts?.force && !env.PAYSTACK_AUTO_VENDOR_PAYOUT) {
+    return { ran: false, message: "Auto vendor payout disabled" };
+  }
+  if (!mongoose.isValidObjectId(orderId)) return { ran: false, message: "Invalid order id" };
 
-  const peek = await Order.findById(orderId).select("paystackUsedCheckoutSplit").lean();
-  if ((peek as { paystackUsedCheckoutSplit?: boolean } | null)?.paystackUsedCheckoutSplit) return;
+  const peek = await Order.findById(orderId).select("paystackUsedCheckoutSplit paymentMethod").lean();
+  if ((peek as { paystackUsedCheckoutSplit?: boolean } | null)?.paystackUsedCheckoutSplit) {
+    return { ran: false, message: "Checkout split already settled to sellers" };
+  }
+  if ((peek as { paymentMethod?: string } | null)?.paymentMethod !== "paystack") {
+    return { ran: false, message: "Not a Paystack order — mark released without transfer" };
+  }
 
   const lock = await Order.findOneAndUpdate(
     {
       _id: orderId,
-      status: "paid",
+      status: "delivered",
+      paymentStatus: "held",
       paymentMethod: "paystack",
       $or: [{ paystackPayoutStatus: { $exists: false } }, { paystackPayoutStatus: "none" }]
     },
@@ -187,12 +201,14 @@ export async function runVendorPayoutsForOrder(orderId: string): Promise<void> {
     { new: true }
   );
 
-  if (!lock) return;
+  if (!lock) {
+    return { ran: false, message: "Order not eligible for transfer (need delivered + held + no prior payout)" };
+  }
 
   const order = await Order.findById(orderId).lean();
-  if (!order || order.status !== "paid" || order.paymentMethod !== "paystack") {
+  if (!order || order.status !== "delivered" || order.paymentMethod !== "paystack") {
     await Order.findByIdAndUpdate(orderId, { $set: { paystackPayoutStatus: "skipped" } });
-    return;
+    return { ran: false, message: "Order state changed before transfer" };
   }
 
   const bySeller = new Map<string, number>();
@@ -270,6 +286,7 @@ export async function runVendorPayoutsForOrder(orderId: string): Promise<void> {
       }))
     }
   });
+  return { ran: true, status: finalStatus };
 }
 
 export type GhanaPayoutChannel = "ghipss" | "mobile_money";

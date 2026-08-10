@@ -13,7 +13,7 @@ import { canActAsOrderBuyer, readGuestSecretFromRequest } from "../orders/orderA
 import { Product } from "../products/product.model";
 import { mirrorOrderStatusToDelivery } from "../deliveries/delivery.service";
 import { getOrCreateSettings, getEffectiveCommissionPercent } from "../platform/platformSettings.service";
-import { runVendorPayoutsForOrder, mergePaystackCheckoutSplitIntoInitializeBody } from "./paystackPayouts";
+import { mergePaystackCheckoutSplitIntoInitializeBody } from "./paystackPayouts";
 import { handlePaystackRefundWebhookEvent } from "./paystackRefundSync";
 import { notifyOrderPaid } from "../notifications/notification.service";
 import { paystackGet, paystackPost } from "./paystackClient";
@@ -177,6 +177,7 @@ export async function finalizePaystackSuccessIfValid(
       {
         $set: {
           status: "paid",
+          paymentStatus: "held",
           paymentMethod: "paystack",
           paymentReference: reference,
           paystackReference: reference,
@@ -522,7 +523,7 @@ export const stripeWebhook = asyncHandler(async (req: Request, res: Response) =>
     if (orderId && mongoose.isValidObjectId(orderId)) {
       const updated = await Order.findOneAndUpdate(
         { _id: orderId, status: "pending_payment" },
-        { $set: { status: "paid", stripeCheckoutSessionId: session.id } },
+        { $set: { status: "paid", paymentStatus: "held", stripeCheckoutSessionId: session.id } },
         { new: true }
       ).lean();
 

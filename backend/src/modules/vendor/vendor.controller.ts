@@ -10,6 +10,7 @@ import { Order } from "../orders/order.model";
 import { Product } from "../products/product.model";
 import { Review } from "../reviews/review.model";
 import { withContacts } from "../orders/orderSerialize";
+import { setOrderPaymentHeld } from "../orders/orderEscrow";
 import {
   createGhanaPayoutRecipient,
   createGhanaSubaccount,
@@ -214,6 +215,7 @@ export const confirmVendorPaymentReceived = asyncHandler(async (req: Request, re
 
   if (allConfirmed) {
     order.status = "paid";
+    setOrderPaymentHeld(order);
     for (const it of order.items) {
       await Product.updateOne({ _id: it.productId }, { $inc: { stock: -it.quantity } });
     }

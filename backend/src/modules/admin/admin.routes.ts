@@ -41,10 +41,12 @@ import {
   listAdminProducts,
   listAdminReports,
   listAdminUsers,
+  listPendingVendorPayments,
   markAdminOrderPaid,
   patchAdminOrder,
   postAdminMessageToUser,
   refundAdminOrderPaystack,
+  releaseVendorPayment,
   patchAdminPlatformSettings,
   patchAdminProduct,
   patchAdminReport,
@@ -161,6 +163,7 @@ router.post(
   rejectProduct
 );
 router.get("/orders", p("orders"), validateQuery(adminOrdersQuerySchema), listAdminOrders);
+router.get("/orders/pending-vendor-payments", p("payments"), listPendingVendorPayments);
 router.get("/revenue", p("payments"), getAdminRevenue);
 router.get("/sellers/balances", p("payments"), getAdminSellerBalances);
 router.get(
@@ -236,6 +239,7 @@ router.post(
 );
 router.post("/orders/:id/refund-paystack", p("orders", "orders_refund"), refundAdminOrderPaystack);
 router.post("/orders/:id/mark-paid", p("orders", "orders_mark_paid"), markAdminOrderPaid);
+router.post("/orders/:id/release-vendor-payment", p("payments", "orders_release_payment"), releaseVendorPayment);
 router.patch(
   "/orders/:id",
   p("orders", "orders_manage"),

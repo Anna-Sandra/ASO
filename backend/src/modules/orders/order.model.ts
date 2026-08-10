@@ -10,6 +10,15 @@ export type OrderStatus =
   | "delivered"
   | "cancelled";
 
+/** Escrow-style settlement: funds stay on platform until admin releases after rider delivery confirmation. */
+export type OrderPaymentStatus = "pending" | "held" | "released";
+
+export interface OrderDeliveryConfirmation {
+  confirmed: boolean;
+  confirmedBy?: mongoose.Types.ObjectId | null;
+  confirmedAt?: Date | null;
+}
+
 export interface OrderLineItem {
   productId: mongoose.Types.ObjectId;
   sellerId: mongoose.Types.ObjectId;
@@ -63,6 +72,13 @@ export interface OrderDoc {
   /** Buyer-paid Paystack / processing margin (GHS), included in `total`. Only set for pricingVersion ≥ 2. */
   processingFeeTotal?: number;
   status: OrderStatus;
+  /**
+   * Escrow settlement status (independent of fulfillment `status`).
+   * `held` after successful payment; `released` after admin pays vendors post-delivery confirmation.
+   */
+  paymentStatus?: OrderPaymentStatus;
+  /** Set when the assigned rider confirms handoff (required before admin can release vendor payout). */
+  deliveryConfirmation?: OrderDeliveryConfirmation;
   paymentMethod?: "stripe" | "momo" | "bank" | "paystack" | null;
   paymentReference?: string | null;
   paymentDetails?: OrderPaymentDetails | null;
@@ -172,6 +188,21 @@ const orderSchema = new Schema<OrderDoc>(
         "cancelled"
       ],
       default: "pending_payment"
+    },
+    paymentStatus: {
+      type: String,
+      enum: ["pending", "held", "released"],
+      default: "pending",
+      index: true
+    },
+    deliveryConfirmation: {
+      type: {
+        confirmed: { type: Boolean, default: false },
+        confirmedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+        confirmedAt: { type: Date, default: null }
+      },
+      default: () => ({ confirmed: false, confirmedBy: null, confirmedAt: null }),
+      _id: false
     },
     confirmedSellerIds: {
       type: [{ type: Schema.Types.ObjectId, ref: "User" }],

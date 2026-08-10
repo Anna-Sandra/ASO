@@ -268,7 +268,7 @@ function MapFloatingControls({ mode }) {
 /**
  * @param {{ mode: DeliveryLiveMode; accessToken: string; orderId: string; className?: string; variant?: DeliveryLiveVariant }} props
  */
-export function DeliveryLive({ mode, accessToken, orderId, className, variant = "default" }) {
+export function DeliveryLive({ mode, accessToken, orderId, className, variant = "default", onUpdate }) {
   const [bundle, setBundle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchErr, setFetchErr] = useState("");
@@ -282,6 +282,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const [liveConnected, setLiveConnected] = useState(false);
   const [lastLivePulse, setLastLivePulse] = useState(0);
   const [showDeliverOtp, setShowDeliverOtp] = useState(false);
+  const [showConfirmDeliveryModal, setShowConfirmDeliveryModal] = useState(false);
   const [deliveryOtp, setDeliveryOtp] = useState("");
   const [receivedByName, setReceivedByName] = useState("");
   const [deliveryNote, setDeliveryNote] = useState("");
@@ -453,9 +454,11 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
       });
       setBundle((prev) => (prev ? { ...prev, delivery } : prev));
       setShowDeliverOtp(false);
+      setShowConfirmDeliveryModal(false);
       setDeliveryOtp("");
       setReceivedByName("");
       setDeliveryNote("");
+      if (typeof onUpdate === "function") onUpdate({ delivery, stage });
     } catch (ex) {
       setGeoErr(apiErrorMessage(ex, "Could not update delivery status. Try again."));
     } finally {
@@ -537,7 +540,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     if (!st) return [];
     if (st === "ready_for_pickup") return [{ stage: "picked_up", label: "Mark picked up" }];
     if (st === "picked_up") return [{ stage: "on_the_way", label: "On the way" }];
-    if (st === "on_the_way") return [{ stage: "delivered", label: "Mark delivered" }];
+    if (st === "on_the_way") return [{ stage: "delivered", label: "Confirm Delivery" }];
     return [];
   };
 
@@ -1229,7 +1232,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 },
                 [
                   el("p", { className: "text-xs font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200" }, "Rider controls"),
-                  !showDeliverOtp
+                  !showDeliverOtp && !showConfirmDeliveryModal
                     ? el("div", { key: "acts", className: "mt-3 flex flex-wrap gap-2" }, [
                         ...riderNextActions().map((a) =>
                           el(
@@ -1240,7 +1243,8 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               disabled: Boolean(busyStage),
                               className:
                                 "rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
-                              onClick: () => (a.stage === "delivered" ? setShowDeliverOtp(true) : patchStage(a.stage))
+                              onClick: () =>
+                                a.stage === "delivered" ? setShowConfirmDeliveryModal(true) : patchStage(a.stage)
                             },
                             busyStage === a.stage ? "Saving…" : a.label
                           )
@@ -1262,6 +1266,44 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                           geoSharing ? "Stop GPS share" : "Share my GPS"
                         )
                       ])
+                    : showConfirmDeliveryModal
+                      ? el("div", { key: "confirm-modal", className: "mt-3 space-y-3" }, [
+                          el(
+                            "p",
+                            { className: "text-sm font-semibold text-amber-950 dark:text-amber-100" },
+                            "Are you sure this order has been delivered?"
+                          ),
+                          el(
+                            "p",
+                            { className: "text-xs leading-relaxed text-amber-900/90 dark:text-amber-100/90" },
+                            "Confirming tells the platform the customer has the order. You will enter the customer’s delivery code next."
+                          ),
+                          el("div", { key: "btns", className: "flex flex-wrap gap-2" }, [
+                            el(
+                              "button",
+                              {
+                                type: "button",
+                                className:
+                                  "flex-1 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105",
+                                onClick: () => {
+                                  setShowConfirmDeliveryModal(false);
+                                  setShowDeliverOtp(true);
+                                }
+                              },
+                              "Confirm Delivery"
+                            ),
+                            el(
+                              "button",
+                              {
+                                type: "button",
+                                className:
+                                  "rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 dark:border-white/15 dark:bg-night-950 dark:text-slate-200",
+                                onClick: () => setShowConfirmDeliveryModal(false)
+                              },
+                              "Cancel"
+                            )
+                          ])
+                        ])
                     : el("div", { key: "otp-form", className: "mt-3 space-y-3" }, [
                         el(
                           "p",
@@ -1334,7 +1376,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                                 "flex-1 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
                               onClick: submitDeliveryOtp
                             },
-                            busyStage === "delivered" ? "Submitting…" : "Complete delivery"
+                            busyStage === "delivered" ? "Submitting…" : "Confirm Delivery"
                           ),
                           el(
                             "button",

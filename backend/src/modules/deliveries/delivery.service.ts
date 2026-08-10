@@ -9,7 +9,7 @@ import { HttpError } from "../../utils/httpError";
 import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import type { UserRole } from "../auth/user.model";
 import { emitDeliveryLocation, emitDeliveryUpdate } from "./delivery.broadcast";
-import { notifyBuyerOrderStatus } from "../notifications/notification.service";
+import { notifyBuyerOrderStatus, fireNotification } from "../notifications/notification.service";
 import { sendOrderDeliveredEmails } from "../../utils/orderDeliveredEmail";
 import {
   clearDeliveryOtp,
@@ -209,13 +209,31 @@ export async function mirrorOrderStatusToDelivery(order: HydratedDocument<OrderD
   emitDeliveryUpdate(order._id.toString(), { delivery: serializeDelivery(d), orderStatus: order.status });
 }
 
-async function finalizeOrderDelivered(order: HydratedDocument<OrderDoc>) {
+async function finalizeOrderDelivered(
+  order: HydratedDocument<OrderDoc>,
+  opts?: { confirmedByRiderId?: string }
+) {
   const allowedPrev = ["paid", "processing", "sent_for_delivery"];
   if (!allowedPrev.includes(order.status)) return;
   order.status = "delivered";
   (order as unknown as { deliveredAt?: Date | null }).deliveredAt = new Date();
+  if (opts?.confirmedByRiderId && mongoose.isValidObjectId(opts.confirmedByRiderId)) {
+    order.deliveryConfirmation = {
+      confirmed: true,
+      confirmedBy: new mongoose.Types.ObjectId(opts.confirmedByRiderId),
+      confirmedAt: new Date()
+    };
+  }
   await order.save();
-  if (order.buyerId) void notifyBuyerOrderStatus(order._id.toString(), order.buyerId, "Delivered");
+  if (order.buyerId) {
+    void notifyBuyerOrderStatus(order._id.toString(), order.buyerId, "Delivered");
+    void fireNotification(order.buyerId, {
+      type: "order_status_change",
+      title: "Your order has been delivered",
+      message: "Your order has been delivered. You can confirm receipt or report a problem from My Orders.",
+      orderId: order._id
+    });
+  }
   void sendOrderDeliveredEmails(order);
 }
 
@@ -426,7 +444,9 @@ export async function advanceDeliveryStage(params: {
       const note = String(params.proof?.deliveryNote || "").trim();
       if (note) d.deliveryNote = note.slice(0, 500);
       d.deliveredAt = new Date();
-      await finalizeOrderDelivered(order);
+      await finalizeOrderDelivered(order, {
+        confirmedByRiderId: params.actorRole === "rider" ? params.actorId : undefined
+      });
     }
 
     d.currentStage = params.nextStage;
@@ -512,6 +532,13 @@ export async function listRiderAssignments(riderUserId: string): Promise<
     delivery: ReturnType<typeof serializeDelivery>;
     orderId: string;
     orderStatus: string;
+    deliveryStage: string;
+    dropoffLabel: string;
+    dropoffLatitude: number | null;
+    dropoffLongitude: number | null;
+    currency: string;
+    total: number | null;
+    itemSummary: string;
   }>
 > {
   const oid = new mongoose.Types.ObjectId(riderUserId);
@@ -524,13 +551,44 @@ export async function listRiderAssignments(riderUserId: string): Promise<
     delivery: ReturnType<typeof serializeDelivery>;
     orderId: string;
     orderStatus: string;
+    deliveryStage: string;
+    dropoffLabel: string;
+    dropoffLatitude: number | null;
+    dropoffLongitude: number | null;
+    currency: string;
+    total: number | null;
+    itemSummary: string;
   }> = [];
   for (const d of rows) {
-    const order = await Order.findById(d.orderId).select("status").lean();
+    const order = await Order.findById(d.orderId)
+      .select("status total currency items.name items.quantity dropoffLabel dropoffLatitude dropoffLongitude")
+      .lean();
+    const items = ((order as { items?: { name?: string; quantity?: number }[] } | null)?.items || []) as {
+      name?: string;
+      quantity?: number;
+    }[];
+    const itemSummary = items
+      .slice(0, 3)
+      .map((it) => `${it.quantity || 1}× ${it.name || "Item"}`)
+      .join(", ");
+    const dropoffLabel =
+      String(d.dropoffLabel || "").trim() ||
+      String((order as { dropoffLabel?: string } | null)?.dropoffLabel || "").trim();
+    const dropLat =
+      d.dropoffLatitude ?? (order as { dropoffLatitude?: number | null } | null)?.dropoffLatitude ?? null;
+    const dropLng =
+      d.dropoffLongitude ?? (order as { dropoffLongitude?: number | null } | null)?.dropoffLongitude ?? null;
     out.push({
       delivery: serializeDelivery(d),
       orderId: d.orderId.toString(),
-      orderStatus: (order?.status as string) || "unknown"
+      orderStatus: (order?.status as string) || "unknown",
+      deliveryStage: d.currentStage,
+      dropoffLabel,
+      dropoffLatitude: dropLat != null && Number.isFinite(Number(dropLat)) ? Number(dropLat) : null,
+      dropoffLongitude: dropLng != null && Number.isFinite(Number(dropLng)) ? Number(dropLng) : null,
+      currency: String((order as { currency?: string } | null)?.currency || "GHS").toUpperCase(),
+      total: order?.total != null ? Number(order.total) : null,
+      itemSummary
     });
   }
   return out;
@@ -607,4 +665,28 @@ export async function resendDeliveryOtp(params: {
   const result = await sendDeliveryOtpToBuyer(order, d);
   await d.save();
   return result;
+}
+
+/**
+ * Assigned rider confirms handoff. Requires OTP when the delivery was previously on the way.
+ * Sets order.deliveryConfirmation so admin can release escrowed vendor payment.
+ */
+export async function confirmRiderDelivery(params: {
+  orderId: string;
+  riderUserId: string;
+  deliveryOtp?: string;
+  receivedByName?: string;
+  deliveryNote?: string;
+}): Promise<HydratedDocument<DeliveryDoc>> {
+  return advanceDeliveryStage({
+    orderId: params.orderId,
+    nextStage: "delivered",
+    actorId: params.riderUserId,
+    actorRole: "rider",
+    proof: {
+      deliveryOtp: params.deliveryOtp,
+      receivedByName: params.receivedByName,
+      deliveryNote: params.deliveryNote
+    }
+  });
 }

@@ -23,6 +23,7 @@ export const ADMIN_PERMISSION_KEYS = [
   "orders_manage",
   "orders_refund",
   "orders_mark_paid",
+  "orders_release_payment",
   "payments",
   "reports",
   "reports_manage",
@@ -120,6 +121,12 @@ export const ADMIN_PERMISSION_CATALOG: {
     key: "orders_mark_paid",
     label: "Mark orders paid",
     description: "Manually mark an order as paid",
+    group: "Order actions"
+  },
+  {
+    key: "orders_release_payment",
+    label: "Release vendor payments",
+    description: "Release escrowed funds to vendors after rider delivery confirmation",
     group: "Order actions"
   },
   { key: "payments", label: "Payments & revenue", description: "Transactions and seller balances", group: "Sections" },

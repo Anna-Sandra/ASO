@@ -2756,11 +2756,25 @@ export function CheckoutPage() {
     }
     setLocatingDropoff(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setDropoffLat(pos.coords.latitude);
-        setDropoffLng(pos.coords.longitude);
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setDropoffLat(lat);
+        setDropoffLng(lng);
+        let place = "";
+        try {
+          const { reverseGeocodeGhana } = await import("utils/ghanaGeo");
+          place = await reverseGeocodeGhana(lat, lng);
+        } catch {
+          place = "";
+        }
+        if (place) {
+          setDropoffLabel((prev) => (String(prev || "").trim() ? prev : place));
+          setDropoffHint(`Location found: ${place}`);
+        } else {
+          setDropoffHint("GPS saved — add a landmark or room number in the address field if needed.");
+        }
         setLocatingDropoff(false);
-        setDropoffHint("Location saved — riders can find you on the live map.");
       },
       () => {
         setLocatingDropoff(false);
@@ -3121,9 +3135,45 @@ export function CheckoutPage() {
           ),
           dropoffLat != null && dropoffLng != null
             ? h(
-                "p",
-                { key: "ok", className: "text-[11px] font-medium text-emerald-700 dark:text-emerald-300" },
-                "GPS pinned — shown on your live delivery map."
+                "div",
+                {
+                  key: "ok",
+                  className:
+                    "overflow-hidden rounded-lg border border-emerald-400/30 bg-emerald-500/5 dark:border-emerald-500/25"
+                },
+                [
+                  h(
+                    "p",
+                    { key: "msg", className: "px-2.5 pt-2 text-[11px] font-medium text-emerald-800 dark:text-emerald-200" },
+                    dropoffLabel.trim()
+                      ? `Pinned: ${dropoffLabel.trim()}`
+                      : "GPS pinned — shown on your live delivery map."
+                  ),
+                  h("iframe", {
+                    key: "map",
+                    title: "Drop-off location map",
+                    src: `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(
+                      `${dropoffLng - 0.01},${dropoffLat - 0.01},${dropoffLng + 0.01},${dropoffLat + 0.01}`
+                    )}&layer=mapnik&marker=${encodeURIComponent(`${dropoffLat},${dropoffLng}`)}`,
+                    className: "mt-2 h-36 w-full border-t border-emerald-400/20",
+                    loading: "lazy",
+                    referrerPolicy: "no-referrer-when-downgrade"
+                  }),
+                  h(
+                    "a",
+                    {
+                      key: "gmaps",
+                      href: `https://www.google.com/maps?q=${encodeURIComponent(
+                        dropoffLabel.trim() || `${dropoffLat},${dropoffLng}`
+                      )}`,
+                      target: "_blank",
+                      rel: "noreferrer",
+                      className:
+                        "block px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 underline dark:text-sky-300"
+                    },
+                    "Open in Google Maps"
+                  )
+                ]
               )
             : null,
           dropoffHint
@@ -4824,6 +4874,31 @@ export function BuyerOrdersPage() {
     }
   };
 
+  const confirmBuyerReceipt = async (order) => {
+    if (!accessToken || !order?.id || order.status !== "delivered") return;
+    if (order.buyerConfirmedReceiptAt) {
+      toast("You already confirmed this delivery.", { variant: "info" });
+      return;
+    }
+    const ok = await confirm("Confirm you received this order?", {
+      title: "Confirm receipt",
+      confirmLabel: "Yes, I received it",
+      cancelLabel: "Not yet"
+    });
+    if (!ok) return;
+    try {
+      const { order: updated } = await apiFetch(`/api/orders/${order.id}/confirm-receipt`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: {}
+      });
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, ...updated } : o)));
+      toast("Thanks — receipt confirmed.", { variant: "success" });
+    } catch (ex) {
+      toast(apiErrorMessage(ex, "Could not confirm receipt"), { variant: "error" });
+    }
+  };
+
   const deleteOrder = async (order) => {
     if (!accessToken || !order?.id) return;
     if (order.status !== "cancelled") return;
@@ -5194,27 +5269,42 @@ export function BuyerOrdersPage() {
                                 className:
                                   "text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400"
                               },
-                              "Live GPS · opens when courier shares"
+                              o.status === "delivered"
+                                ? "Delivered"
+                                : "Live GPS · opens when courier shares"
                             ),
                             h(
                               "p",
                               { className: "mt-px line-clamp-1 text-[10px] leading-tight text-slate-600 dark:text-slate-400" },
-                              "Map + timeline in tracker."
+                              o.status === "delivered"
+                                ? "Open tracker for delivery timeline and confirmation."
+                                : "Map + timeline in tracker — follow your order until it arrives."
                             )
                           ]),
-                          h(Button, {
-                            type: "button",
-                            variant: "primary",
-                            className:
-                              "!h-8 !rounded-lg !gap-1 !px-2.5 !text-[11px] !font-semibold shadow shadow-sky-800/15",
-                            onClick: () => {
-                              setTrackPresetOrderId(String(o.id));
-                              setTrackModalOpen(true);
-                            }
-                          }, [
-                            h(Navigation, { key: "n", className: "h-3.5 w-3.5" }),
-                            "Track"
-                          ])
+                          h("div", { className: "flex flex-wrap items-center gap-1.5" }, [
+                            h(Button, {
+                              type: "button",
+                              variant: "primary",
+                              className:
+                                "!h-8 !rounded-lg !gap-1 !px-2.5 !text-[11px] !font-semibold shadow shadow-sky-800/15",
+                              onClick: () => {
+                                setTrackPresetOrderId(String(o.id));
+                                setTrackModalOpen(true);
+                              }
+                            }, [
+                              h(Navigation, { key: "n", className: "h-3.5 w-3.5" }),
+                              "Track"
+                            ]),
+                            o.status === "delivered" && !o.buyerConfirmedReceiptAt
+                              ? h(Button, {
+                                  key: "confirm",
+                                  type: "button",
+                                  variant: "secondary",
+                                  className: "!h-8 !rounded-lg !px-2.5 !text-[11px] !font-semibold",
+                                  onClick: () => void confirmBuyerReceipt(o)
+                                }, "Confirm received")
+                              : null
+                          ].filter(Boolean))
                         ])
                       ]
                     )

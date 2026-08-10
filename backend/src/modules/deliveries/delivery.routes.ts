@@ -18,7 +18,8 @@ import {
   postRiderLocation,
   setEstimatedArrival,
   serializeDelivery,
-  resendDeliveryOtp
+  resendDeliveryOtp,
+  confirmRiderDelivery
 } from "./delivery.service";
 import {
   patchDeliveryStageSchema,
@@ -164,6 +165,43 @@ router.patch(
       minutes: estimatedArrivalMinutes
     });
     res.json({ delivery: serializeDelivery(d) });
+  })
+);
+
+router.post(
+  "/order/:orderId/confirm-delivery",
+  protect,
+  requireActiveAccount,
+  authorize("rider"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { orderId } = req.params;
+    const body = (req.body || {}) as {
+      deliveryOtp?: string;
+      receivedByName?: string;
+      deliveryNote?: string;
+    };
+    const d = await confirmRiderDelivery({
+      orderId,
+      riderUserId: req.user!.id,
+      deliveryOtp: body.deliveryOtp,
+      receivedByName: body.receivedByName,
+      deliveryNote: body.deliveryNote
+    });
+    const order = await Order.findById(orderId);
+    res.json({
+      delivery: serializeDelivery(d),
+      orderStatus: order?.status,
+      paymentStatus: order?.paymentStatus || "held",
+      deliveryConfirmation: order?.deliveryConfirmation
+        ? {
+            confirmed: Boolean(order.deliveryConfirmation.confirmed),
+            confirmedBy: order.deliveryConfirmation.confirmedBy
+              ? String(order.deliveryConfirmation.confirmedBy)
+              : null,
+            confirmedAt: order.deliveryConfirmation.confirmedAt ?? null
+          }
+        : { confirmed: false, confirmedBy: null, confirmedAt: null }
+    });
   })
 );
 

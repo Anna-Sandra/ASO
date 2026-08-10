@@ -24,7 +24,6 @@ import {
   GUEST_ORDER_MESSAGE_SENDER_ID
 } from "./orderAccess";
 import { notifyOrderCancelledForCounterparties, notifyOrderMessageRecipients, notifySellersNewOrder, notifySellersPaymentSubmitted, fireNotification } from "../notifications/notification.service";
-import { maybeReleaseVendorPayoutAfterConfirm } from "./orderPaymentSideEffects";
 import { checkoutListingUnitBeforeAddons } from "../promotions/promotionDeal.service";
 import { assertNoContactSharing } from "../../utils/contactSharingGuard";
 
@@ -561,13 +560,12 @@ export const confirmBuyerReceipt = asyncHandler(async (req: Request, res: Respon
   }
   order.buyerConfirmedReceiptAt = new Date();
   await order.save();
-  void maybeReleaseVendorPayoutAfterConfirm(id);
   const sellerIds = [...new Set(order.items.map((it) => it.sellerId.toString()))];
   for (const sid of sellerIds) {
     fireNotification(new mongoose.Types.ObjectId(sid), {
       type: "seller_payout",
       title: "Buyer confirmed receipt",
-      message: `Order ${id.slice(-8)} — settlement step completed when Paystack transfers apply.`,
+      message: `Order ${id.slice(-8)} — buyer confirmed receipt. Platform admin releases vendor payout after delivery verification.`,
       orderId: order._id
     });
   }

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Crosshair, MapPin } from "lucide-react";
 import { useGeolocation } from "hooks/useGeolocation";
-import { formatGhanaCoords, googleMapsUrl, isCoordinateInGhana, reverseGeocodeGhana } from "utils/ghanaGeo";
+import { formatGhanaCoords, googleMapsUrl, isCoordinateInGhana, osmEmbedUrl, reverseGeocodeGhana } from "utils/ghanaGeo";
 import { h } from "utils/h";
 import { Button, Field, InlineNotice, TextInput } from "components/ui";
 
@@ -73,27 +73,45 @@ export function ApplicationGhanaLocation({ value, onChange, disabled }) {
           "div",
           {
             key: "pin",
-            className: "rounded-2xl border border-emerald-300/50 bg-emerald-50/80 px-4 py-3 text-sm dark:border-emerald-500/30 dark:bg-emerald-950/25"
+            className:
+              "overflow-hidden rounded-2xl border border-emerald-300/50 bg-emerald-50/80 dark:border-emerald-500/30 dark:bg-emerald-950/25"
           },
           [
-            h("div", { key: "row", className: "flex flex-wrap items-start gap-2" }, [
+            h("div", { key: "row", className: "flex flex-wrap items-start gap-2 px-4 py-3 text-sm" }, [
               h(MapPin, { key: "ic", className: "mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-300" }),
               h("div", { key: "txt", className: "min-w-0 flex-1" }, [
                 h("p", { className: "font-medium text-emerald-900 dark:text-emerald-100" }, "Location captured"),
-                h("p", { className: "mt-0.5 text-xs text-emerald-800/90 dark:text-emerald-200/90" }, value.locationLabel || formatGhanaCoords(lat, lng)),
+                h(
+                  "p",
+                  { className: "mt-0.5 text-sm text-emerald-900 dark:text-emerald-50" },
+                  value.locationLabel || formatGhanaCoords(lat, lng)
+                ),
+                h(
+                  "p",
+                  { className: "mt-0.5 font-mono text-[10px] text-emerald-800/70 dark:text-emerald-200/70" },
+                  formatGhanaCoords(lat, lng)
+                ),
                 h(
                   "a",
                   {
                     key: "map",
-                    href: googleMapsUrl(lat, lng),
+                    href: googleMapsUrl(lat, lng, value.locationLabel),
                     target: "_blank",
                     rel: "noreferrer",
                     className: "mt-1 inline-block text-xs font-medium text-sky-700 underline dark:text-sky-300"
                   },
-                  "View on map"
+                  "Open in Google Maps"
                 )
               ])
-            ])
+            ]),
+            h("iframe", {
+              key: "embed",
+              title: "Your location map",
+              src: osmEmbedUrl(lat, lng),
+              className: "h-40 w-full border-t border-emerald-300/40 dark:border-emerald-500/20",
+              loading: "lazy",
+              referrerPolicy: "no-referrer-when-downgrade"
+            })
           ]
         )
       : h("p", { key: "need", className: "text-xs text-amber-700 dark:text-amber-200" }, "Location is required before you submit."),

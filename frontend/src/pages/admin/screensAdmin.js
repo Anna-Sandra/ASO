@@ -193,6 +193,7 @@ const ORDER_TABS = [
 ];
 
 const PAYMENT_TABS = [
+  { id: "pending_vendor", label: "Pending vendor payments" },
   { id: "transactions", label: "Transactions" },
   { id: "payouts", label: "Payouts" },
   { id: "refunds", label: "Refunds" }
@@ -1020,12 +1021,15 @@ export function AdminPage() {
   const ordersLimit = 15;
 
   /* Payments */
-  const [paymentsTab, setPaymentsTab] = useState("transactions");
+  const [paymentsTab, setPaymentsTab] = useState("pending_vendor");
   const [revenue, setRevenue] = useState(null);
   const [revDays, setRevDays] = useState(30);
   const [balances, setBalances] = useState([]);
   const [paidOrders, setPaidOrders] = useState([]);
   const [refundOrders, setRefundOrders] = useState([]);
+  const [pendingVendorPayments, setPendingVendorPayments] = useState([]);
+  const [pendingVendorCommission, setPendingVendorCommission] = useState(null);
+  const [releasingVendorOrderId, setReleasingVendorOrderId] = useState("");
 
   /* Reports */
   const [reports, setReports] = useState([]);
@@ -1323,6 +1327,13 @@ export function AdminPage() {
     setPaidOrders(list);
   }, [accessToken]);
 
+  const loadPendingVendorPayments = useCallback(async () => {
+    if (!auth) return;
+    const d = await apiFetch("/api/admin/orders/pending-vendor-payments", auth);
+    setPendingVendorPayments(Array.isArray(d.orders) ? d.orders : []);
+    setPendingVendorCommission(d.commissionPercent != null ? Number(d.commissionPercent) : null);
+  }, [accessToken]);
+
   const loadRefundOrders = useCallback(async () => {
     if (!auth) return;
     const qsRequested = new URLSearchParams({ page: "1", limit: "100", refund: "requested" });
@@ -1346,7 +1357,9 @@ export function AdminPage() {
   const refreshPaymentsTab = useCallback(async () => {
     if (!accessToken) return;
     try {
-      if (paymentsTab === "transactions") {
+      if (paymentsTab === "pending_vendor") {
+        await loadPendingVendorPayments();
+      } else if (paymentsTab === "transactions") {
         await Promise.all([loadRevenue(), loadPaidOrders(), loadRefundOrders()]);
       } else if (paymentsTab === "payouts") {
         await Promise.all([loadRevenue(), loadBalances()]);
@@ -1356,7 +1369,7 @@ export function AdminPage() {
     } catch {
       /* stale network or session; main tab effect will retry */
     }
-  }, [accessToken, paymentsTab, loadRevenue, loadPaidOrders, loadRefundOrders, loadBalances]);
+  }, [accessToken, paymentsTab, loadRevenue, loadPaidOrders, loadRefundOrders, loadBalances, loadPendingVendorPayments]);
 
   const runPaystackRefundForOrder = async (orderRow) => {
     if (!auth) return;
@@ -1576,7 +1589,8 @@ export function AdminPage() {
         else if (tab === "listings") await loadListings();
         else if (tab === "orders") await loadOrders();
         else if (tab === "payments") {
-          if (paymentsTab === "transactions") await Promise.all([loadRevenue(), loadPaidOrders(), loadRefundOrders()]);
+          if (paymentsTab === "pending_vendor") await loadPendingVendorPayments();
+          else if (paymentsTab === "transactions") await Promise.all([loadRevenue(), loadPaidOrders(), loadRefundOrders()]);
           else if (paymentsTab === "payouts") await Promise.all([loadRevenue(), loadBalances()]);
           else if (paymentsTab === "refunds") await loadRefundOrders();
         } else if (tab === "reports") await loadReports();
@@ -1604,6 +1618,7 @@ export function AdminPage() {
     loadRevenue,
     loadBalances,
     loadPaidOrders,
+    loadPendingVendorPayments,
     loadRefundOrders,
     loadReports,
     loadConversations,
@@ -2291,6 +2306,36 @@ export function AdminPage() {
       if (tab === "payments") await refreshPaymentsTab();
     } catch (ex) {
       await alert(apiErrorMessage(ex, "Could not update order"), { variant: "error" });
+    }
+  };
+
+  /** Escrow release after rider delivery confirmation. */
+  const releaseVendorPaymentForOrder = async (o) => {
+    if (!auth) return;
+    if (!canAdmin("orders_release_payment") && !canAdmin("payments")) {
+      await alert("You do not have permission to release vendor payments.", { variant: "error" });
+      return;
+    }
+    if (!canAdmin("orders_release_payment")) {
+      await alert("Ask a super admin to enable “Release vendor payments” for your account.", { variant: "error" });
+      return;
+    }
+    const payout = o.vendorPayoutAmount != null ? formatGhc(o.vendorPayoutAmount) : formatGhc(o.sellerProceedsTotal || 0);
+    const ok = await confirm(
+      `Release vendor payment for order ${shortId(o.id)}?\n\nVendor receives approximately ${payout}. Funds leave platform escrow after rider delivery confirmation.`,
+      { title: "Release vendor payment", confirmLabel: "Release payment" }
+    );
+    if (!ok) return;
+    setReleasingVendorOrderId(o.id);
+    try {
+      await apiFetch(`/api/admin/orders/${o.id}/release-vendor-payment`, { method: "POST", ...auth, json: {} });
+      toast("Vendor payment released", { variant: "success" });
+      await loadPendingVendorPayments();
+      if (paymentsTab === "payouts") await loadBalances();
+    } catch (ex) {
+      await alert(apiErrorMessage(ex, "Could not release vendor payment"), { variant: "error" });
+    } finally {
+      setReleasingVendorOrderId("");
     }
   };
 
@@ -4992,7 +5037,164 @@ export function AdminPage() {
           ])
         ])
       ]),
-      paymentsTab === "transactions"
+      paymentsTab === "pending_vendor"
+        ? h(
+            "div",
+            { key: "escrow", className: "space-y-3" },
+            [
+              h(
+                "p",
+                { key: "hint", className: "text-sm text-slate-600 dark:text-slate-400" },
+                "Orders with payment held in escrow after rider delivery confirmation. Release payout to vendors only when delivery is verified."
+              ),
+              h(
+                GlassCard,
+                { key: "pv", className: "!overflow-x-auto !p-0" },
+                h("table", { className: "w-full min-w-[980px] text-left text-sm" }, [
+                  h(
+                    "thead",
+                    {
+                      className:
+                        "bg-slate-100/95 text-xs font-semibold uppercase text-slate-700 dark:bg-white/5 dark:text-slate-400"
+                    },
+                    h("tr", null, [
+                      h("th", { className: "px-4 py-3" }, "Order"),
+                      h("th", { className: "px-4 py-3" }, "Customer"),
+                      h("th", { className: "px-4 py-3" }, "Product"),
+                      h("th", { className: "px-4 py-3" }, "Amount"),
+                      h("th", { className: "px-4 py-3" }, "Commission"),
+                      h("th", { className: "px-4 py-3" }, "Vendor receives"),
+                      h("th", { className: "px-4 py-3" }, "Delivery"),
+                      h("th", { className: "px-4 py-3" }, "Confirmed by"),
+                      h("th", { className: "px-4 py-3" }, "Action")
+                    ])
+                  ),
+                  h(
+                    "tbody",
+                    { className: "divide-y divide-slate-200/90 dark:divide-white/10" },
+                    pendingVendorPayments.length === 0
+                      ? h(
+                          "tr",
+                          { key: "e" },
+                          h(
+                            "td",
+                            { colSpan: 9, className: "px-4 py-12 text-center text-sm text-slate-500" },
+                            "No pending vendor payments. Delivered orders with rider confirmation appear here."
+                          )
+                        )
+                      : pendingVendorPayments.map((o) => {
+                          const productNames = (o.items || [])
+                            .map((it) => it.name)
+                            .filter(Boolean)
+                            .slice(0, 3)
+                            .join(", ");
+                          const vendorNames = (o.sellerContacts || [])
+                            .map((s) => s.displayName || s.email)
+                            .filter(Boolean)
+                            .join(", ");
+                          const commissionLabel =
+                            o.commissionPercent != null
+                              ? `${o.commissionPercent}%`
+                              : pendingVendorCommission != null
+                                ? `${pendingVendorCommission}%`
+                                : "—";
+                          const deliveredAt =
+                            o.deliveryConfirmation?.confirmedAt || o.deliveredAt || null;
+                          const releasing = releasingVendorOrderId === o.id;
+                          return h(
+                            "tr",
+                            { key: o.id, className: "hover:bg-white/5 align-top" },
+                            [
+                              h("td", { className: "px-4 py-3 font-mono text-xs" }, [
+                                h("div", { key: "id" }, shortId(o.id)),
+                                vendorNames
+                                  ? h(
+                                      "div",
+                                      { key: "v", className: "mt-1 text-[11px] text-slate-500" },
+                                      `Vendor: ${vendorNames}`
+                                    )
+                                  : null
+                              ]),
+                              h(
+                                "td",
+                                { className: "px-4 py-3 text-slate-700 dark:text-slate-200" },
+                                o.buyerContact
+                                  ? o.buyerContact.displayName || o.buyerContact.email || "—"
+                                  : "—"
+                              ),
+                              h(
+                                "td",
+                                { className: "px-4 py-3 text-slate-700 dark:text-slate-200" },
+                                productNames || "—"
+                              ),
+                              h(
+                                "td",
+                                { className: "px-4 py-3 font-semibold" },
+                                formatGhc(o.amount != null ? o.amount : o.total)
+                              ),
+                              h("td", { className: "px-4 py-3 text-slate-500" }, [
+                                h("div", { key: "pct" }, commissionLabel),
+                                h(
+                                  "div",
+                                  { key: "fee", className: "text-[11px]" },
+                                  o.platformFeeTotal != null ? formatGhc(o.platformFeeTotal) : ""
+                                )
+                              ]),
+                              h(
+                                "td",
+                                { className: "px-4 py-3 font-semibold text-emerald-700 dark:text-emerald-300" },
+                                formatGhc(
+                                  o.vendorPayoutAmount != null
+                                    ? o.vendorPayoutAmount
+                                    : o.sellerProceedsTotal || 0
+                                )
+                              ),
+                              h("td", { className: "px-4 py-3" }, [
+                                h(Badge, { key: "d", tone: "success" }, "✓ Delivered"),
+                                h(
+                                  "div",
+                                  { key: "t", className: "mt-1 text-[11px] text-slate-500" },
+                                  o.locationTracking || "Completed"
+                                ),
+                                deliveredAt
+                                  ? h(
+                                      "div",
+                                      { key: "at", className: "text-[11px] text-slate-500" },
+                                      fmtDate(deliveredAt)
+                                    )
+                                  : null
+                              ]),
+                              h(
+                                "td",
+                                { className: "px-4 py-3 text-slate-700 dark:text-slate-200" },
+                                o.deliveryConfirmation?.riderName
+                                  ? `Rider ${o.deliveryConfirmation.riderName}`
+                                  : "—"
+                              ),
+                              h(
+                                "td",
+                                { className: "px-4 py-3" },
+                                h(
+                                  "button",
+                                  {
+                                    type: "button",
+                                    disabled: releasing || !canAdmin("orders_release_payment"),
+                                    onClick: () => void releaseVendorPaymentForOrder(o),
+                                    className:
+                                      "inline-flex items-center rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                                  },
+                                  releasing ? "Releasing…" : "Release Vendor Payment"
+                                )
+                              )
+                            ]
+                          );
+                        })
+                  )
+                ])
+              )
+            ]
+          )
+        : paymentsTab === "transactions"
         ? h(
             GlassCard,
             { key: "tx", className: "!overflow-x-auto !p-0" },
