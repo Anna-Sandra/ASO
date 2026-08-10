@@ -678,12 +678,102 @@ function ActiveDeliveryView({
   const pickNav = navigateUrl(a, true);
   const phone = String(a.buyerPhone || "").replace(/[^\d+]/g, "");
   const telHref = phone ? `tel:${phone}` : null;
+  const [busyStage, setBusyStage] = useState("");
+  const [stageErr, setStageErr] = useState("");
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [showOtp, setShowOtp] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [receivedBy, setReceivedBy] = useState("");
+  const [note, setNote] = useState("");
+  const [resending, setResending] = useState(false);
+
   const progress = [
-    { key: "confirmed", label: "Order Confirmed", done: ["confirmed", "preparing", "ready_for_pickup", "picked_up", "on_the_way", "delivered"].includes(stage) || !!stage },
+    {
+      key: "confirmed",
+      label: "Order Confirmed",
+      done: !!stage && stage !== "cancelled"
+    },
     { key: "picked_up", label: "Picked Up", done: ["picked_up", "on_the_way", "delivered"].includes(stage) },
     { key: "on_the_way", label: "Out for Delivery", done: ["on_the_way", "delivered"].includes(stage) },
     { key: "delivered", label: "Delivered", done: stage === "delivered" }
   ];
+
+  const nextAction =
+    stage === "delivered" || stage === "cancelled"
+      ? null
+      : stage === "on_the_way"
+        ? { stage: "delivered", label: "Confirm Delivery" }
+        : stage === "picked_up"
+          ? { stage: "on_the_way", label: "On the way" }
+          : { stage: "picked_up", label: "Mark picked up" };
+
+  const patchStage = async (next, proof) => {
+    setBusyStage(next);
+    setStageErr("");
+    try {
+      const body = { stage: next };
+      if (proof) {
+        if (proof.deliveryOtp) body.deliveryOtp = proof.deliveryOtp;
+        if (proof.receivedByName) body.receivedByName = proof.receivedByName;
+        if (proof.deliveryNote) body.deliveryNote = proof.deliveryNote;
+      }
+      await apiFetch(`/api/deliveries/order/${encodeURIComponent(a.orderId)}/stage`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: body
+      });
+      setShowConfirm(false);
+      setShowOtp(false);
+      setOtp("");
+      setReceivedBy("");
+      setNote("");
+      onDeliveryUpdate?.();
+    } catch (ex) {
+      setStageErr(apiErrorMessage(ex, "Could not update delivery status."));
+    } finally {
+      setBusyStage("");
+    }
+  };
+
+  const onPrimaryClick = () => {
+    if (!nextAction) return;
+    if (nextAction.stage === "delivered") {
+      setShowConfirm(true);
+      setShowOtp(false);
+      return;
+    }
+    void patchStage(nextAction.stage);
+  };
+
+  const submitOtp = async () => {
+    const code = otp.replace(/\D/g, "");
+    if (code.length !== 6) {
+      setStageErr("Enter the 6-digit code from the customer.");
+      return;
+    }
+    await patchStage("delivered", {
+      deliveryOtp: code,
+      receivedByName: receivedBy.trim(),
+      deliveryNote: note.trim()
+    });
+  };
+
+  const resendOtp = async () => {
+    setResending(true);
+    setStageErr("");
+    try {
+      await apiFetch(`/api/deliveries/order/${encodeURIComponent(a.orderId)}/resend-delivery-otp`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: {}
+      });
+      setStageErr("");
+    } catch (ex) {
+      setStageErr(apiErrorMessage(ex, "Could not resend the code."));
+    } finally {
+      setResending(false);
+    }
+  };
 
   const msgBtns = h(
     "div",
@@ -717,6 +807,156 @@ function ActiveDeliveryView({
         : null
     ].filter(Boolean)
   );
+
+  const actionCard = nextAction
+    ? h(
+        "div",
+        {
+          key: "cta",
+          className: "rounded-2xl border border-orange-200/80 bg-orange-50/90 p-3 dark:border-orange-900/40 dark:bg-orange-950/25"
+        },
+        [
+          !showConfirm && !showOtp
+            ? h("div", { key: "main" }, [
+                h(
+                  "p",
+                  { className: "text-[10px] font-bold uppercase tracking-wider text-orange-800/80 dark:text-orange-200/80" },
+                  "Next step"
+                ),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    disabled: Boolean(busyStage),
+                    onClick: onPrimaryClick,
+                    className:
+                      "mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-orange-900/25 hover:brightness-105 disabled:opacity-60"
+                  },
+                  [
+                    busyStage === nextAction.stage ? "Saving…" : nextAction.label,
+                    h(ChevronRight, { className: "h-4 w-4" })
+                  ]
+                ),
+                h(
+                  "p",
+                  { className: "mt-2 text-[11px] leading-relaxed text-orange-950/80 dark:text-orange-100/80" },
+                  nextAction.stage === "picked_up"
+                    ? "Tap when you have collected the order from the vendor."
+                    : nextAction.stage === "on_the_way"
+                      ? "Tap when you leave for the customer — they get a 6-digit delivery code."
+                      : "Tap when the customer has the order. You’ll enter their 6-digit code next."
+                )
+              ])
+            : showConfirm
+              ? h("div", { key: "confirm", className: "space-y-2" }, [
+                  h("p", { className: "text-sm font-semibold text-orange-950 dark:text-orange-50" }, "Confirm this order was delivered?"),
+                  h(
+                    "p",
+                    { className: "text-[11px] text-orange-900/90 dark:text-orange-100/80" },
+                    "Next you’ll enter the 6-digit code we sent to the customer."
+                  ),
+                  h("div", { className: "flex gap-2" }, [
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        className: "flex-1 rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-bold text-white",
+                        onClick: () => {
+                          setShowConfirm(false);
+                          setShowOtp(true);
+                        }
+                      },
+                      "Yes, continue"
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        className:
+                          "rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold dark:border-white/15 dark:bg-night-950",
+                        onClick: () => setShowConfirm(false)
+                      },
+                      "Cancel"
+                    )
+                  ])
+                ])
+              : h("div", { key: "otp", className: "space-y-2" }, [
+                  h(
+                    "p",
+                    { className: "text-[11px] leading-relaxed text-orange-950 dark:text-orange-50" },
+                    "Ask the customer for the 6-digit code (SMS/email). They should only share it when they have the order."
+                  ),
+                  h("input", {
+                    type: "text",
+                    inputMode: "numeric",
+                    maxLength: 6,
+                    value: otp,
+                    onChange: (e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6)),
+                    placeholder: "6-digit code",
+                    className:
+                      "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-center text-lg font-bold tracking-[0.35em] dark:border-white/15 dark:bg-night-950 dark:text-white"
+                  }),
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      disabled: resending,
+                      className: "text-[11px] font-semibold text-sky-700 underline dark:text-sky-300",
+                      onClick: () => void resendOtp()
+                    },
+                    resending ? "Resending…" : "Resend code to customer"
+                  ),
+                  h("input", {
+                    type: "text",
+                    value: receivedBy,
+                    onChange: (e) => setReceivedBy(e.target.value),
+                    placeholder: "Received by (optional)",
+                    className:
+                      "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-night-950 dark:text-white"
+                  }),
+                  h("div", { className: "flex gap-2" }, [
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        disabled: Boolean(busyStage),
+                        className:
+                          "flex-1 rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-bold text-white disabled:opacity-60",
+                        onClick: () => void submitOtp()
+                      },
+                      busyStage === "delivered" ? "Submitting…" : "Confirm with code"
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        className:
+                          "rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold dark:border-white/15 dark:bg-night-950",
+                        onClick: () => {
+                          setShowOtp(false);
+                          setOtp("");
+                        }
+                      },
+                      "Cancel"
+                    )
+                  ])
+                ]),
+          stageErr
+            ? h("p", { key: "err", className: "mt-2 text-xs font-medium text-rose-600 dark:text-rose-300" }, stageErr)
+            : null
+        ].filter(Boolean)
+      )
+    : stage === "delivered"
+      ? h(
+          "p",
+          {
+            key: "done",
+            className:
+              "rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200"
+          },
+          "Delivery confirmed."
+        )
+      : null;
 
   const orderPanel = h(
     "div",
@@ -853,15 +1093,19 @@ function ActiveDeliveryView({
                     },
                     step.label
                   ),
-                  !step.done && step.key === "delivered"
-                    ? h("p", { className: "text-[11px] text-orange-500" }, "Pending")
-                    : null
+                  !step.done && nextAction?.stage === step.key
+                    ? h("p", { className: "text-[11px] font-semibold text-orange-600" }, "Your next step →")
+                    : !step.done
+                      ? h("p", { className: "text-[11px] text-slate-400" }, "Pending")
+                      : null
                 ].filter(Boolean))
               ]
             )
           )
         ]
       ),
+
+      actionCard,
 
       h(
         "div",
@@ -895,20 +1139,16 @@ function ActiveDeliveryView({
         "div",
         {
           key: "howto",
-          className: "rounded-xl border border-orange-200/70 bg-orange-50/80 p-3 text-[11px] leading-relaxed text-orange-950 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-100"
+          className:
+            "rounded-xl border border-slate-100 bg-slate-50/80 p-3 text-[11px] leading-relaxed text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300"
         },
         [
-          h("p", { className: "font-bold" }, "How to confirm pickup & delivery"),
+          h("p", { className: "font-bold text-slate-800 dark:text-slate-100" }, "How confirmation works"),
           h("ol", { className: "mt-1.5 list-decimal space-y-1 pl-4" }, [
-            h("li", null, "At the vendor: tap Mark picked up under the map."),
-            h("li", null, "When leaving for the customer: tap On the way (sends them a 6-digit code)."),
-            h("li", null, "After handoff: tap Confirm Delivery, then enter the customer’s code.")
-          ]),
-          h(
-            "p",
-            { className: "mt-2 text-orange-800/90 dark:text-orange-200/90" },
-            "Customers do not confirm in the app — you confirm delivery with their code."
-          )
+            h("li", null, "Use the orange Next step button above (or Rider controls under the map)."),
+            h("li", null, "On the way sends the buyer a 6-digit code."),
+            h("li", null, "Confirm Delivery → enter that code. The buyer does not tap confirm in the app.")
+          ])
         ]
       )
     ].filter(Boolean)

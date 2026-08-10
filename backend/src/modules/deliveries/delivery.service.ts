@@ -402,13 +402,20 @@ export async function advanceDeliveryStage(params: {
       throw new HttpError(400, "Already delivered.");
     }
     if (params.actorRole !== "admin") {
-      const mustNext: Partial<Record<DeliveryStage, DeliveryStage>> = {
-        ready_for_pickup: "picked_up",
-        picked_up: "on_the_way",
-        on_the_way: "delivered"
-      };
-      if (mustNext[d.currentStage] !== params.nextStage) {
-        throw new HttpError(400, "Follow the rider sequence: pickup → on the way → delivered.");
+      const st = d.currentStage;
+      const beforePickup = STAGE_INDEX[st] < STAGE_INDEX.picked_up && st !== "cancelled";
+      if (params.nextStage === "picked_up") {
+        if (!beforePickup) {
+          throw new HttpError(400, "Order is already past pickup.");
+        }
+      } else if (params.nextStage === "on_the_way") {
+        if (st !== "picked_up") {
+          throw new HttpError(400, "Mark picked up before going on the way.");
+        }
+      } else if (params.nextStage === "delivered") {
+        if (st !== "on_the_way") {
+          throw new HttpError(400, "Mark on the way before confirming delivery.");
+        }
       }
     }
 

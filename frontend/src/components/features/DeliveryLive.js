@@ -650,11 +650,11 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
 
   const riderNextActions = () => {
     const st = delivery?.currentStage;
-    if (!st) return [];
-    if (st === "ready_for_pickup") return [{ stage: "picked_up", label: "Mark picked up" }];
-    if (st === "picked_up") return [{ stage: "on_the_way", label: "On the way" }];
+    if (!st || st === "delivered" || st === "cancelled") return [];
     if (st === "on_the_way") return [{ stage: "delivered", label: "Confirm Delivery" }];
-    return [];
+    if (st === "picked_up") return [{ stage: "on_the_way", label: "On the way" }];
+    // Any earlier stage (order placed → ready for pickup): rider can mark pickup
+    return [{ stage: "picked_up", label: "Mark picked up" }];
   };
 
   const wrapCls = className || "";
