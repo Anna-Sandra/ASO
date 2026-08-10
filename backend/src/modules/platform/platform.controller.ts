@@ -15,8 +15,10 @@ import {
   clientIpFromRequest,
   countryCodeFromHeaders,
   isRequestFromGhana,
-  resolveCountryCodeForIp
+  resolveCountryCodeForIp,
+  reverseGeocodeLatLng
 } from "../../utils/ghanaGeo";
+import { HttpError } from "../../utils/httpError";
 
 export const getPlatformAccessCheck = asyncHandler(async (req: Request, res: Response) => {
   const ghanaOnly = env.GHANA_ONLY_ENABLED;
@@ -91,5 +93,24 @@ export const getPublicPlatformConfig = asyncHandler(async (req: Request, res: Re
         ? ""
         : "SHOPIQGH is only available in Ghana. If you are in Ghana, disable VPN and refresh."
     }
+  });
+});
+
+/** Public: turn GPS into a readable place name for checkout / store pin UIs. */
+export const reverseGeocodePublic = asyncHandler(async (req: Request, res: Response) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new HttpError(400, "lat and lng are required");
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    throw new HttpError(400, "Coordinates out of range");
+  }
+  const label = await reverseGeocodeLatLng(lat, lng);
+  res.set("Cache-Control", "public, max-age=300");
+  res.json({
+    label: label || "",
+    lat,
+    lng
   });
 });

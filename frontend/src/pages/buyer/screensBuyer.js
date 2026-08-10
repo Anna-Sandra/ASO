@@ -2761,6 +2761,7 @@ export function CheckoutPage() {
         const lng = pos.coords.longitude;
         setDropoffLat(lat);
         setDropoffLng(lng);
+        setDropoffHint("Looking up your address…");
         let place = "";
         try {
           const { reverseGeocodeGhana } = await import("utils/ghanaGeo");
@@ -2769,10 +2770,11 @@ export function CheckoutPage() {
           place = "";
         }
         if (place) {
-          setDropoffLabel((prev) => (String(prev || "").trim() ? prev : place));
-          setDropoffHint(`Location found: ${place}`);
+          // Always fill the delivery field when the user pins GPS.
+          setDropoffLabel(place);
+          setDropoffHint(`Delivery address set to: ${place}`);
         } else {
-          setDropoffHint("GPS saved — add a landmark or room number in the address field if needed.");
+          setDropoffHint("GPS pinned, but we could not look up the street name. Type your landmark or area above.");
         }
         setLocatingDropoff(false);
       },

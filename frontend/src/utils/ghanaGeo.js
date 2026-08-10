@@ -1,3 +1,5 @@
+import { getApiBase } from "services/api";
+
 export const GHANA_LAT_MIN = 4.5;
 export const GHANA_LAT_MAX = 11.5;
 export const GHANA_LNG_MIN = -3.5;
@@ -78,10 +80,6 @@ function pickAddressParts(address) {
   return parts;
 }
 
-/**
- * Build a readable Ghana place label from Nominatim reverse result.
- * Prefers street / suburb / city over a full verbose display_name.
- */
 export function formatReverseGeocodeLabel(data) {
   if (!data || typeof data !== "object") return "";
   const parts = pickAddressParts(data.address);
@@ -98,28 +96,80 @@ export function formatReverseGeocodeLabel(data) {
     .join(", ");
 }
 
+function formatBigDataCloudLabel(d) {
+  if (!d || typeof d !== "object") return "";
+  const parts = [
+    d.localityInfo?.informative?.[0]?.name,
+    d.locality,
+    d.city,
+    d.principalSubdivision,
+    d.countryName === "Ghana" ? null : d.countryName
+  ]
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean);
+  const seen = new Set();
+  const out = [];
+  for (const p of parts) {
+    const k = p.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out.slice(0, 4).join(", ");
+}
+
+async function reverseViaPlatformApi(lat, lng) {
+  const base = getApiBase();
+  if (!base) return "";
+  const url = `${base}/api/platform/reverse-geocode?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`;
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!r.ok) return "";
+  const d = await r.json().catch(() => null);
+  return typeof d?.label === "string" ? d.label.trim() : "";
+}
+
+async function reverseViaBigDataCloud(lat, lng) {
+  const url =
+    `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(lat)}` +
+    `&longitude=${encodeURIComponent(lng)}&localityLanguage=en`;
+  const r = await fetch(url);
+  if (!r.ok) return "";
+  const d = await r.json().catch(() => null);
+  return formatBigDataCloudLabel(d);
+}
+
+async function reverseViaNominatim(lat, lng) {
+  const url =
+    `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(lat)}` +
+    `&lon=${encodeURIComponent(lng)}&format=json&addressdetails=1&zoom=18`;
+  const r = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "SHOPIQGH/1.0 (location lookup)"
+    }
+  });
+  if (!r.ok) return "";
+  const d = await r.json().catch(() => null);
+  return formatReverseGeocodeLabel(d);
+}
+
 /**
- * Reverse geocode lat/lng → human-readable place name (OpenStreetMap Nominatim).
- * Returns "" on failure so callers can fall back to coords or a manual label.
+ * Reverse geocode lat/lng → human-readable place name.
+ * Prefers backend proxy (no CORS), then BigDataCloud (browser-friendly), then Nominatim.
  */
 export async function reverseGeocodeGhana(lat, lng) {
   const la = Number(lat);
   const ln = Number(lng);
   if (!Number.isFinite(la) || !Number.isFinite(ln)) return "";
-  try {
-    const url =
-      `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(la)}` +
-      `&lon=${encodeURIComponent(ln)}&format=json&addressdetails=1&zoom=18`;
-    const r = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "SHOPIQGH/1.0 (location lookup; contact support@shopiqgh.com)"
-      }
-    });
-    if (!r.ok) return "";
-    const d = await r.json().catch(() => null);
-    return formatReverseGeocodeLabel(d);
-  } catch {
-    return "";
+
+  const attempts = [reverseViaPlatformApi, reverseViaBigDataCloud, reverseViaNominatim];
+  for (const fn of attempts) {
+    try {
+      const label = await fn(la, ln);
+      if (label) return label;
+    } catch {
+      /* try next */
+    }
   }
+  return "";
 }

@@ -100,3 +100,81 @@ export async function isRequestFromGhana(req: Request): Promise<boolean> {
   /** Unknown geo — allow API so the app can still load; storefront gate handles UX. */
   return true;
 }
+
+function pickAddressParts(address: Record<string, unknown> | undefined): string[] {
+  if (!address || typeof address !== "object") return [];
+  const order = [
+    "amenity",
+    "building",
+    "road",
+    "pedestrian",
+    "neighbourhood",
+    "suburb",
+    "quarter",
+    "village",
+    "town",
+    "city_district",
+    "city",
+    "municipality",
+    "county",
+    "state_district",
+    "state"
+  ] as const;
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const key of order) {
+    const v = address[key];
+    if (typeof v !== "string" || !v.trim()) continue;
+    const t = v.trim();
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    parts.push(t);
+  }
+  return parts;
+}
+
+export function formatNominatimLabel(data: {
+  display_name?: string;
+  address?: Record<string, unknown>;
+} | null): string {
+  if (!data) return "";
+  const parts = pickAddressParts(data.address);
+  if (parts.length) return parts.slice(0, 4).join(", ");
+  const name = typeof data.display_name === "string" ? data.display_name : "";
+  if (!name) return "";
+  return name
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(", ");
+}
+
+/** Server-side reverse geocode (avoids browser CORS blocks on Nominatim). */
+export async function reverseGeocodeLatLng(lat: number, lng: number): Promise<string> {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "";
+  try {
+    const url =
+      `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(lat)}` +
+      `&lon=${encodeURIComponent(lng)}&format=json&addressdetails=1&zoom=18`;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "SHOPIQGH/1.0 (checkout dropoff; https://shopiqgh.com)"
+      }
+    });
+    clearTimeout(t);
+    if (!r.ok) return "";
+    const data = (await r.json().catch(() => null)) as {
+      display_name?: string;
+      address?: Record<string, unknown>;
+    } | null;
+    return formatNominatimLabel(data);
+  } catch {
+    return "";
+  }
+}
