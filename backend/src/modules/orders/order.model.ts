@@ -128,6 +128,8 @@ export interface OrderDoc {
   dropoffLabel?: string;
   /** Prevents duplicate delivery-complete emails when vendor and rider both finalize. */
   deliveredEmailsSentAt?: Date | null;
+  /** Prevents duplicate “track your order” emails after payment. */
+  paidTrackEmailSentAt?: Date | null;
   /** Buyer tapped "Confirm received" — triggers payout release for legacy transfer mode. */
   buyerConfirmedReceiptAt?: Date | null;
   /** Points the buyer requested to redeem at checkout (deducted when payment succeeds). */
@@ -274,6 +276,7 @@ const orderSchema = new Schema<OrderDoc>(
     dropoffLongitude: { type: Number, default: null },
     dropoffLabel: { type: String, default: "", trim: true, maxlength: 500 },
     deliveredEmailsSentAt: { type: Date, default: null },
+    paidTrackEmailSentAt: { type: Date, default: null },
     buyerConfirmedReceiptAt: { type: Date, default: null },
     pointsRedeemed: { type: Number, default: 0, min: 0 },
     pointsSettlementDone: { type: Boolean, default: false },

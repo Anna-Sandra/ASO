@@ -93,7 +93,7 @@ export async function sendOrderDeliveredEmails(order: HydratedDocument<OrderDoc>
       buyerName,
       orderId: oid,
       itemSummary: summary,
-      trackHint: "You can review the order under My orders in SHOPIQGH."
+      trackHint: "You can review the order under My orders, or reopen the Track link from your payment email."
     });
     const ok = await sendEmail(buyerEmail, `Delivered — order #${ref}`, html, { category: "order_delivered_buyer" });
     if (ok.ok) sentAny = true;

@@ -31,6 +31,7 @@ import {
   ShopPage,
   SavedProductsPage
 } from "pages/buyer/screensBuyer";
+import { GuestTrackOrderPage } from "pages/buyer/GuestTrackOrderPage";
 import { BuyerCouponsPage, BuyerDealsPage, BuyerWalletPage } from "pages/buyer/buyerMarketingPages";
 import { CourierApplicationPage } from "pages/applications/screensCourierApply";
 import { VendorApplicationPage } from "pages/applications/screensVendorApply";
@@ -96,6 +97,7 @@ function isPublicMarketplacePath(pathname) {
   const p = String(pathname || "").split("?")[0];
   if (p.startsWith("/store/")) return true;
   if (p.startsWith("/products/")) return true;
+  if (p.startsWith("/track/")) return true;
   return ["/food", "/fashion", "/electronics", "/beauty", "/babies", "/groceries", "/books", "/services", "/browse-stores", "/deals", "/coupons"].includes(p);
 }
 
@@ -304,6 +306,11 @@ function AppRoutes() {
       path: "/payment/cancel",
       element: h(BuyerGate, null, h(PaymentCancelPage)),
       key: "r-pay-cancel"
+    }),
+    h(Route, {
+      path: "/track/:orderId",
+      element: h(BuyerGate, null, h(GuestTrackOrderPage)),
+      key: "r-track-order"
     }),
     h(
       Route,

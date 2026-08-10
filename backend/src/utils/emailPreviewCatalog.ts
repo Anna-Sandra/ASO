@@ -66,6 +66,25 @@ export const EMAIL_TEMPLATE_PREVIEWS: { id: string; title: string; description: 
 </div>`
   },
   {
+    id: "order_paid_track",
+    title: "Track order (after payment)",
+    description: "Sent after payment with a magic Track link (guest secret or signed-in /track/:orderId).",
+    sampleHtml: `<div style="font-family:system-ui,sans-serif;max-width:520px;color:#0f172a">
+  <p>Hi Alex,</p>
+  <p>Payment received — thank you. Your order <strong>#A1B2C3D4</strong> is confirmed.</p>
+  <p style="margin:12px 0;padding:12px 14px;background:#fff7ed;border-radius:10px;border:1px solid #fed7aa;font-size:14px">
+    Jollof combo × 2
+  </p>
+  <p style="font-size:14px;color:#475569">Use the button below anytime to see live delivery tracking (rider location on the map when your courier is on the way).</p>
+  <p style="margin:22px 0">
+    <a href="#" style="display:inline-block;background:#ea580c;color:#fff;padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:700">
+      Track your order
+    </a>
+  </p>
+  <p style="font-size:13px;color:#64748b">Keep this email — you can track even if you did not tap Track order after payment.</p>
+</div>`
+  },
+  {
     id: "vendor_alert",
     title: "Vendor order alert",
     description: "Notifies a seller of a new paid order (when mailer is on).",

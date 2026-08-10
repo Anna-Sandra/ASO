@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { Order } from "../orders/order.model";
 import { ProductSave } from "../products/productSave.model";
 import { Notification, type NotificationType } from "./notification.model";
+import { sendOrderPaidTrackEmail } from "../../utils/orderPaidTrackEmail";
 
 type FirePayload = {
   type: NotificationType;
@@ -108,6 +109,8 @@ export function notifyOrderPaid(orderIdStr: string): void {
       });
     }
   })();
+  // Guest + registered buyers: email with live track link (idempotent).
+  void sendOrderPaidTrackEmail(orderIdStr);
 }
 
 export function notifyBuyerRefundProcessed(orderIdStr: string, buyerId: mongoose.Types.ObjectId): void {
