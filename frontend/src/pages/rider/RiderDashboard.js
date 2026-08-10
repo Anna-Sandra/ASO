@@ -132,7 +132,7 @@ export default function RiderDashboard() {
       ? user.rating.toFixed(1)
       : typeof user?.riderRating === "number"
         ? user.riderRating.toFixed(1)
-        : "4.8";
+        : null;
   const photo =
     (user?.profileImageUrl && String(user.profileImageUrl).trim()) ||
     (user?.photoUrl && String(user.photoUrl).trim()) ||
@@ -360,15 +360,17 @@ export default function RiderDashboard() {
             h("p", { className: "truncate text-sm font-bold text-slate-900 dark:text-white" }, display),
             h("p", { className: "text-[11px] text-slate-500 dark:text-slate-400" }, riderId)
           ]),
-          h(
-            "span",
-            {
-              key: "rt",
-              className: "inline-flex items-center gap-0.5 text-xs font-bold text-orange-500"
-            },
-            [h(Star, { key: "s", className: "h-3.5 w-3.5 fill-orange-500" }), rating]
-          )
-        ]
+          rating
+            ? h(
+                "span",
+                {
+                  key: "rt",
+                  className: "inline-flex items-center gap-0.5 text-xs font-bold text-orange-500"
+                },
+                [h(Star, { key: "s", className: "h-3.5 w-3.5 fill-orange-500" }), rating]
+              )
+            : null
+        ].filter(Boolean)
       )
     ]
   );
@@ -1303,10 +1305,10 @@ function RiderProfilePanel({
     },
     [
       h("div", { key: "hd", className: "flex flex-wrap items-start justify-between gap-3" }, [
-        h("div", {}, [
-          h("h2", { className: "text-lg font-bold text-slate-900 dark:text-white" }, "Profile"),
-          h("p", { className: "mt-1 text-xs text-slate-500" }, `${riderId} · ${rating} rating`)
-        ]),
+          h("div", {}, [
+            h("h2", { className: "text-lg font-bold text-slate-900 dark:text-white" }, "Profile"),
+            h("p", { className: "mt-1 text-xs text-slate-500" }, rating ? `${riderId} · ${rating} rating` : riderId)
+          ]),
         h(
           "span",
           {
