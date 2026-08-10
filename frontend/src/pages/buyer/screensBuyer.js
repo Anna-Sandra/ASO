@@ -86,6 +86,7 @@ import { getGuestOrderSecret, setGuestOrderSecret } from "utils/guestOrderSecret
 import { SITE_NAME, SUPPORT_LABEL } from "config/brand";
 import { formatGhc } from "utils/money";
 import { TrackOrderModal } from "components/features/TrackOrderModal";
+import { LocationMapPreview } from "components/features/LocationMapPreview";
 import { ShoppingAssistantFAB } from "components/features/ShoppingAssistantFAB";
 import { ShopHomePromoCarousel } from "pages/buyer/shopFlashDealsRail";
 import { MenuItemFeedCard } from "components/marketplace/MenuItemFeedCard";
@@ -3151,15 +3152,13 @@ export function CheckoutPage() {
                       ? `Pinned: ${dropoffLabel.trim()}`
                       : "GPS pinned — shown on your live delivery map."
                   ),
-                  h("iframe", {
+                  h(LocationMapPreview, {
                     key: "map",
-                    title: "Drop-off location map",
-                    src: `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(
-                      `${dropoffLng - 0.01},${dropoffLat - 0.01},${dropoffLng + 0.01},${dropoffLat + 0.01}`
-                    )}&layer=mapnik&marker=${encodeURIComponent(`${dropoffLat},${dropoffLng}`)}`,
-                    className: "mt-2 h-36 w-full border-t border-emerald-400/20",
-                    loading: "lazy",
-                    referrerPolicy: "no-referrer-when-downgrade"
+                    lat: dropoffLat,
+                    lng: dropoffLng,
+                    label: dropoffLabel.trim() || "Drop-off",
+                    heightClass: "h-36",
+                    className: "mt-2 rounded-xl"
                   }),
                   h(
                     "a",
@@ -4943,9 +4942,12 @@ export function BuyerOrdersPage() {
 
   const trackUrlFlag = searchParams.get("track");
   useEffect(() => {
-    if (!(trackUrlFlag === "1" || String(trackUrlFlag || "").toLowerCase() === "true")) return;
-    if (!accessToken || loading) return;
-    setTrackPresetOrderId(null);
+    if (!trackUrlFlag || !accessToken || loading) return;
+    const flag = String(trackUrlFlag).trim();
+    const openGeneric = flag === "1" || flag.toLowerCase() === "true";
+    const looksLikeId = /^[a-f\d]{24}$/i.test(flag) || flag.length >= 8;
+    if (!openGeneric && !looksLikeId) return;
+    setTrackPresetOrderId(openGeneric ? null : flag);
     setTrackModalOpen(true);
     setSearchParams(
       (p) => {
@@ -5351,6 +5353,12 @@ export function PaymentSuccessPage() {
   const [phase, setPhase] = useState("loading");
   const [order, setOrder] = useState(null);
   const [pollErr, setPollErr] = useState("");
+  const [trackOpen, setTrackOpen] = useState(false);
+
+  const showTrackButton =
+    Boolean(orderId) &&
+    phase === "confirmed" &&
+    order?.fulfillmentMode !== "onsite";
 
   /** Paid orders shouldn’t keep line items in the client cart (localStorage). */
   useEffect(() => {
@@ -5548,9 +5556,31 @@ export function PaymentSuccessPage() {
         h(
           "p",
           { key: "p2", className: "mt-3 text-sm text-slate-600 dark:text-slate-400" },
-          "You can track the order under My orders and message sellers there if needed."
+          showTrackButton
+            ? "Track your delivery live on the map, or open My orders anytime."
+            : "You can follow this order under My orders and message sellers there if needed."
         ),
-        orderId && h("p", { key: "id", className: "mt-2 font-mono text-xs text-slate-500 dark:text-slate-400" }, `Order reference: ${orderId}`)
+        orderId &&
+          h(
+            "p",
+            { key: "id", className: "mt-2 font-mono text-xs text-slate-500 dark:text-slate-400" },
+            `Order reference: ${orderId}`
+          ),
+        showTrackButton
+          ? h(
+              "div",
+              { key: "track-cta", className: "mt-6" },
+              h(
+                Button,
+                {
+                  type: "button",
+                  className: "!w-full !rounded-full !gap-2",
+                  onClick: () => setTrackOpen(true)
+                },
+                [h(Navigation, { key: "ic", className: "h-4 w-4" }), "Track order"]
+              )
+            )
+          : null
       ],
       phase === "timeout" && [
         h("h1", { key: "h1", className: "font-display text-xl font-bold text-amber-400" }, "Still waiting"),
@@ -5566,15 +5596,26 @@ export function PaymentSuccessPage() {
         h(InlineNotice, { key: "err", variant: "error", className: "mt-4 text-left", onDismiss: () => setPollErr("") }, pollErr),
       ["confirmed", "timeout", "error", "no_ref"].includes(phase) &&
         h("div", { key: "nav", className: "mt-6 flex flex-wrap items-center justify-center gap-3" }, [
-          accessToken && h(Link, { to: "/orders", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "View my orders")),
-          h(Link, { to: "/", className: "inline-block" }, h(Button, { className: "!rounded-full" }, "Back to shop"))
+          accessToken &&
+            h(Link, { to: "/orders", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "View my orders")),
+          h(Link, { to: "/", className: "inline-block" }, h(Button, { variant: showTrackButton ? "ghost" : "primary", className: "!rounded-full" }, "Back to shop"))
         ]),
       ["waiting_vendor", "pending_gateway", "loading"].includes(phase) &&
         h("div", { key: "nav-pend", className: "mt-6 flex flex-wrap items-center justify-center gap-3" }, [
           accessToken && h(Link, { to: "/orders", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "My orders")),
           h(Link, { to: "/", className: "inline-block" }, h(Button, { variant: "ghost", className: "!rounded-full" }, "Shop"))
         ])
-    ])
+    ]),
+    trackOpen && orderId
+      ? h(TrackOrderModal, {
+          key: "track-modal",
+          open: trackOpen,
+          onClose: () => setTrackOpen(false),
+          orders: order ? [order] : [{ id: orderId }],
+          initialOrderId: orderId,
+          guestSecret: !accessToken ? getGuestOrderSecret(orderId) || null : null
+        })
+      : null
   ]);
 }
 

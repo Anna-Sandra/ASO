@@ -8,6 +8,7 @@ import {
   Check,
   Crosshair,
   Headphones,
+  Maximize2,
   MessageCircle,
   Minus,
   Phone,
@@ -22,6 +23,7 @@ import "leaflet/dist/leaflet.css";
 import { apiFetch, apiErrorMessage } from "services/api";
 import { openDeliverySocket } from "services/deliverySocket";
 import { formatGhc } from "utils/money";
+import { useTheme } from "context";
 
 const el = React.createElement;
 
@@ -42,19 +44,19 @@ function divMarker(html, size, anchor) {
 }
 
 const VENDOR_MARKER_ICON = divMarker(
-  `<div style="display:flex;width:44px;height:44px;border-radius:14px;background:linear-gradient(145deg,#7c3aed,#a78bfa);align-items:center;justify-content:center;box-shadow:0 10px 24px rgba(124,58,237,.38);border:3px solid #fff;"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><path d="M14 21V7"/></svg></div>`,
+  `<div style="display:flex;width:44px;height:44px;border-radius:14px;background:linear-gradient(145deg,#16a34a,#22c55e);align-items:center;justify-content:center;box-shadow:0 10px 24px rgba(22,163,74,.38);border:3px solid #fff;"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><path d="M14 21V7"/></svg></div>`,
   [44, 44],
   [22, 44]
 );
 
 const RIDER_MARKER_ICON = divMarker(
-  `<div style="display:flex;width:44px;height:44px;border-radius:999px;background:linear-gradient(145deg,#0ea5e9,#2563eb);align-items:center;justify-content:center;box-shadow:0 10px 24px rgba(14,165,233,.4);border:3px solid #fff;"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 17.5h-6M9 17.5L7 10h13l2 7.5M7 10l4-7h8l4 7"/></svg></div>`,
-  [44, 44],
-  [22, 44]
+  `<div class="delivery-rider-marker-pulse" style="display:flex;width:46px;height:46px;border-radius:999px;background:linear-gradient(145deg,#f97316,#ea580c);align-items:center;justify-content:center;border:3px solid #fff;"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 18h2"/><path d="M17 18h2"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/><path d="M9 18V8l4-3 5 3v10"/><path d="M9 11h8"/></svg></div>`,
+  [46, 46],
+  [23, 23]
 );
 
 const CUSTOMER_MARKER_ICON = divMarker(
-  `<div style="display:flex;width:44px;height:44px;border-radius:999px;background:linear-gradient(145deg,#22c55e,#16a34a);align-items:center;justify-content:center;box-shadow:0 10px 22px rgba(34,197,94,.38);border:3px solid #fff;"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>`,
+  `<div style="display:flex;width:44px;height:44px;border-radius:999px;background:linear-gradient(145deg,#ef4444,#dc2626);align-items:center;justify-content:center;box-shadow:0 10px 22px rgba(239,68,68,.38);border:3px solid #fff;"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>`,
   [44, 44],
   [22, 44]
 );
@@ -63,9 +65,47 @@ const CUSTOMER_MARKER_ICON = divMarker(
 /** @typedef {"default" | "trackModal" | "embedded"} DeliveryLiveVariant */
 
 const LIGHT_TILE = {
-  url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+  url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
   attribution: '&copy; <a href="https://carto.com/">CARTO</a> · OSM'
 };
+
+const DARK_TILE = {
+  url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+  attribution: '&copy; <a href="https://carto.com/">CARTO</a> · OSM'
+};
+
+function haversineKm(aLat, aLng, bLat, bLng) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function bearingDeg(aLat, aLng, bLat, bLng) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const toDeg = (r) => (r * 180) / Math.PI;
+  const φ1 = toRad(aLat);
+  const φ2 = toRad(bLat);
+  const Δλ = toRad(bLng - aLng);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function navHintFromBearing(deg) {
+  if (deg >= 337.5 || deg < 22.5) return { icon: "↑", label: "Continue straight" };
+  if (deg < 67.5) return { icon: "↗", label: "Bear right" };
+  if (deg < 112.5) return { icon: "→", label: "Turn right" };
+  if (deg < 157.5) return { icon: "↘", label: "Bear right" };
+  if (deg < 202.5) return { icon: "↓", label: "U-turn ahead" };
+  if (deg < 247.5) return { icon: "↙", label: "Bear left" };
+  if (deg < 292.5) return { icon: "←", label: "Turn left" };
+  return { icon: "↖", label: "Bear left" };
+}
 
 const TIMELINE_STAGES = [
   { key: "order_placed", label: "Order placed", rank: 0 },
@@ -193,10 +233,14 @@ function FitDeliveryBounds({ points }) {
   return null;
 }
 
-/** Floating zoom + locate (buyer locates viewport to self; does not mutate delivery). */
-function MapFloatingControls({ mode }) {
+/** Floating zoom + locate + fullscreen (theme-aware). */
+function MapFloatingControls({ mode, dark }) {
   const map = useMap();
   const [locErr, setLocErr] = useState("");
+  const btn =
+    dark
+      ? "flex h-10 w-10 items-center justify-center border border-white/15 bg-night-900/95 text-slate-100 shadow-lg backdrop-blur transition hover:bg-night-800"
+      : "flex h-10 w-10 items-center justify-center border border-slate-200/90 bg-white text-slate-700 shadow-lg transition hover:bg-slate-50";
 
   const locate = () => {
     setLocErr("");
@@ -214,6 +258,16 @@ function MapFloatingControls({ mode }) {
     );
   };
 
+  const toggleFs = () => {
+    const el = map.getContainer()?.parentElement;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      void el.requestFullscreen?.();
+    } else {
+      void document.exitFullscreen?.();
+    }
+  };
+
   return el(
     "div",
     {
@@ -222,45 +276,57 @@ function MapFloatingControls({ mode }) {
       style: { zIndex: 600 }
     },
     [
-      mode === "buyer"
-        ? el(
+      el(
+        "button",
+        {
+          key: "fs",
+          type: "button",
+          title: "Fullscreen",
+          onClick: toggleFs,
+          className: `${btn} rounded-xl`
+        },
+        el(Maximize2, { className: "h-4 w-4" })
+      ),
+      el(
+        "button",
+        {
+          key: "loc",
+          type: "button",
+          title: mode === "rider" ? "My location" : "Locate me",
+          onClick: locate,
+          className: `${btn} rounded-xl`
+        },
+        el(Crosshair, { className: "h-[18px] w-[18px]" })
+      ),
+      el(
+        "div",
+        { key: "zoom", className: "flex flex-col overflow-hidden rounded-xl shadow-lg" },
+        [
+          el(
             "button",
             {
-              key: "loc",
+              key: "zin",
               type: "button",
-              title: "Locate me",
-              onClick: locate,
-              className:
-                "flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/90 bg-white text-slate-700 shadow-lg transition hover:bg-slate-50"
+              title: "Zoom in",
+              onClick: () => map.zoomIn(),
+              className: `${btn} rounded-none border-b-0`
             },
-            el(Crosshair, { className: "h-[18px] w-[18px]" })
+            el(Plus, { className: "h-[18px] w-[18px]" })
+          ),
+          el(
+            "button",
+            {
+              key: "zout",
+              type: "button",
+              title: "Zoom out",
+              onClick: () => map.zoomOut(),
+              className: `${btn} rounded-none`
+            },
+            el(Minus, { className: "h-[18px] w-[18px]" })
           )
-        : null,
-      el(
-        "button",
-        {
-          key: "zin",
-          type: "button",
-          title: "Zoom in",
-          onClick: () => map.zoomIn(),
-          className:
-            "flex h-10 w-10 items-center justify-center rounded-t-xl border border-b-0 border-slate-200/90 bg-white text-slate-700 shadow-lg transition hover:bg-slate-50"
-        },
-        el(Plus, { className: "h-[18px] w-[18px]" })
+        ]
       ),
-      el(
-        "button",
-        {
-          key: "zout",
-          type: "button",
-          title: "Zoom out",
-          onClick: () => map.zoomOut(),
-          className:
-            "flex h-10 w-10 items-center justify-center rounded-b-xl border border-slate-200/90 bg-white text-slate-700 shadow-lg transition hover:bg-slate-50"
-        },
-        el(Minus, { className: "h-[18px] w-[18px]" })
-      ),
-      locErr ? el("p", { key: "err", className: "max-w-[10rem] rounded-lg bg-white/95 px-2 py-1 text-[10px] text-rose-600 shadow" }, locErr) : null
+      locErr ? el("p", { key: "err", className: "max-w-[9rem] text-[10px] font-medium text-rose-500" }, locErr) : null
     ].filter(Boolean)
   );
 }
@@ -268,7 +334,8 @@ function MapFloatingControls({ mode }) {
 /**
  * @param {{ mode: DeliveryLiveMode; accessToken: string; orderId: string; className?: string; variant?: DeliveryLiveVariant }} props
  */
-export function DeliveryLive({ mode, accessToken, orderId, className, variant = "default", onUpdate }) {
+export function DeliveryLive({ mode, accessToken, orderId, className, variant = "default", onUpdate, guestSecret }) {
+  const { dark } = useTheme();
   const [bundle, setBundle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchErr, setFetchErr] = useState("");
@@ -288,16 +355,25 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const [deliveryNote, setDeliveryNote] = useState("");
   const [resendingOtp, setResendingOtp] = useState(false);
 
+  const authHeaders = useCallback(() => {
+    const headers = {};
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    else if (guestSecret) headers["X-Guest-Order-Secret"] = guestSecret;
+    return headers;
+  }, [accessToken, guestSecret]);
+
+  const canLoad = Boolean(orderId && (accessToken || guestSecret));
+
   const loadBundle = useCallback(async () => {
     const d = await apiFetch(`/api/deliveries/order/${encodeURIComponent(orderId)}`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
+      headers: authHeaders()
     });
     setBundle(d);
     return d;
-  }, [accessToken, orderId]);
+  }, [authHeaders, orderId]);
 
   useEffect(() => {
-    if (!accessToken || !orderId) return undefined;
+    if (!canLoad) return undefined;
     let cancelled = false;
     setFetchErr("");
     setLoading(true);
@@ -311,11 +387,14 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     return () => {
       cancelled = true;
     };
-  }, [accessToken, orderId, loadBundle]);
+  }, [canLoad, loadBundle]);
 
   useEffect(() => {
-    if (!accessToken || !orderId) return undefined;
-    const s = openDeliverySocket(accessToken);
+    if (!canLoad) return undefined;
+    const s = openDeliverySocket(
+      accessToken || "",
+      !accessToken && guestSecret ? { guestSecret, guestOrderId: orderId } : undefined
+    );
     socketRef.current = s;
 
     const subscribe = () => {
@@ -353,7 +432,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
       });
     };
 
-    const onUpdate = (p) => {
+    const onUpdateEvt = (p) => {
       if (!p || typeof p !== "object") return;
       setBundle((prev) => {
         if (!prev) return prev;
@@ -367,22 +446,24 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     };
 
     s.on("delivery:location", onLoc);
-    s.on("delivery:update", onUpdate);
+    s.on("delivery:update", onUpdateEvt);
+
+    // Guests (and flaky sockets): refresh bundle periodically so the map still moves.
+    const pollMs = accessToken ? 20000 : 8000;
+    const pollId = setInterval(() => {
+      void loadBundle().catch(() => {});
+    }, pollMs);
 
     return () => {
+      clearInterval(pollId);
       s.off("connect", onConn);
       s.off("disconnect", onDisc);
       s.off("delivery:location", onLoc);
-      s.off("delivery:update", onUpdate);
-      try {
-        s.close();
-      } catch {
-        /* ignore */
-      }
+      s.off("delivery:update", onUpdateEvt);
+      s.disconnect();
       socketRef.current = null;
-      setLiveConnected(false);
     };
-  }, [accessToken, orderId]);
+  }, [accessToken, guestSecret, orderId, canLoad, loadBundle]);
 
   const emitRiderCoords = useCallback(
     (lat, lng) => {
@@ -590,6 +671,14 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
         ? String(rider.photoUrl).trim()
         : null;
 
+  if (!canLoad) {
+    return el(
+      "p",
+      { className: `text-sm font-medium text-amber-700 dark:text-amber-200 ${wrapCls}` },
+      "Open Track order from the same browser you used to pay (guest checkout), or sign in with the email on the order."
+    );
+  }
+
   if (loading) {
     return el(
       "div",
@@ -626,7 +715,11 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     );
   }
 
-  const mapHeightClass = compactMap ? "h-[200px] min-h-[180px] sm:h-[220px]" : "h-[min(52vw,420px)] min-h-[280px] sm:min-h-[320px]";
+  const mapHeightClass = compactMap
+    ? "h-[200px] min-h-[180px] sm:h-[220px]"
+    : variant === "embedded"
+      ? "h-[min(62vw,520px)] min-h-[300px] sm:min-h-[380px]"
+      : "h-[min(52vw,420px)] min-h-[280px] sm:min-h-[320px]";
 
   const timelineBody = TIMELINE_STAGES.map((stageDef, idx) => {
     const stageKey = stageDef.key;
@@ -848,19 +941,26 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
 
       el(
         "div",
-        { key: "map-slot", className: `relative bg-slate-100 ${mapHeightClass} w-full` },
+        {
+          key: "map-slot",
+          className: `delivery-map-shell relative bg-slate-100 dark:bg-night-950 ${mapHeightClass} w-full ring-1 ring-black/5 dark:ring-white/10`
+        },
         [
           el(
             MapContainer,
             {
               center,
               zoom,
-              scrollWheelZoom: false,
+              scrollWheelZoom: true,
               zoomControl: false,
-              className: `h-full w-full [&_.leaflet-pane]:transition-none [&_.leaflet-tile-pane]:brightness-[1.02]`
+              className: "h-full w-full [&_.leaflet-pane]:transition-none"
             },
             fitPoints.length >= 2 ? el(FitDeliveryBounds, { points: fitPoints }) : el(MapRecenter, { center, zoom }),
-            el(TileLayer, { attribution: LIGHT_TILE.attribution, url: LIGHT_TILE.url }),
+            el(TileLayer, {
+              key: dark ? "dark-tiles" : "light-tiles",
+              attribution: dark ? DARK_TILE.attribution : LIGHT_TILE.attribution,
+              url: dark ? DARK_TILE.url : LIGHT_TILE.url
+            }),
             vendorApprox &&
               rl != null &&
               rln != null &&
@@ -872,7 +972,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 el(
                   Popup,
                   { className: "rounded-xl" },
-                  el("div", { className: "text-sm font-semibold text-violet-800" }, vendorTooltip || "Vendor"),
+                  el("div", { className: "text-sm font-semibold text-emerald-800" }, vendorTooltip || "Vendor"),
                   el("p", { className: "mt-1 text-xs text-slate-500" }, "Pickup point")
                 )
               ),
@@ -888,11 +988,11 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                     Popup,
                     { className: "rounded-xl" },
                     [
-                      el("p", { key: "nm", className: "text-sm font-bold text-slate-900" }, rider?.displayName || "Courier"),
+                      el("p", { key: "nm", className: "text-sm font-bold text-slate-900" }, rider?.displayName || (mode === "rider" ? "You" : "Courier")),
                       el(
                         "p",
                         { key: "vh", className: "mt-1 text-xs text-slate-600" },
-                        [rider?.vehicleType ? `${String(rider.vehicleType)} · ` : null, liveConnected ? (recentLive ? "Live GPS" : "Connected") : "Connecting…"].filter(Boolean).join("") ||
+                        [rider?.vehicleType ? `${String(rider.vehicleType)} · ` : null, liveConnected ? (recentLive || mode === "rider" ? "Live GPS" : "Connected") : "Connecting…"].filter(Boolean).join("") ||
                           "En route"
                       )
                     ]
@@ -909,8 +1009,8 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                     [
                       el(
                         "p",
-                        { key: "tit", className: "text-sm font-bold text-emerald-800 dark:text-emerald-200" },
-                        delivery.dropoffLabel?.trim() || "Your drop-off"
+                        { key: "tit", className: "text-sm font-bold text-rose-700 dark:text-rose-300" },
+                        delivery.dropoffLabel?.trim() || (mode === "buyer" ? "Your drop-off" : "Customer drop-off")
                       ),
                       el("p", { key: "dst", className: "mt-1 text-xs text-slate-600 dark:text-slate-400" }, "Delivery destination")
                     ]
@@ -920,17 +1020,78 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
             polylinePositions &&
               el(Polyline, {
                 positions: polylinePositions,
-                pathOptions: { color: "#3b82f6", weight: 4, opacity: 0.85, dashArray: "12 14", lineCap: "round", lineJoin: "round" }
+                pathOptions: {
+                  color: dark ? "#fb923c" : "#2563eb",
+                  weight: 5,
+                  opacity: 0.92,
+                  lineCap: "round",
+                  lineJoin: "round"
+                }
               }),
-            el(MapFloatingControls, { mode })
+            vendorApprox &&
+              rl != null &&
+              rln != null &&
+              el(Polyline, {
+                positions: [vendorApprox, [rl, rln]],
+                pathOptions: {
+                  color: dark ? "#38bdf8" : "#0ea5e9",
+                  weight: 4,
+                  opacity: 0.7,
+                  dashArray: "2 10",
+                  lineCap: "round"
+                }
+              }),
+            el(MapFloatingControls, { mode, dark })
           ),
+          (() => {
+            if (rl == null || rln == null || dl == null || dln == null) return null;
+            const km = haversineKm(rl, rln, dl, dln);
+            const m = Math.round(km * 1000);
+            const brg = bearingDeg(rl, rln, dl, dln);
+            const hint = navHintFromBearing(brg);
+            const road = String(delivery?.dropoffLabel || "").trim() || "Toward customer";
+            return el(
+              "div",
+              {
+                key: "nav-card",
+                className:
+                  "pointer-events-none absolute left-3 top-3 z-[500] max-w-[min(100%,18rem)] rounded-2xl border border-white/15 bg-slate-950/90 px-3 py-2.5 text-white shadow-xl backdrop-blur-md dark:bg-black/80"
+              },
+              [
+                el("div", { key: "row", className: "flex items-center gap-3" }, [
+                  el(
+                    "div",
+                    {
+                      key: "ic",
+                      className:
+                        "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-500 text-lg font-black shadow-lg shadow-orange-900/40"
+                    },
+                    hint.icon
+                  ),
+                  el("div", { key: "tx", className: "min-w-0" }, [
+                    el("p", { className: "text-sm font-bold leading-tight" }, hint.label),
+                    el(
+                      "p",
+                      { className: "mt-0.5 text-xs font-semibold text-orange-300" },
+                      m >= 1000 ? `${km.toFixed(1)} km` : `${m} m`
+                    ),
+                    el("p", { className: "mt-0.5 truncate text-[11px] text-slate-300" }, road)
+                  ])
+                ]),
+                el("p", { key: "then", className: "mt-2 border-t border-white/10 pt-2 text-[11px] text-slate-400" }, [
+                  el("span", { className: "mr-1 font-semibold text-slate-200" }, "Then"),
+                  "Continue to drop-off"
+                ])
+              ]
+            );
+          })(),
           el(
             "div",
             {
               key: "legend",
               className: compactMap
-                ? "pointer-events-none absolute left-2 top-2 z-[500] rounded-lg border border-white/80 bg-white/95 px-2 py-1.5 text-[10px] shadow-md backdrop-blur-sm dark:border-white/10 dark:bg-night-900/92"
-                : "pointer-events-none absolute left-4 top-4 z-[500] rounded-xl border border-white/80 bg-white/95 px-3 py-2.5 text-[11px] shadow-lg backdrop-blur-sm dark:border-white/10 dark:bg-night-900/92"
+                ? "pointer-events-none absolute bottom-3 left-2 z-[500] rounded-lg border border-white/80 bg-white/95 px-2 py-1.5 text-[10px] shadow-md backdrop-blur-sm dark:border-white/10 dark:bg-night-900/92"
+                : "pointer-events-none absolute bottom-4 left-4 z-[500] rounded-xl border border-white/80 bg-white/95 px-3 py-2.5 text-[11px] shadow-lg backdrop-blur-sm dark:border-white/10 dark:bg-night-900/92"
             },
             [
               el("p", { className: compactMap ? "mb-1 text-[9px] font-bold uppercase tracking-wider text-slate-400" : "mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400" }, "Legend"),
@@ -938,9 +1099,9 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 "div",
                 { className: compactMap ? "flex flex-col gap-1 text-slate-700 dark:text-slate-200" : "flex flex-col gap-1.5 text-slate-700 dark:text-slate-200" },
                 [
-                  ["bg-violet-500", "Vendor"],
-                  ["bg-blue-500", "Rider"],
-                  ["bg-emerald-500", "You"]
+                  ["bg-emerald-500", "Vendor"],
+                  ["bg-orange-500", "Rider"],
+                  ["bg-rose-500", mode === "buyer" ? "You" : "Customer"]
                 ].map(([c, lbl]) =>
                   el("div", { key: lbl, className: compactMap ? "flex items-center gap-1.5" : "flex items-center gap-2" }, [
                     el("span", { className: compactMap ? `h-2 w-2 shrink-0 rounded-full ${c}` : `h-2.5 w-2.5 shrink-0 rounded-full ${c}` }),
@@ -1228,10 +1389,10 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 {
                   key: "rider-act",
                   className:
-                    "rounded-2xl border border-amber-200/80 bg-amber-50/90 p-4 dark:border-amber-900/50 dark:bg-amber-950/30"
+                    "rounded-2xl border border-orange-200/80 bg-orange-50/90 p-4 dark:border-orange-900/50 dark:bg-orange-950/30"
                 },
                 [
-                  el("p", { className: "text-xs font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200" }, "Rider controls"),
+                  el("p", { className: "text-xs font-bold uppercase tracking-wide text-orange-900 dark:text-orange-200" }, "Rider controls"),
                   !showDeliverOtp && !showConfirmDeliveryModal
                     ? el("div", { key: "acts", className: "mt-3 flex flex-wrap gap-2" }, [
                         ...riderNextActions().map((a) =>
@@ -1242,7 +1403,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               type: "button",
                               disabled: Boolean(busyStage),
                               className:
-                                "rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
+                                "rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-900/20 hover:brightness-105 disabled:opacity-60",
                               onClick: () =>
                                 a.stage === "delivered" ? setShowConfirmDeliveryModal(true) : patchStage(a.stage)
                             },
@@ -1284,7 +1445,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               {
                                 type: "button",
                                 className:
-                                  "flex-1 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105",
+                                  "flex-1 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-900/20 hover:brightness-105",
                                 onClick: () => {
                                   setShowConfirmDeliveryModal(false);
                                   setShowDeliverOtp(true);
@@ -1373,7 +1534,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               type: "button",
                               disabled: Boolean(busyStage),
                               className:
-                                "flex-1 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:brightness-105 disabled:opacity-60",
+                                "flex-1 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-900/20 hover:brightness-105 disabled:opacity-60",
                               onClick: submitDeliveryOtp
                             },
                             busyStage === "delivered" ? "Submitting…" : "Confirm Delivery"

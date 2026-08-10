@@ -8,9 +8,9 @@ import { clearStorefrontDraftSection, readStorefrontDraft, writeStorefrontDraft 
 import {
   formatGhanaCoords,
   googleMapsUrl,
-  osmEmbedUrl,
   reverseGeocodeGhana
 } from "utils/ghanaGeo";
+import { LocationMapPreview } from "components/features/LocationMapPreview";
 
 const LIVE_SAVE_MS = 60_000;
 
@@ -101,8 +101,7 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
 
   const displayLat = position?.lat ?? geo?.lat;
   const displayLng = position?.lng ?? geo?.lng;
-  const hasPin = displayLat != null && displayLng != null && Number.isFinite(Number(displayLat));
-  const embedSrc = hasPin ? osmEmbedUrl(displayLat, displayLng) : "";
+  const hasPin = displayLat != null && displayLng != null && Number.isFinite(Number(displayLat)) && Number.isFinite(Number(displayLng));
   const placeLabel = String(label || business?.locationLabel || "").trim();
 
   const persist = async (patch, opts) => {
@@ -284,14 +283,14 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
                     )
                   : null
               ]),
-              embedSrc
-                ? h("iframe", {
+              hasPin
+                ? h(LocationMapPreview, {
                     key: "map",
-                    title: "Store location map",
-                    src: embedSrc,
-                    className: "h-48 w-full border-t border-emerald-200/70 dark:border-emerald-500/20",
-                    loading: "lazy",
-                    referrerPolicy: "no-referrer-when-downgrade"
+                    lat: displayLat,
+                    lng: displayLng,
+                    label: placeLabel || "Store location",
+                    heightClass: "h-48",
+                    className: "mt-0 rounded-none border-0 shadow-none ring-0 sm:rounded-b-2xl"
                   })
                 : null
             ]

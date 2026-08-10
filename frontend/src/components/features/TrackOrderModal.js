@@ -75,10 +75,10 @@ export function resolveBuyerOrderRef(raw, orders, userPhone) {
   };
 }
 
-/** @typedef {{ open: boolean; onClose: () => void; orders: Array<{ id: string }>; initialOrderId?: string | null }} Props */
+/** @typedef {{ open: boolean; onClose: () => void; orders: Array<{ id: string }>; initialOrderId?: string | null; guestSecret?: string | null }} Props */
 
 /** @param {Props} props */
-export function TrackOrderModal({ open, onClose, orders = [], initialOrderId = null }) {
+export function TrackOrderModal({ open, onClose, orders = [], initialOrderId = null, guestSecret = null }) {
   const { accessToken, user } = useAuth();
   const [step, setStep] = useState("lookup"); // lookup | live
   const [query, setQuery] = useState("");
@@ -87,6 +87,8 @@ export function TrackOrderModal({ open, onClose, orders = [], initialOrderId = n
   const [trackedOrderId, setTrackedOrderId] = useState("");
   /** @type {string | undefined} */
   const userPhone = user?.phone;
+  const guestKey = String(guestSecret || "").trim();
+  const canTrackWithoutLogin = Boolean(guestKey && initialOrderId);
 
   useEffect(() => {
     if (!open) return;
@@ -121,7 +123,7 @@ export function TrackOrderModal({ open, onClose, orders = [], initialOrderId = n
   const runLookup = async () => {
     setLookupErr("");
     if (!accessToken) {
-      setLookupErr("Sign in to track an order.");
+      setLookupErr(canTrackWithoutLogin ? "Use Track order from your payment receipt." : "Sign in to track an order.");
       return;
     }
     const resolved = resolveBuyerOrderRef(query, orders, userPhone);
@@ -279,7 +281,8 @@ export function TrackOrderModal({ open, onClose, orders = [], initialOrderId = n
                 [
                   h(DeliveryLive, {
                     mode: "buyer",
-                    accessToken,
+                    accessToken: accessToken || "",
+                    guestSecret: !accessToken && guestKey ? guestKey : undefined,
                     orderId: trackedOrderId,
                     variant: "trackModal"
                   }),

@@ -1,11 +1,12 @@
 import type { Request, Response } from "express";
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { protect, authorize } from "../../middleware/auth";
+import { protect, optionalProtect, authorize } from "../../middleware/auth";
 import { requireActiveAccount } from "../../middleware/requireActiveAccount";
 import { validateBody } from "../../middleware/validate";
 import { HttpError } from "../../utils/httpError";
 import { Order } from "../orders/order.model";
+import { canActAsOrderBuyer } from "../orders/orderAccess";
 import { Delivery, type DeliveryStage } from "./delivery.model";
 import {
   assertDeliveryParticipant,
@@ -48,21 +49,28 @@ router.get(
   requireActiveAccount,
   authorize("rider"),
   asyncHandler(async (req: Request, res: Response) => {
-    const list = await listRiderAssignments(req.user!.id);
+    const includeCompleted =
+      String(req.query.includeCompleted || "") === "1" ||
+      String(req.query.includeCompleted || "").toLowerCase() === "true";
+    const list = await listRiderAssignments(req.user!.id, { includeCompleted });
     res.json({ assignments: list });
   })
 );
 
 router.get(
   "/order/:orderId",
-  protect,
+  optionalProtect,
   requireActiveAccount,
   asyncHandler(async (req: Request, res: Response) => {
     const { orderId } = req.params;
-    const order = await Order.findById(orderId);
+    const order = await Order.findById(orderId).select("+guestAccessSecret");
     if (!order) throw new HttpError(404, "Order not found");
     const d = await Delivery.findOne({ orderId: order._id });
-    await assertDeliveryParticipant(req.user!.id, req.user!.role, order, d);
+    if (req.user?.id) {
+      await assertDeliveryParticipant(req.user.id, req.user.role, order, d);
+    } else if (!canActAsOrderBuyer(req, order as Parameters<typeof canActAsOrderBuyer>[1])) {
+      throw new HttpError(401, "Sign in or provide a valid guest order access key to track this delivery.");
+    }
     const bundle = await getDeliveryBundleForOrder(orderId);
     res.json(bundle);
   })

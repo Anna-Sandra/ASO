@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { Crosshair, MapPin } from "lucide-react";
 import { useGeolocation } from "hooks/useGeolocation";
-import { formatGhanaCoords, googleMapsUrl, isCoordinateInGhana, osmEmbedUrl, reverseGeocodeGhana } from "utils/ghanaGeo";
+import { formatGhanaCoords, googleMapsUrl, isCoordinateInGhana, reverseGeocodeGhana } from "utils/ghanaGeo";
+import { LocationMapPreview } from "components/features/LocationMapPreview";
 import { h } from "utils/h";
 import { Button, Field, InlineNotice, TextInput } from "components/ui";
 
@@ -104,13 +105,13 @@ export function ApplicationGhanaLocation({ value, onChange, disabled }) {
                 )
               ])
             ]),
-            h("iframe", {
+            h(LocationMapPreview, {
               key: "embed",
-              title: "Your location map",
-              src: osmEmbedUrl(lat, lng),
-              className: "h-40 w-full border-t border-emerald-300/40 dark:border-emerald-500/20",
-              loading: "lazy",
-              referrerPolicy: "no-referrer-when-downgrade"
+              lat,
+              lng,
+              label: value?.locationLabel || "Your location",
+              heightClass: "h-40",
+              className: "rounded-none border-0 shadow-none ring-0"
             })
           ]
         )

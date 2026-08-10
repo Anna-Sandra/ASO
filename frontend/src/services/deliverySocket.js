@@ -13,10 +13,20 @@ export function deliverySocketUrl() {
   return window.location.origin;
 }
 
-export function openDeliverySocket(accessToken) {
+/**
+ * @param {string} [accessToken]
+ * @param {{ guestSecret?: string; guestOrderId?: string }} [guest]
+ */
+export function openDeliverySocket(accessToken, guest) {
   const url = deliverySocketUrl();
+  const auth = {};
+  if (accessToken) auth.token = accessToken;
+  if (guest?.guestSecret && guest?.guestOrderId) {
+    auth.guestSecret = guest.guestSecret;
+    auth.guestOrderId = guest.guestOrderId;
+  }
   return io(url || (typeof window !== "undefined" ? window.location.origin : ""), {
-    auth: { token: accessToken },
+    auth,
     transports: ["websocket", "polling"],
     autoConnect: true,
     reconnectionAttempts: 8

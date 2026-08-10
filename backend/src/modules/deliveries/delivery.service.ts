@@ -5,6 +5,7 @@ import { Order, type OrderDoc, type OrderStatus } from "../orders/order.model";
 import { isOnsiteFulfillmentOrder } from "../orders/orderFulfillment";
 import { RiderProfile } from "./riderProfile.model";
 import { User, publicPhoneForPaymentRole } from "../auth/user.model";
+import { Business } from "../businesses/business.model";
 import { HttpError } from "../../utils/httpError";
 import { rewriteStoredMediaUrl } from "../../utils/publicMediaUrl";
 import type { UserRole } from "../auth/user.model";
@@ -527,58 +528,139 @@ export async function getDeliveryBundleForOrder(orderId: string) {
   };
 }
 
-export async function listRiderAssignments(riderUserId: string): Promise<
-  Array<{
-    delivery: ReturnType<typeof serializeDelivery>;
-    orderId: string;
-    orderStatus: string;
-    deliveryStage: string;
-    dropoffLabel: string;
-    dropoffLatitude: number | null;
-    dropoffLongitude: number | null;
-    currency: string;
-    total: number | null;
-    itemSummary: string;
-  }>
-> {
-  const oid = new mongoose.Types.ObjectId(riderUserId);
-  const rows = await Delivery.find({
-    assignedRiderId: oid,
-    currentStage: { $nin: ["delivered", "cancelled"] }
-  }).sort({ updatedAt: -1 });
+export type RiderAssignmentRow = {
+  delivery: ReturnType<typeof serializeDelivery>;
+  orderId: string;
+  orderStatus: string;
+  deliveryStage: string;
+  dropoffLabel: string;
+  dropoffLatitude: number | null;
+  dropoffLongitude: number | null;
+  currency: string;
+  total: number | null;
+  itemSummary: string;
+  items: Array<{ name: string; quantity: number; unitPrice: number }>;
+  buyerName: string;
+  buyerPhone: string;
+  vendorName: string;
+  vendorApproxLabel?: string;
+  estimatedArrivalMinutes: number | null;
+};
 
-  const out: Array<{
-    delivery: ReturnType<typeof serializeDelivery>;
-    orderId: string;
-    orderStatus: string;
-    deliveryStage: string;
-    dropoffLabel: string;
-    dropoffLatitude: number | null;
-    dropoffLongitude: number | null;
-    currency: string;
-    total: number | null;
-    itemSummary: string;
-  }> = [];
-  for (const d of rows) {
-    const order = await Order.findById(d.orderId)
-      .select("status total currency items.name items.quantity dropoffLabel dropoffLatitude dropoffLongitude")
+type OrderLeanForRider = {
+  _id: mongoose.Types.ObjectId;
+  status?: string;
+  total?: number;
+  currency?: string;
+  buyerId?: mongoose.Types.ObjectId | null;
+  guestContact?: { displayName?: string; phone?: string } | null;
+  dropoffLabel?: string;
+  dropoffLatitude?: number | null;
+  dropoffLongitude?: number | null;
+  items?: Array<{
+    name?: string;
+    quantity?: number;
+    unitPrice?: number;
+    sellerId?: mongoose.Types.ObjectId;
+  }>;
+};
+
+async function mapDeliveriesToRiderAssignments(
+  rows: HydratedDocument<DeliveryDoc>[]
+): Promise<RiderAssignmentRow[]> {
+  if (!rows.length) return [];
+
+  const orderIds = rows.map((d) => d.orderId);
+  const orders = (await Order.find({ _id: { $in: orderIds } })
+    .select(
+      "status total currency buyerId guestContact items.name items.quantity items.unitPrice items.sellerId dropoffLabel dropoffLatitude dropoffLongitude"
+    )
+    .lean()) as OrderLeanForRider[];
+  const orderById = new Map(orders.map((o) => [o._id.toString(), o]));
+
+  const userIds = new Set<string>();
+  for (const o of orders) {
+    if (o.buyerId) userIds.add(o.buyerId.toString());
+    const firstSeller = o.items?.[0]?.sellerId;
+    if (firstSeller) userIds.add(firstSeller.toString());
+  }
+  const users = userIds.size
+    ? await User.find({ _id: { $in: [...userIds] } })
+        .select("displayName phone businessName")
+        .lean()
+    : [];
+  const userById = new Map(
+    users.map((u) => [
+      u._id.toString(),
+      u as {
+        displayName?: string;
+        phone?: string;
+        businessName?: string;
+      }
+    ])
+  );
+
+  const sellerOwnerIds = [
+    ...new Set(
+      orders
+        .map((o) => o.items?.[0]?.sellerId)
+        .filter(Boolean)
+        .map((id) => (id as mongoose.Types.ObjectId).toString())
+    )
+  ];
+  const locationBySeller = new Map<string, string>();
+  if (sellerOwnerIds.length) {
+    const bizRows = await Business.find({
+      ownerId: { $in: sellerOwnerIds.map((id) => new mongoose.Types.ObjectId(id)) }
+    })
+      .select("ownerId locationLabel updatedAt")
+      .sort({ updatedAt: -1 })
       .lean();
-    const items = ((order as { items?: { name?: string; quantity?: number }[] } | null)?.items || []) as {
-      name?: string;
-      quantity?: number;
-    }[];
-    const itemSummary = items
+    for (const b of bizRows) {
+      const oid = (b as { ownerId: mongoose.Types.ObjectId }).ownerId.toString();
+      if (locationBySeller.has(oid)) continue;
+      const label = String((b as { locationLabel?: string }).locationLabel || "").trim();
+      if (label) locationBySeller.set(oid, label);
+    }
+  }
+
+  return rows.map((d) => {
+    const order = orderById.get(d.orderId.toString()) || null;
+    const rawItems = order?.items || [];
+    const lineItems = rawItems.slice(0, 5).map((it) => ({
+      name: String(it.name || "Item").trim() || "Item",
+      quantity: Math.max(1, Number(it.quantity) || 1),
+      unitPrice: Number.isFinite(Number(it.unitPrice)) ? Number(it.unitPrice) : 0
+    }));
+    const itemSummary = lineItems
       .slice(0, 3)
-      .map((it) => `${it.quantity || 1}× ${it.name || "Item"}`)
+      .map((it) => `${it.quantity}× ${it.name}`)
       .join(", ");
+
+    const guest = order?.guestContact;
+    const buyer = order?.buyerId ? userById.get(order.buyerId.toString()) : null;
+    const buyerName =
+      String(buyer?.displayName || "").trim() ||
+      String(guest?.displayName || "").trim() ||
+      "";
+    // Assigned rider needs buyer contact for handoff (same as delivery OTP path).
+    const buyerPhone =
+      String(buyer?.phone || "").trim() || String(guest?.phone || "").trim() || "";
+
+    const firstSellerId = rawItems[0]?.sellerId?.toString();
+    const seller = firstSellerId ? userById.get(firstSellerId) : null;
+    const vendorName =
+      String(seller?.displayName || "").trim() ||
+      String(seller?.businessName || "").trim() ||
+      "";
+    const vendorApproxLabel = firstSellerId ? locationBySeller.get(firstSellerId) : undefined;
+
     const dropoffLabel =
-      String(d.dropoffLabel || "").trim() ||
-      String((order as { dropoffLabel?: string } | null)?.dropoffLabel || "").trim();
-    const dropLat =
-      d.dropoffLatitude ?? (order as { dropoffLatitude?: number | null } | null)?.dropoffLatitude ?? null;
-    const dropLng =
-      d.dropoffLongitude ?? (order as { dropoffLongitude?: number | null } | null)?.dropoffLongitude ?? null;
-    out.push({
+      String(d.dropoffLabel || "").trim() || String(order?.dropoffLabel || "").trim();
+    const dropLat = d.dropoffLatitude ?? order?.dropoffLatitude ?? null;
+    const dropLng = d.dropoffLongitude ?? order?.dropoffLongitude ?? null;
+
+    const row: RiderAssignmentRow = {
       delivery: serializeDelivery(d),
       orderId: d.orderId.toString(),
       orderStatus: (order?.status as string) || "unknown",
@@ -586,12 +668,53 @@ export async function listRiderAssignments(riderUserId: string): Promise<
       dropoffLabel,
       dropoffLatitude: dropLat != null && Number.isFinite(Number(dropLat)) ? Number(dropLat) : null,
       dropoffLongitude: dropLng != null && Number.isFinite(Number(dropLng)) ? Number(dropLng) : null,
-      currency: String((order as { currency?: string } | null)?.currency || "GHS").toUpperCase(),
+      currency: String(order?.currency || "GHS").toUpperCase(),
       total: order?.total != null ? Number(order.total) : null,
-      itemSummary
-    });
+      itemSummary,
+      items: lineItems,
+      buyerName,
+      buyerPhone,
+      vendorName,
+      ...(vendorApproxLabel ? { vendorApproxLabel } : {}),
+      estimatedArrivalMinutes:
+        d.estimatedArrivalMinutes != null && Number.isFinite(Number(d.estimatedArrivalMinutes))
+          ? Number(d.estimatedArrivalMinutes)
+          : null
+    };
+    return row;
+  });
+}
+
+export async function listRiderAssignments(
+  riderUserId: string,
+  opts?: { includeCompleted?: boolean }
+): Promise<RiderAssignmentRow[]> {
+  const oid = new mongoose.Types.ObjectId(riderUserId);
+  const active = await Delivery.find({
+    assignedRiderId: oid,
+    currentStage: { $nin: ["delivered", "cancelled"] }
+  }).sort({ updatedAt: -1 });
+
+  let completed: HydratedDocument<DeliveryDoc>[] = [];
+  if (opts?.includeCompleted) {
+    completed = await Delivery.find({
+      assignedRiderId: oid,
+      currentStage: "delivered"
+    })
+      .sort({ deliveredAt: -1, updatedAt: -1 })
+      .limit(20);
   }
-  return out;
+
+  const seen = new Set<string>();
+  const rows: HydratedDocument<DeliveryDoc>[] = [];
+  for (const d of [...active, ...completed]) {
+    const id = d._id.toString();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    rows.push(d);
+  }
+
+  return mapDeliveriesToRiderAssignments(rows);
 }
 
 /** Active couriers vendors/admins can assign — sorted by fewest active jobs first. */
