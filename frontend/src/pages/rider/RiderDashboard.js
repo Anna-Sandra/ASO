@@ -680,7 +680,6 @@ function ActiveDeliveryView({
   const telHref = phone ? `tel:${phone}` : null;
   const [busyStage, setBusyStage] = useState("");
   const [stageErr, setStageErr] = useState("");
-  const [showConfirm, setShowConfirm] = useState(false);
   const [showOtp, setShowOtp] = useState(false);
   const [otp, setOtp] = useState("");
   const [receivedBy, setReceivedBy] = useState("");
@@ -702,7 +701,7 @@ function ActiveDeliveryView({
     stage === "delivered" || stage === "cancelled"
       ? null
       : stage === "on_the_way"
-        ? { stage: "delivered", label: "Confirm Delivery" }
+        ? { stage: "delivered", label: "Mark delivered" }
         : stage === "picked_up"
           ? { stage: "on_the_way", label: "On the way" }
           : { stage: "picked_up", label: "Mark picked up" };
@@ -722,7 +721,6 @@ function ActiveDeliveryView({
         headers: { Authorization: `Bearer ${accessToken}` },
         json: body
       });
-      setShowConfirm(false);
       setShowOtp(false);
       setOtp("");
       setReceivedBy("");
@@ -738,8 +736,8 @@ function ActiveDeliveryView({
   const onPrimaryClick = () => {
     if (!nextAction) return;
     if (nextAction.stage === "delivered") {
-      setShowConfirm(true);
-      setShowOtp(false);
+      setShowOtp(true);
+      setStageErr("");
       return;
     }
     void patchStage(nextAction.stage);
@@ -816,7 +814,7 @@ function ActiveDeliveryView({
           className: "rounded-2xl border border-orange-200/80 bg-orange-50/90 p-3 dark:border-orange-900/40 dark:bg-orange-950/25"
         },
         [
-          !showConfirm && !showOtp
+          !showOtp
             ? h("div", { key: "main" }, [
                 h(
                   "p",
@@ -844,47 +842,14 @@ function ActiveDeliveryView({
                     ? "Tap when you have collected the order from the vendor."
                     : nextAction.stage === "on_the_way"
                       ? "Tap when you leave for the customer — they get a 6-digit delivery code."
-                      : "Tap when the customer has the order. You’ll enter their 6-digit code next."
+                      : "Enter the customer’s 6-digit code to mark this order delivered."
                 )
               ])
-            : showConfirm
-              ? h("div", { key: "confirm", className: "space-y-2" }, [
-                  h("p", { className: "text-sm font-semibold text-orange-950 dark:text-orange-50" }, "Confirm this order was delivered?"),
-                  h(
-                    "p",
-                    { className: "text-[11px] text-orange-900/90 dark:text-orange-100/80" },
-                    "Next you’ll enter the 6-digit code we sent to the customer."
-                  ),
-                  h("div", { className: "flex gap-2" }, [
-                    h(
-                      "button",
-                      {
-                        type: "button",
-                        className: "flex-1 rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-bold text-white",
-                        onClick: () => {
-                          setShowConfirm(false);
-                          setShowOtp(true);
-                        }
-                      },
-                      "Yes, continue"
-                    ),
-                    h(
-                      "button",
-                      {
-                        type: "button",
-                        className:
-                          "rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold dark:border-white/15 dark:bg-night-950",
-                        onClick: () => setShowConfirm(false)
-                      },
-                      "Cancel"
-                    )
-                  ])
-                ])
-              : h("div", { key: "otp", className: "space-y-2" }, [
+            : h("div", { key: "otp", className: "space-y-2" }, [
                   h(
                     "p",
                     { className: "text-[11px] leading-relaxed text-orange-950 dark:text-orange-50" },
-                    "Ask the customer for the 6-digit code (SMS/email). They should only share it when they have the order."
+                    "Enter the customer’s 6-digit delivery code (sent when you went on the way)."
                   ),
                   h("input", {
                     type: "text",
@@ -924,7 +889,7 @@ function ActiveDeliveryView({
                           "flex-1 rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-bold text-white disabled:opacity-60",
                         onClick: () => void submitOtp()
                       },
-                      busyStage === "delivered" ? "Submitting…" : "Confirm with code"
+                      busyStage === "delivered" ? "Submitting…" : "Mark delivered"
                     ),
                     h(
                       "button",
@@ -935,6 +900,7 @@ function ActiveDeliveryView({
                         onClick: () => {
                           setShowOtp(false);
                           setOtp("");
+                          setStageErr("");
                         }
                       },
                       "Cancel"
@@ -954,7 +920,7 @@ function ActiveDeliveryView({
             className:
               "rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200"
           },
-          "Delivery confirmed."
+          "Delivery marked complete."
         )
       : null;
 
@@ -1111,17 +1077,9 @@ function ActiveDeliveryView({
         "div",
         {
           key: "stats",
-          className: "grid grid-cols-3 gap-2 rounded-xl border border-slate-100 bg-slate-50/80 p-3 text-center dark:border-white/10 dark:bg-white/[0.03]"
+          className: "grid grid-cols-2 gap-2 rounded-xl border border-slate-100 bg-slate-50/80 p-3 text-center dark:border-white/10 dark:bg-white/[0.03]"
         },
         [
-          h(StatCell, {
-            key: "eta",
-            label: "ETA",
-            value:
-              a.estimatedArrivalMinutes != null && Number.isFinite(a.estimatedArrivalMinutes)
-                ? `${Math.round(a.estimatedArrivalMinutes)} min`
-                : "—"
-          }),
           h(StatCell, {
             key: "st",
             label: "Status",
@@ -1147,7 +1105,7 @@ function ActiveDeliveryView({
           h("ol", { className: "mt-1.5 list-decimal space-y-1 pl-4" }, [
             h("li", null, "Use the orange Next step button above (or Rider controls under the map)."),
             h("li", null, "On the way sends the buyer a 6-digit code."),
-            h("li", null, "Confirm Delivery → enter that code. The buyer does not tap confirm in the app.")
+            h("li", null, "Mark delivered → enter the customer’s 6-digit code.")
           ])
         ]
       )

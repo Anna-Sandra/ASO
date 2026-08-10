@@ -351,7 +351,6 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const [liveConnected, setLiveConnected] = useState(false);
   const [lastLivePulse, setLastLivePulse] = useState(0);
   const [showDeliverOtp, setShowDeliverOtp] = useState(false);
-  const [showConfirmDeliveryModal, setShowConfirmDeliveryModal] = useState(false);
   const [deliveryOtp, setDeliveryOtp] = useState("");
   const [receivedByName, setReceivedByName] = useState("");
   const [deliveryNote, setDeliveryNote] = useState("");
@@ -564,7 +563,6 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
       });
       setBundle((prev) => (prev ? { ...prev, delivery } : prev));
       setShowDeliverOtp(false);
-      setShowConfirmDeliveryModal(false);
       setDeliveryOtp("");
       setReceivedByName("");
       setDeliveryNote("");
@@ -651,7 +649,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const riderNextActions = () => {
     const st = delivery?.currentStage;
     if (!st || st === "delivered" || st === "cancelled") return [];
-    if (st === "on_the_way") return [{ stage: "delivered", label: "Confirm Delivery" }];
+    if (st === "on_the_way") return [{ stage: "delivered", label: "Mark delivered" }];
     if (st === "picked_up") return [{ stage: "on_the_way", label: "On the way" }];
     // Any earlier stage (order placed → ready for pickup): rider can mark pickup
     return [{ stage: "picked_up", label: "Mark picked up" }];
@@ -677,13 +675,6 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     return null;
   }, [vendorApprox, rl, rln]);
   const orderShort = `#${String(orderId).slice(-8).toUpperCase()}`;
-  const eta = delivery?.estimatedArrivalMinutes;
-  const etaLabel =
-    eta != null && Number.isFinite(eta) ? `${Math.round(eta)} min${Math.round(eta) === 1 ? "" : "s"}` : null;
-  const etaBand =
-    eta != null && Number.isFinite(eta)
-      ? `${Math.max(5, eta - Math.min(7, eta - 5))} – ${eta + 8} min`
-      : null;
   const statusLabel = delivery ? STAGE_LABELS[delivery.currentStage] || delivery.currentStage : "";
   const timelineRank = getTimelineRank(delivery);
   const isDeliveredFinal = delivery?.currentStage === "delivered";
@@ -916,32 +907,6 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                   orderShort
                 )
               ]),
-              el("div", { key: "eta", className: compactMap ? "hidden h-8 w-px bg-slate-200 dark:bg-white/10 sm:block" : "hidden h-10 w-px bg-slate-200 dark:bg-white/10 sm:block" }),
-              etaBand || etaLabel
-                ? el("div", { key: "et", className: "" }, [
-                    el(
-                      "p",
-                      { className: compactMap ? "text-[9px] font-bold uppercase tracking-wider text-slate-400" : "text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400" },
-                      "ETA"
-                    ),
-                    el(
-                      "p",
-                      {
-                        className: compactMap
-                          ? "rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-200/70 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900/60"
-                          : "rounded-full bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200/70 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900/60"
-                      },
-                      etaLabel || etaBand
-                    )
-                  ])
-                : el("div", { key: "et-ph" }, [
-                    el(
-                      "p",
-                      { className: compactMap ? "text-[9px] font-bold uppercase tracking-wider text-slate-400" : "text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400" },
-                      "Est. arrival"
-                    ),
-                    el("p", { className: compactMap ? "text-[11px] font-semibold text-slate-500" : "text-sm font-semibold text-slate-500" }, "—")
-                  ]),
               el("div", { key: "st-div", className: compactMap ? "hidden h-8 w-px bg-slate-200 dark:bg-white/10 sm:block" : "hidden h-10 w-px bg-slate-200 dark:bg-white/10 sm:block" }),
               el("div", { key: "st", className: "" }, [
                 el(
@@ -1254,9 +1219,6 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               `Vehicle: ${String(rider.vehicleType)}`
                             )
                           : null,
-                        etaLabel && !isDeliveredFinal
-                          ? el("p", { key: "eta", className: "mt-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300" }, `ETA: ${etaLabel}`)
-                          : null,
                         riderPhoneDigits
                           ? el(
                               "p",
@@ -1441,7 +1403,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                 },
                 [
                   el("p", { className: "text-xs font-bold uppercase tracking-wide text-orange-900 dark:text-orange-200" }, "Rider controls"),
-                  !showDeliverOtp && !showConfirmDeliveryModal
+                  !showDeliverOtp
                     ? el("div", { key: "acts", className: "mt-3 flex flex-wrap gap-2" }, [
                         ...riderNextActions().map((a) =>
                           el(
@@ -1453,7 +1415,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                               className:
                                 "rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-900/20 hover:brightness-105 disabled:opacity-60",
                               onClick: () =>
-                                a.stage === "delivered" ? setShowConfirmDeliveryModal(true) : patchStage(a.stage)
+                                a.stage === "delivered" ? setShowDeliverOtp(true) : patchStage(a.stage)
                             },
                             busyStage === a.stage ? "Saving…" : a.label
                           )
@@ -1475,49 +1437,11 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                           geoSharing ? "Stop GPS share" : "Share my GPS"
                         )
                       ])
-                    : showConfirmDeliveryModal
-                      ? el("div", { key: "confirm-modal", className: "mt-3 space-y-3" }, [
-                          el(
-                            "p",
-                            { className: "text-sm font-semibold text-amber-950 dark:text-amber-100" },
-                            "Are you sure this order has been delivered?"
-                          ),
-                          el(
-                            "p",
-                            { className: "text-xs leading-relaxed text-amber-900/90 dark:text-amber-100/90" },
-                            "Confirming tells the platform the customer has the order. You will enter the customer’s delivery code next."
-                          ),
-                          el("div", { key: "btns", className: "flex flex-wrap gap-2" }, [
-                            el(
-                              "button",
-                              {
-                                type: "button",
-                                className:
-                                  "flex-1 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-900/20 hover:brightness-105",
-                                onClick: () => {
-                                  setShowConfirmDeliveryModal(false);
-                                  setShowDeliverOtp(true);
-                                }
-                              },
-                              "Confirm Delivery"
-                            ),
-                            el(
-                              "button",
-                              {
-                                type: "button",
-                                className:
-                                  "rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 dark:border-white/15 dark:bg-night-950 dark:text-slate-200",
-                                onClick: () => setShowConfirmDeliveryModal(false)
-                              },
-                              "Cancel"
-                            )
-                          ])
-                        ])
                     : el("div", { key: "otp-form", className: "mt-3 space-y-3" }, [
                         el(
                           "p",
                           { className: "text-xs leading-relaxed text-amber-950 dark:text-amber-100" },
-                          "Ask the customer for the 6-digit code we sent by SMS/email when you went on the way. They should only share it when they have the order."
+                          "Enter the customer’s 6-digit delivery code to mark delivered. The code was sent when you went on the way."
                         ),
                         delivery.deliveryOtpSentAt
                           ? el(
@@ -1585,7 +1509,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                                 "flex-1 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-900/20 hover:brightness-105 disabled:opacity-60",
                               onClick: submitDeliveryOtp
                             },
-                            busyStage === "delivered" ? "Submitting…" : "Confirm Delivery"
+                            busyStage === "delivered" ? "Submitting…" : "Mark delivered"
                           ),
                           el(
                             "button",
