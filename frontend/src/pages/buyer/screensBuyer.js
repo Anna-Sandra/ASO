@@ -4623,7 +4623,7 @@ export function BuyerMessagesPage() {
           [
             h("div", { key: "conv-h", className: "shrink-0 border-b border-white/10 px-4 py-3" }, [
               h("h2", { className: "text-base font-semibold text-slate-900 dark:text-white" }, "Chats"),
-              h("p", { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" }, "Sellers you’ve messaged or ordered from — plus SHOPIQGH Support for account help.")
+              h("p", { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" }, "Sellers you’ve messaged or ordered from, your delivery rider when assigned — plus SHOPIQGH Support.")
             ]),
             h(
               "div",

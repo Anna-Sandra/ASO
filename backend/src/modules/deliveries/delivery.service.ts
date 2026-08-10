@@ -478,8 +478,8 @@ export async function postRiderLocation(params: {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new HttpError(400, "Invalid coordinates.");
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) throw new HttpError(400, "Coordinates out of range.");
 
-  if (!["ready_for_pickup", "picked_up", "on_the_way"].includes(d.currentStage)) {
-    throw new HttpError(400, "Location sharing allowed only during active courier stages.");
+  if (d.currentStage === "delivered" || d.currentStage === "cancelled") {
+    throw new HttpError(400, "Location sharing is not available after this delivery ends.");
   }
 
   d.riderLatitude = lat;
@@ -542,7 +542,9 @@ export type RiderAssignmentRow = {
   items: Array<{ name: string; quantity: number; unitPrice: number }>;
   buyerName: string;
   buyerPhone: string;
+  buyerId: string | null;
   vendorName: string;
+  vendorId: string | null;
   vendorApproxLabel?: string;
   estimatedArrivalMinutes: number | null;
 };
@@ -674,7 +676,9 @@ async function mapDeliveriesToRiderAssignments(
       items: lineItems,
       buyerName,
       buyerPhone,
+      buyerId: order?.buyerId ? order.buyerId.toString() : null,
       vendorName,
+      vendorId: firstSellerId || null,
       ...(vendorApproxLabel ? { vendorApproxLabel } : {}),
       estimatedArrivalMinutes:
         d.estimatedArrivalMinutes != null && Number.isFinite(Number(d.estimatedArrivalMinutes))

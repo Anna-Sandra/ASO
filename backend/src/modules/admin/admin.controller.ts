@@ -1626,11 +1626,11 @@ async function formatAdminThreadResponse(c: {
     text: m.text,
     createdAt: m.createdAt,
     senderLabel:
-      m.senderRole === "buyer"
-        ? buyerLabel
+      m.senderRole === "admin"
+        ? (umap.get(m.senderId.toString())?.name || "").trim() || umap.get(m.senderId.toString())?.email || "Admin"
         : m.senderRole === "seller"
           ? sellerLabel
-          : (umap.get(m.senderId.toString())?.name || "").trim() || umap.get(m.senderId.toString())?.email || "Admin"
+          : buyerLabel
   }));
   return {
     id: c._id.toString(),

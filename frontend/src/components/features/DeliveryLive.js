@@ -342,6 +342,8 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const [busyStage, setBusyStage] = useState("");
   const [geoSharing, setGeoSharing] = useState(false);
   const [geoErr, setGeoErr] = useState("");
+  /** Live browser GPS for the rider map (optimistic; also posted to API). */
+  const [liveRiderPos, setLiveRiderPos] = useState(/** @type {null | [number, number]} */ (null));
   /** @type {React.MutableRefObject<any>} */
   const watchRef = useRef(null);
   const lastSocketEmitRef = useRef(0);
@@ -485,6 +487,18 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
         headers: { Authorization: `Bearer ${accessToken}` },
         json: { latitude: lat, longitude: lng }
       });
+      setBundle((prev) => {
+        if (!prev?.delivery) return prev;
+        return {
+          ...prev,
+          delivery: {
+            ...prev.delivery,
+            riderLatitude: lat,
+            riderLongitude: lng,
+            riderLocationUpdatedAt: new Date().toISOString()
+          }
+        };
+      });
     },
     [mode, orderId, accessToken]
   );
@@ -505,11 +519,15 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
       (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
+        setLiveRiderPos([lat, lng]);
+        setGeoErr("");
         emitRiderCoords(lat, lng);
-        void postRiderCoords(lat, lng).catch(() => {});
+        void postRiderCoords(lat, lng).catch((ex) => {
+          setGeoErr(apiErrorMessage(ex, "Could not share your GPS. Check location permission."));
+        });
       },
-      () => setGeoErr("Location permission denied or unavailable."),
-      { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
+      () => setGeoErr("Location permission denied or unavailable. Allow location for this site."),
+      { enableHighAccuracy: true, maximumAge: 8000, timeout: 20000 }
     );
     return () => {
       if (watchRef.current != null && typeof navigator.geolocation?.clearWatch === "function") {
@@ -519,6 +537,17 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
     };
   }, [geoSharing, mode, emitRiderCoords, postRiderCoords]);
 
+  // Auto-start live GPS for riders on an active delivery so the map shows you → customer.
+  useEffect(() => {
+    if (mode !== "rider") return;
+    const st = bundle?.delivery?.currentStage;
+    if (!st || st === "delivered" || st === "cancelled") return;
+    setGeoSharing(true);
+  }, [mode, bundle?.delivery?.currentStage, orderId]);
+
+  useEffect(() => {
+    setLiveRiderPos(null);
+  }, [orderId]);
   const patchStage = async (stage, proof) => {
     setBusyStage(stage);
     try {
@@ -588,12 +617,16 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const rider = bundle?.rider;
   const order = bundle?.order;
 
-  const rl = typeof delivery?.riderLatitude === "number" ? delivery.riderLatitude : null;
-  const rln = typeof delivery?.riderLongitude === "number" ? delivery.riderLongitude : null;
+  const serverRl = typeof delivery?.riderLatitude === "number" ? delivery.riderLatitude : null;
+  const serverRln = typeof delivery?.riderLongitude === "number" ? delivery.riderLongitude : null;
+  const rl = liveRiderPos?.[0] ?? serverRl;
+  const rln = liveRiderPos?.[1] ?? serverRln;
   const dl = typeof delivery?.dropoffLatitude === "number" ? delivery.dropoffLatitude : null;
   const dln = typeof delivery?.dropoffLongitude === "number" ? delivery.dropoffLongitude : null;
 
   const vendorApprox = useMemo(() => {
+    // Only show a pickup pin once we know both courier + drop-off (heuristic offset).
+    if (rl == null || rln == null || dl == null || dln == null) return null;
     const v = inferVendorApprox(rl, rln, dl, dln);
     return v && Number.isFinite(v[0]) && Number.isFinite(v[1]) ? v : null;
   }, [rl, rln, dl, dln]);
@@ -609,12 +642,11 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
       lng = dln;
     }
     const pts = [];
-    if (vendorApprox) pts.push(vendorApprox);
     if (rl != null && rln != null) pts.push([rl, rln]);
     if (dl != null && dln != null) pts.push([dl, dln]);
     const z = pts.length >= 2 ? 14 : 13;
     return { center: [lat, lng], zoom: z, fitPoints: pts };
-  }, [rl, rln, dl, dln, vendorApprox]);
+  }, [rl, rln, dl, dln]);
 
   const riderNextActions = () => {
     const st = delivery?.currentStage;
@@ -630,17 +662,20 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
   const compactMap = variant === "trackModal";
   /** Timeline + delivery side panel stay dense on full page too (map/summary bands still follow {@link compactMap}). */
   const compactPanels = true;
-  const recentLive = mode === "buyer" && Date.now() - lastLivePulse < 12000;
+  const recentLive =
+    (mode === "buyer" && Date.now() - lastLivePulse < 12000) ||
+    (mode === "rider" && liveRiderPos != null);
 
-  const polylinePositions = useMemo(() => {
-    const pts = [];
-    if (vendorApprox) pts.push(vendorApprox);
-    if (rl != null && rln != null) pts.push([rl, rln]);
-    if (dl != null && dln != null) pts.push([dl, dln]);
-    if (pts.length < 2 && rl != null && rln != null && dl != null && dln != null) pts.splice(0, pts.length, [rl, rln], [dl, dln]);
-    return pts.length >= 2 ? pts : null;
-  }, [vendorApprox, rl, rln, dl, dln]);
+  /** Primary route: rider → customer drop-off. */
+  const routeToCustomer = useMemo(() => {
+    if (rl != null && rln != null && dl != null && dln != null) return [[rl, rln], [dl, dln]];
+    return null;
+  }, [rl, rln, dl, dln]);
 
+  const pickupToRider = useMemo(() => {
+    if (vendorApprox && rl != null && rln != null) return [vendorApprox, [rl, rln]];
+    return null;
+  }, [vendorApprox, rl, rln]);
   const orderShort = `#${String(orderId).slice(-8).toUpperCase()}`;
   const eta = delivery?.estimatedArrivalMinutes;
   const etaLabel =
@@ -962,10 +997,6 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
               url: dark ? DARK_TILE.url : LIGHT_TILE.url
             }),
             vendorApprox &&
-              rl != null &&
-              rln != null &&
-              dl != null &&
-              dln != null &&
               el(
                 Marker,
                 { position: vendorApprox, icon: VENDOR_MARKER_ICON },
@@ -980,20 +1011,24 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
               ? el(
                   Marker,
                   {
-                    key: recentLive ? `rider-${lastLivePulse}` : "rider",
+                    key: `rider-${rl.toFixed(5)}-${rln.toFixed(5)}`,
                     position: [rl, rln],
-                    icon: RIDER_MARKER_ICON
+                    icon: RIDER_MARKER_ICON,
+                    zIndexOffset: 800
                   },
                   el(
                     Popup,
                     { className: "rounded-xl" },
                     [
-                      el("p", { key: "nm", className: "text-sm font-bold text-slate-900" }, rider?.displayName || (mode === "rider" ? "You" : "Courier")),
+                      el("p", { key: "nm", className: "text-sm font-bold text-slate-900" }, rider?.displayName || (mode === "rider" ? "You (rider)" : "Courier")),
                       el(
                         "p",
                         { key: "vh", className: "mt-1 text-xs text-slate-600" },
-                        [rider?.vehicleType ? `${String(rider.vehicleType)} · ` : null, liveConnected ? (recentLive || mode === "rider" ? "Live GPS" : "Connected") : "Connecting…"].filter(Boolean).join("") ||
-                          "En route"
+                        liveRiderPos || recentLive
+                          ? "Live GPS · moving"
+                          : liveConnected
+                            ? "Last known location"
+                            : "Connecting…"
                       )
                     ]
                   )
@@ -1002,7 +1037,7 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
             dl != null && dln != null
               ? el(
                   Marker,
-                  { position: [dl, dln], icon: CUSTOMER_MARKER_ICON },
+                  { position: [dl, dln], icon: CUSTOMER_MARKER_ICON, zIndexOffset: 600 },
                   el(
                     Popup,
                     { className: "rounded-xl" },
@@ -1010,39 +1045,52 @@ export function DeliveryLive({ mode, accessToken, orderId, className, variant = 
                       el(
                         "p",
                         { key: "tit", className: "text-sm font-bold text-rose-700 dark:text-rose-300" },
-                        delivery.dropoffLabel?.trim() || (mode === "buyer" ? "Your drop-off" : "Customer drop-off")
+                        delivery.dropoffLabel?.trim() || (mode === "buyer" ? "Your drop-off" : "Customer")
                       ),
                       el("p", { key: "dst", className: "mt-1 text-xs text-slate-600 dark:text-slate-400" }, "Delivery destination")
                     ]
                   )
                 )
               : null,
-            polylinePositions &&
+            routeToCustomer &&
               el(Polyline, {
-                positions: polylinePositions,
+                key: "route-customer",
+                positions: routeToCustomer,
                 pathOptions: {
-                  color: dark ? "#fb923c" : "#2563eb",
-                  weight: 5,
-                  opacity: 0.92,
+                  color: dark ? "#fb923c" : "#ea580c",
+                  weight: 6,
+                  opacity: 0.95,
                   lineCap: "round",
                   lineJoin: "round"
                 }
               }),
-            vendorApprox &&
-              rl != null &&
-              rln != null &&
+            pickupToRider &&
               el(Polyline, {
-                positions: [vendorApprox, [rl, rln]],
+                key: "route-pickup",
+                positions: pickupToRider,
                 pathOptions: {
                   color: dark ? "#38bdf8" : "#0ea5e9",
                   weight: 4,
-                  opacity: 0.7,
-                  dashArray: "2 10",
+                  opacity: 0.65,
+                  dashArray: "6 10",
                   lineCap: "round"
                 }
               }),
             el(MapFloatingControls, { mode, dark })
           ),
+          mode === "rider" && (rl == null || rln == null)
+            ? el(
+                "div",
+                {
+                  key: "gps-wait",
+                  className:
+                    "pointer-events-none absolute inset-x-3 top-3 z-[520] rounded-xl border border-orange-300/50 bg-orange-500/95 px-3 py-2 text-center text-xs font-semibold text-white shadow-lg"
+                },
+                geoSharing
+                  ? geoErr || "Getting your location… allow GPS in the browser to see you on the map."
+                  : "Turn on Share my GPS to show your position and route to the customer."
+              )
+            : null,
           (() => {
             if (rl == null || rln == null || dl == null || dln == null) return null;
             const km = haversineKm(rl, rln, dl, dln);

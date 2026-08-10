@@ -10,11 +10,19 @@ import { Conversation } from "./conversation.model";
 import { getPrimarySupportAdminId } from "./supportPeer";
 import { fireNotification } from "../notifications/notification.service";
 import { assertNoContactSharing, redactContactSharingInText } from "../../utils/contactSharingGuard";
+import {
+  loadBuyerDeliveryRiders,
+  loadRiderDeliveryLinks,
+  loadSellerDeliveryRiders,
+  riderSharesOrderWithBuyer,
+  riderSharesOrderWithSeller
+} from "./deliveryChat";
 
 function resolveMsgInbox(
-  accountRole: "buyer" | "seller" | "admin",
+  accountRole: "buyer" | "seller" | "admin" | "rider",
   as: unknown
-): "buyer" | "seller" {
+): "buyer" | "seller" | "rider" {
+  if (accountRole === "rider") return "rider";
   if (accountRole === "buyer" || accountRole === "seller") return accountRole;
   if (as === "seller" || as === "buyer") return as;
   return "buyer";
@@ -31,7 +39,7 @@ type LeanOrder = {
 
 type MsgRow = {
   senderId: mongoose.Types.ObjectId;
-  senderRole: "buyer" | "seller" | "admin";
+  senderRole: "buyer" | "seller" | "admin" | "rider";
   text: string;
   createdAt: Date;
 };
@@ -64,28 +72,42 @@ type ThreadRow = {
   peerDisplayName: string;
   itemSummary: string;
   updatedAt: Date;
-  messages: Array<{ senderRole: "buyer" | "seller" | "admin"; text: string; createdAt: Date; senderLabel: string }>;
+  messages: Array<{
+    senderRole: "buyer" | "seller" | "admin" | "rider";
+    text: string;
+    createdAt: Date;
+    senderLabel: string;
+  }>;
   isSupport?: boolean;
+  peerRole?: "buyer" | "seller" | "rider" | "admin";
+  kind?: string;
 };
 
 function mapConvMessages(
   raw: MsgRow[],
-  role: "buyer" | "seller",
+  viewer: "buyer" | "seller" | "rider",
   peerLabel: string
 ): ThreadRow["messages"] {
-  return raw.map((m) => ({
-    senderRole: m.senderRole,
-    text: redactContactSharingInText(m.text),
-    createdAt: m.createdAt,
-    senderLabel:
-      role === "buyer"
-        ? m.senderRole === "buyer"
-          ? "You"
-          : peerLabel
-        : m.senderRole === "seller"
-          ? "You"
-          : peerLabel
-  }));
+  return raw.map((m) => {
+    const mine =
+      (viewer === "buyer" && m.senderRole === "buyer") ||
+      (viewer === "seller" && m.senderRole === "seller") ||
+      (viewer === "rider" && m.senderRole === "rider");
+    return {
+      senderRole: m.senderRole,
+      text: redactContactSharingInText(m.text),
+      createdAt: m.createdAt,
+      senderLabel: mine
+        ? "You"
+        : m.senderRole === "admin"
+          ? "Support"
+          : m.senderRole === "rider"
+            ? peerLabel || "Rider"
+            : m.senderRole === "seller"
+              ? peerLabel || "Vendor"
+              : peerLabel || "Buyer"
+    };
+  });
 }
 
 function listingItemSummary(conv: { listingProductName?: string; productId?: unknown }) {
@@ -98,7 +120,7 @@ async function displayNameMap(ids: mongoose.Types.ObjectId[]) {
   const uniq = [...new Set(ids.map((id) => id.toString()))].map((s) => new mongoose.Types.ObjectId(s));
   if (!uniq.length) return new Map<string, string>();
   const users = await User.find({ _id: { $in: uniq } })
-    .select("displayName email")
+    .select("displayName email role")
     .lean();
   return new Map(
     users.map((u) => {
@@ -115,7 +137,7 @@ function sortMessagesAsc(messages: MsgRow[]) {
 
 function latestOrderSnippetForPair(orders: LeanOrder[], buyerId: string, sellerId: string): { itemSummary: string; touch: Date } {
   const relevant = orders.filter((o) => {
-   if (!o.buyerId || o.buyerId.toString() !== buyerId) return false;
+    if (!o.buyerId || o.buyerId.toString() !== buyerId) return false;
     return (o.items || []).some((it) => it.sellerId.toString() === sellerId);
   });
   if (!relevant.length) return { itemSummary: "", touch: new Date(0) };
@@ -130,14 +152,112 @@ function latestOrderSnippetForPair(orders: LeanOrder[], buyerId: string, sellerI
   return { itemSummary, touch };
 }
 
+async function buildSupportThread(uid: mongoose.Types.ObjectId, viewerRole: "buyer" | "seller" | "rider"): Promise<ThreadRow | null> {
+  const supportId = await getPrimarySupportAdminId();
+  if (!supportId || supportId.equals(uid)) return null;
+  const sconv = await Conversation.findOne({ buyerId: uid, sellerId: supportId, kind: "support" }).lean();
+  const rawS = sortMessagesAsc((sconv?.messages as MsgRow[]) || []);
+  const sMessages = rawS.map((m) => ({
+    senderRole: m.senderRole,
+    text: m.text,
+    createdAt: m.createdAt,
+    senderLabel: m.senderId.toString() === uid.toString() ? "You" : "Support"
+  }));
+  const convTouchS = sconv?.updatedAt ? new Date(sconv.updatedAt).getTime() : 0;
+  return {
+    peerUserId: supportId.toString(),
+    peerDisplayName: DEFAULT_SUPPORT_LABEL,
+    itemSummary:
+      viewerRole === "seller"
+        ? "Account help, payouts, safety"
+        : viewerRole === "rider"
+          ? "Delivery help, assignments, safety"
+          : "Account help, orders, safety",
+    updatedAt: new Date(convTouchS || 0),
+    messages: sMessages,
+    isSupport: true,
+    peerRole: "admin",
+    kind: "support"
+  };
+}
+
+async function listRiderThreads(uid: mongoose.Types.ObjectId): Promise<ThreadRow[]> {
+  const links = await loadRiderDeliveryLinks(uid);
+  const peerIds = [...new Set([...links.buyerIds, ...links.sellerIds])].map((s) => new mongoose.Types.ObjectId(s));
+  const names = await displayNameMap(peerIds);
+
+  const buyerConvs = links.buyerIds.length
+    ? await Conversation.find({
+        buyerId: { $in: links.buyerIds.map((s) => new mongoose.Types.ObjectId(s)) },
+        sellerId: uid,
+        kind: "delivery"
+      }).lean()
+    : [];
+  const sellerConvs = links.sellerIds.length
+    ? await Conversation.find({
+        buyerId: uid,
+        sellerId: { $in: links.sellerIds.map((s) => new mongoose.Types.ObjectId(s)) },
+        kind: "delivery"
+      }).lean()
+    : [];
+
+  const convByBuyer = new Map(buyerConvs.map((c) => [c.buyerId.toString(), c]));
+  const convBySeller = new Map(sellerConvs.map((c) => [c.sellerId.toString(), c]));
+
+  const threads: ThreadRow[] = [];
+
+  for (const bid of links.buyerIds) {
+    const conv = convByBuyer.get(bid);
+    const raw = sortMessagesAsc((conv?.messages as MsgRow[]) || []);
+    const peerLabel = names.get(bid) || "Customer";
+    const convTouch = conv?.updatedAt ? new Date(conv.updatedAt).getTime() : 0;
+    threads.push({
+      peerUserId: bid,
+      peerDisplayName: peerLabel,
+      itemSummary: "Delivery customer",
+      updatedAt: new Date(convTouch || 0),
+      messages: mapConvMessages(raw, "rider", peerLabel),
+      peerRole: "buyer",
+      kind: "delivery"
+    });
+  }
+
+  for (const sid of links.sellerIds) {
+    const conv = convBySeller.get(sid);
+    const raw = sortMessagesAsc((conv?.messages as MsgRow[]) || []);
+    const peerLabel = names.get(sid) || "Vendor";
+    const convTouch = conv?.updatedAt ? new Date(conv.updatedAt).getTime() : 0;
+    threads.push({
+      peerUserId: sid,
+      peerDisplayName: peerLabel,
+      itemSummary: "Delivery vendor",
+      updatedAt: new Date(convTouch || 0),
+      messages: mapConvMessages(raw, "rider", peerLabel),
+      peerRole: "seller",
+      kind: "delivery"
+    });
+  }
+
+  threads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const support = await buildSupportThread(uid, "rider");
+  if (support) threads.unshift(support);
+  return threads;
+}
+
 /** One thread per peer for orders; listing threads for pre-order questions; support row uses `isSupport`. */
 export const listConversations = asyncHandler(async (req: Request, res: Response) => {
   const accountRole = req.user!.role;
-  if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
-    throw new HttpError(403, "Messages are only available for buyer or seller accounts");
+  if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin" && accountRole !== "rider") {
+    throw new HttpError(403, "Messages are only available for buyer, seller, or rider accounts");
   }
   const role = resolveMsgInbox(accountRole, (req.query as { as?: "buyer" | "seller" }).as);
   const uid = new mongoose.Types.ObjectId(req.user!.id);
+
+  if (role === "rider") {
+    const threads = await listRiderThreads(uid);
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+    return res.json({ threads });
+  }
 
   if (role === "buyer") {
     const orders = (await Order.find({ buyerId: uid, status: { $ne: "cancelled" } })
@@ -148,13 +268,13 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
 
     const sellerIds = new Set<string>();
 
-for (const o of orders) {
-  for (const it of o.items || []) {
-    if (it.sellerId) {
-      sellerIds.add(it.sellerId.toString());
+    for (const o of orders) {
+      for (const it of o.items || []) {
+        if (it.sellerId) {
+          sellerIds.add(it.sellerId.toString());
+        }
+      }
     }
-  }
-}
     const sidList = [...sellerIds].map((s) => new mongoose.Types.ObjectId(s));
     const names = await displayNameMap(sidList);
     const convs = await Conversation.find({ buyerId: uid, sellerId: { $in: sidList }, kind: "order" }).lean();
@@ -175,7 +295,9 @@ for (const o of orders) {
         peerDisplayName: peerLabel,
         itemSummary,
         updatedAt,
-        messages
+        messages,
+        peerRole: "seller" as const,
+        kind: "order"
       };
     });
 
@@ -194,34 +316,46 @@ for (const o of orders) {
           peerDisplayName: peerLabel,
           itemSummary: listingItemSummary(conv),
           updatedAt: new Date(convTouch),
-          messages: mapConvMessages(raw, "buyer", peerLabel)
+          messages: mapConvMessages(raw, "buyer", peerLabel),
+          peerRole: "seller",
+          kind: "listing"
+        });
+      }
+    }
+
+    const riderIds = await loadBuyerDeliveryRiders(uid);
+    if (riderIds.length) {
+      const riderOids = riderIds.map((s) => new mongoose.Types.ObjectId(s));
+      const riderNames = await displayNameMap(riderOids);
+      const riderConvs = await Conversation.find({
+        buyerId: uid,
+        sellerId: { $in: riderOids },
+        kind: "delivery"
+      }).lean();
+      const convByRider = new Map(riderConvs.map((c) => [c.sellerId.toString(), c]));
+      for (const rid of riderIds) {
+        if (orderSellerKeys.has(rid)) continue;
+        const conv = convByRider.get(rid);
+        const raw = sortMessagesAsc((conv?.messages as MsgRow[]) || []);
+        const peerLabel = riderNames.get(rid) || "Rider";
+        const convTouch = conv?.updatedAt ? new Date(conv.updatedAt).getTime() : 0;
+        threads.push({
+          peerUserId: rid,
+          peerDisplayName: peerLabel,
+          itemSummary: "Your delivery rider",
+          updatedAt: new Date(convTouch || 0),
+          messages: mapConvMessages(raw, "buyer", peerLabel),
+          peerRole: "rider",
+          kind: "delivery"
         });
       }
     }
 
     threads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
-    const supportIdForBuyer = await getPrimarySupportAdminId();
     const buyerThreads: ThreadRow[] = [...threads];
-    if (supportIdForBuyer && !supportIdForBuyer.equals(uid)) {
-      const sconv = await Conversation.findOne({ buyerId: uid, sellerId: supportIdForBuyer, kind: "support" }).lean();
-      const rawS = sortMessagesAsc((sconv?.messages as MsgRow[]) || []);
-      const sMessages = rawS.map((m) => ({
-        senderRole: m.senderRole,
-        text: m.text,
-        createdAt: m.createdAt,
-        senderLabel: m.senderRole === "buyer" ? "You" : "Support"
-      }));
-      const convTouchS = sconv?.updatedAt ? new Date(sconv.updatedAt).getTime() : 0;
-      buyerThreads.unshift({
-        peerUserId: supportIdForBuyer.toString(),
-        peerDisplayName: DEFAULT_SUPPORT_LABEL,
-        itemSummary: "Account help, orders, safety",
-        updatedAt: new Date(convTouchS || 0),
-        messages: sMessages,
-        isSupport: true
-      });
-    }
+    const support = await buildSupportThread(uid, "buyer");
+    if (support) buyerThreads.unshift(support);
 
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
     return res.json({ threads: buyerThreads });
@@ -236,10 +370,10 @@ for (const o of orders) {
 
   const buyerIds = new Set<string>();
   for (const o of orders) {
-  if (o.buyerId) {
-    buyerIds.add(o.buyerId.toString());
+    if (o.buyerId) {
+      buyerIds.add(o.buyerId.toString());
+    }
   }
-}
   const bidList = [...buyerIds].map((s) => new mongoose.Types.ObjectId(s));
   const names = await displayNameMap(bidList);
   const convs = await Conversation.find({ sellerId: uid, buyerId: { $in: bidList }, kind: "order" }).lean();
@@ -260,7 +394,9 @@ for (const o of orders) {
       peerDisplayName: peerLabel,
       itemSummary,
       updatedAt,
-      messages
+      messages,
+      peerRole: "buyer" as const,
+      kind: "order"
     };
   });
 
@@ -279,49 +415,46 @@ for (const o of orders) {
         peerDisplayName: peerLabel,
         itemSummary: listingItemSummary(conv),
         updatedAt: new Date(convTouch),
-        messages: mapConvMessages(raw, "seller", peerLabel)
+        messages: mapConvMessages(raw, "seller", peerLabel),
+        peerRole: "buyer",
+        kind: "listing"
+      });
+    }
+  }
+
+  const riderIds = await loadSellerDeliveryRiders(uid);
+  if (riderIds.length) {
+    const riderOids = riderIds.map((s) => new mongoose.Types.ObjectId(s));
+    const riderNames = await displayNameMap(riderOids);
+    const riderConvs = await Conversation.find({
+      buyerId: { $in: riderOids },
+      sellerId: uid,
+      kind: "delivery"
+    }).lean();
+    const convByRider = new Map(riderConvs.map((c) => [c.buyerId.toString(), c]));
+    for (const rid of riderIds) {
+      if (orderBuyerKeys.has(rid)) continue;
+      const conv = convByRider.get(rid);
+      const raw = sortMessagesAsc((conv?.messages as MsgRow[]) || []);
+      const peerLabel = riderNames.get(rid) || "Rider";
+      const convTouch = conv?.updatedAt ? new Date(conv.updatedAt).getTime() : 0;
+      threads.push({
+        peerUserId: rid,
+        peerDisplayName: peerLabel,
+        itemSummary: "Assigned delivery rider",
+        updatedAt: new Date(convTouch || 0),
+        messages: mapConvMessages(raw, "seller", peerLabel),
+        peerRole: "rider",
+        kind: "delivery"
       });
     }
   }
 
   threads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
-  const supportIdForSeller = await getPrimarySupportAdminId();
-const sellerThreads: ThreadRow[] = [...threads];
-
-if (supportIdForSeller && !supportIdForSeller.equals(uid)) {
-
-  const sconv = await Conversation.findOne({
-  buyerId: uid,                  
-  sellerId: supportIdForSeller, 
-  kind: "support"
-}).lean();
-
-  const rawS = sortMessagesAsc((sconv?.messages as MsgRow[]) || []);
-
-  const sMessages = rawS.map((m) => ({
-    senderRole: m.senderRole,
-    text: m.text,
-    createdAt: m.createdAt,
-    senderLabel:
-      m.senderRole === "seller"
-        ? "You"
-        : "Support"
-  }));
-
-  const convTouchS = sconv?.updatedAt
-    ? new Date(sconv.updatedAt).getTime()
-    : 0;
-
-  sellerThreads.unshift({
-    peerUserId: supportIdForSeller.toString(),
-    peerDisplayName: DEFAULT_SUPPORT_LABEL,
-    itemSummary: "Account help, payouts, safety",
-    updatedAt: new Date(convTouchS || 0),
-    messages: sMessages,
-    isSupport: true
-  });
-}
+  const sellerThreads: ThreadRow[] = [...threads];
+  const support = await buildSupportThread(uid, "seller");
+  if (support) sellerThreads.unshift(support);
 
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({ threads: sellerThreads });
@@ -335,8 +468,8 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
     productId?: string;
   };
   const accountRole = req.user!.role;
-  if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin") {
-    throw new HttpError(403, "Only buyers and sellers can send messages");
+  if (accountRole !== "buyer" && accountRole !== "seller" && accountRole !== "admin" && accountRole !== "rider") {
+    throw new HttpError(403, "Only buyers, sellers, and riders can send messages");
   }
   const role = resolveMsgInbox(accountRole, (req.query as { as?: "buyer" | "seller" }).as);
   if (!mongoose.isValidObjectId(peerUserId)) throw new HttpError(400, "Invalid peer user id");
@@ -350,77 +483,146 @@ export const addMessageByPeer = asyncHandler(async (req: Request, res: Response)
   assertNoContactSharing(trimmedText);
 
   if (supportId && peerOid.equals(supportId)) {
+    const buyerId = myOid;
+    const sellerId = supportId;
+    const senderRole: "buyer" | "seller" | "rider" =
+      accountRole === "seller" ? "seller" : accountRole === "rider" ? "rider" : "buyer";
 
-  const buyerId = myOid;        // person contacting support
-  const sellerId = supportId;   // admin/support account
-
-  const senderRole = accountRole === "seller"
-    ? "seller"
-    : "buyer";
-
-
-  let conv = await Conversation.findOne({
-    buyerId,
-    sellerId,
-    kind: "support"
-  });
-
-
-  if (!conv) {
-    conv = await Conversation.create({
+    let conv = await Conversation.findOne({
       buyerId,
       sellerId,
-      kind: "support",
-      messages: []
+      kind: "support"
     });
+
+    if (!conv) {
+      conv = await Conversation.create({
+        buyerId,
+        sellerId,
+        kind: "support",
+        messages: []
+      });
+    }
+
+    conv.messages.push({
+      senderId: myOid,
+      senderRole,
+      text: trimmedText,
+      createdAt: new Date()
+    });
+
+    await conv.save();
+
+    fireNotification(supportId, {
+      type: "message_received",
+      title: "Support message",
+      message: "Someone sent a message to SHOPIQGH support.",
+      orderId: undefined
+    });
+
+    const raw = sortMessagesAsc(conv.messages as MsgRow[]);
+
+    const messages = raw.map((m) => ({
+      senderRole: m.senderRole,
+      text: m.text,
+      createdAt: m.createdAt,
+      senderLabel: m.senderId.toString() === myOid.toString() ? "You" : "Support"
+    }));
+
+    res.json({
+      conversation: {
+        peerUserId: supportId.toString(),
+        peerDisplayName: DEFAULT_SUPPORT_LABEL,
+        updatedAt: conv.updatedAt,
+        messages,
+        kind: "support"
+      }
+    });
+
+    return;
   }
 
+  const peerUser = await User.findById(peerOid).select("role displayName email").lean();
+  if (!peerUser) throw new HttpError(404, "User not found");
+  const peerRole = String((peerUser as { role?: string }).role || "");
 
-  conv.messages.push({
-    senderId: myOid,
-    senderRole,
-    text: trimmedText,
-    createdAt: new Date()
-  });
+  /** Delivery chats: rider ↔ buyer or rider ↔ vendor */
+  if (role === "rider" || peerRole === "rider") {
+    let buyerId: mongoose.Types.ObjectId;
+    let sellerId: mongoose.Types.ObjectId;
+    let senderRole: "buyer" | "seller" | "rider";
+    let notifyPeer = peerOid;
 
-
-  await conv.save();
-
-
-  fireNotification(supportId, {
-    type: "message_received",
-    title: "Support message",
-    message: "Someone sent a message to SHOPIQGH support.",
-    orderId: undefined
-  });
-
-
-  const raw = sortMessagesAsc(conv.messages as MsgRow[]);
-
-
-  const messages = raw.map((m) => ({
-    senderRole: m.senderRole,
-    text: m.text,
-    createdAt: m.createdAt,
-    senderLabel:
-      m.senderId.toString() === myOid.toString()
-        ? "You"
-        : "Support"
-  }));
-
-
-  res.json({
-    conversation:{
-      peerUserId: supportId.toString(),
-      peerDisplayName: DEFAULT_SUPPORT_LABEL,
-      updatedAt: conv.updatedAt,
-      messages
+    if (role === "rider" && peerRole === "buyer") {
+      const ok = await riderSharesOrderWithBuyer(myOid.toString(), peerOid.toString());
+      if (!ok) throw new HttpError(403, "You can only message customers on your assigned deliveries");
+      buyerId = peerOid;
+      sellerId = myOid;
+      senderRole = "rider";
+    } else if (role === "rider" && peerRole === "seller") {
+      const ok = await riderSharesOrderWithSeller(myOid.toString(), peerOid.toString());
+      if (!ok) throw new HttpError(403, "You can only message vendors on your assigned deliveries");
+      buyerId = myOid;
+      sellerId = peerOid;
+      senderRole = "rider";
+    } else if (role === "buyer" && peerRole === "rider") {
+      const ok = await riderSharesOrderWithBuyer(peerOid.toString(), myOid.toString());
+      if (!ok) throw new HttpError(403, "You can only message the rider assigned to your order");
+      buyerId = myOid;
+      sellerId = peerOid;
+      senderRole = "buyer";
+    } else if (role === "seller" && peerRole === "rider") {
+      const ok = await riderSharesOrderWithSeller(peerOid.toString(), myOid.toString());
+      if (!ok) throw new HttpError(403, "You can only message riders assigned to your orders");
+      buyerId = peerOid;
+      sellerId = myOid;
+      senderRole = "seller";
+    } else {
+      throw new HttpError(403, "Invalid delivery chat participants");
     }
-  });
 
+    let conv = await Conversation.findOne({ buyerId, sellerId, kind: "delivery" });
+    if (!conv) {
+      conv = await Conversation.create({ buyerId, sellerId, kind: "delivery", messages: [] });
+    }
 
-  return;
-}
+    conv.messages.push({
+      senderId: myOid,
+      senderRole,
+      text: trimmedText,
+      createdAt: new Date()
+    });
+    await conv.save();
+
+    const previewRaw = trimmedText;
+    const preview = previewRaw.length > 160 ? `${previewRaw.slice(0, 160)}…` : previewRaw;
+    fireNotification(notifyPeer, {
+      type: "message_received",
+      title: "Delivery message",
+      message: preview || "You have a new delivery message.",
+      orderId: undefined
+    });
+
+    const peerLabel =
+      String((peerUser as { displayName?: string }).displayName || "").trim() ||
+      String((peerUser as { email?: string }).email || "").trim() ||
+      "User";
+
+    const raw = sortMessagesAsc(conv.messages as MsgRow[]);
+    const viewer = role === "rider" ? "rider" : role === "seller" ? "seller" : "buyer";
+    const messages = mapConvMessages(raw, viewer, peerLabel);
+
+    res.json({
+      conversation: {
+        peerUserId: peerOid.toString(),
+        peerDisplayName: peerLabel,
+        updatedAt: conv.updatedAt,
+        messages,
+        kind: "delivery",
+        peerRole
+      }
+    });
+    return;
+  }
 
   let buyerId: mongoose.Types.ObjectId;
   let sellerId: mongoose.Types.ObjectId;
@@ -563,8 +765,8 @@ export const openListingConversation = asyncHandler(async (req: Request, res: Re
 export const getSupportPeer = asyncHandler(async (req: Request, res: Response) => {
   const role = req.user!.role;
 
-  if (role !== "buyer" && role !== "seller") {
-    throw new HttpError(403, "Support messaging is only for buyers and sellers.");
+  if (role !== "buyer" && role !== "seller" && role !== "rider") {
+    throw new HttpError(403, "Support messaging is only for buyers, sellers, and riders.");
   }
 
   const id = await getPrimarySupportAdminId();

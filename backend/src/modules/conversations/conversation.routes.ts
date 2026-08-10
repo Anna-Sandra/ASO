@@ -8,12 +8,12 @@ import { conversationMessageSchema, openListingConversationSchema } from "./conv
 
 const router = Router();
 
-router.get("/support-peer", protect, requireActiveAccount, authorize("buyer", "seller"), getSupportPeer);
+router.get("/support-peer", protect, requireActiveAccount, authorize("buyer", "seller", "rider"), getSupportPeer);
 router.get(
   "/",
   protect,
   requireActiveAccount,
-  authorize("buyer", "seller", "admin"),
+  authorize("buyer", "seller", "admin", "rider"),
   validateQuery(conversationInboxQuerySchema),
   listConversations
 );
@@ -21,7 +21,7 @@ router.post(
   "/by-peer/:peerUserId/messages",
   protect,
   requireActiveAccount,
-  authorize("buyer", "seller", "admin"),
+  authorize("buyer", "seller", "admin", "rider"),
   validateBody(conversationMessageSchema),
   addMessageByPeer
 );

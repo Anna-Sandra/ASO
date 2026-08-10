@@ -2717,7 +2717,7 @@ export function VendorMessagesPage() {
               h(
                 "p",
                 { className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400" },
-                "Buyers you’ve sold to — plus SHOPIQGH Support for payouts and policy help."
+                "Buyers you’ve sold to, assigned delivery riders, and SHOPIQGH Support."
               )
             ]),
             h(
@@ -2726,6 +2726,8 @@ export function VendorMessagesPage() {
               threads.map((t) => {
                 const selected = String(t.peerUserId) === String(activeId);
                 const lt = threadLastTime(t);
+                const peerKind =
+                  t.isSupport ? "Support" : t.peerRole === "rider" ? "Rider" : t.peerRole === "buyer" ? "Buyer" : "Chat";
                 return h(
                   "button",
                   {
@@ -2744,12 +2746,20 @@ export function VendorMessagesPage() {
                       h(
                         "span",
                         { className: "min-w-0 truncate text-sm font-semibold text-slate-800 dark:text-slate-100" },
-                        t.peerDisplayName || "Buyer"
+                        t.peerDisplayName || (t.peerRole === "rider" ? "Rider" : "Buyer")
                       ),
                       lt
                         ? h("span", { className: "shrink-0 text-[10px] text-slate-400" }, lt.toLocaleDateString())
                         : null
                     ]),
+                    h(
+                      "span",
+                      {
+                        className:
+                          "w-fit rounded-full bg-slate-100/80 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:bg-white/10 dark:text-slate-300"
+                      },
+                      peerKind
+                    ),
                     t.itemSummary
                       ? h("p", { className: "truncate text-[11px] text-slate-500 dark:text-slate-400" }, t.itemSummary)
                       : null,

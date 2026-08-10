@@ -2,15 +2,19 @@ import mongoose, { Schema } from "mongoose";
 
 export interface ConversationMessage {
   senderId: mongoose.Types.ObjectId;
-  senderRole: "buyer" | "seller" | "admin";
+  senderRole: "buyer" | "seller" | "admin" | "rider";
   text: string;
   createdAt: Date;
 }
 
 export interface ConversationDoc {
   _id: mongoose.Types.ObjectId;
-  /** `order` = after purchase; `listing` = questions before order; `support` = buyer ↔ admin. */
-  kind: "order" | "listing" | "support";
+  /**
+   * `order` / `listing` = buyer ↔ seller;
+   * `support` = any user ↔ admin (user stored as buyerId);
+   * `delivery` = rider ↔ buyer (sellerId = rider) or rider ↔ vendor (buyerId = rider).
+   */
+  kind: "order" | "listing" | "support" | "delivery";
   buyerId: mongoose.Types.ObjectId;
   sellerId: mongoose.Types.ObjectId;
   /** Set when thread opened from a product page (listing kind). */
@@ -24,7 +28,7 @@ export interface ConversationDoc {
 const messageSchema = new Schema<ConversationMessage>(
   {
     senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    senderRole: { type: String, enum: ["buyer", "seller", "admin"], required: true },
+    senderRole: { type: String, enum: ["buyer", "seller", "admin", "rider"], required: true },
     text: { type: String, required: true, trim: true, maxlength: 1000 },
     createdAt: { type: Date, default: Date.now }
   },
@@ -33,7 +37,7 @@ const messageSchema = new Schema<ConversationMessage>(
 
 const conversationSchema = new Schema<ConversationDoc>(
   {
-    kind: { type: String, enum: ["order", "listing", "support"], default: "order", index: true },
+    kind: { type: String, enum: ["order", "listing", "support", "delivery"], default: "order", index: true },
     buyerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     sellerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     productId: { type: Schema.Types.ObjectId, ref: "Product", index: true },

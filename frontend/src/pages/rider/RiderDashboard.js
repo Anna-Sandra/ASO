@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   Bike,
+  Camera,
   CheckCircle2,
   ChevronRight,
   CircleHelp,
@@ -9,28 +10,30 @@ import {
   LogOut,
   MapPin,
   Menu,
+  MessageSquare,
   Navigation2,
   Package,
   Phone,
   RefreshCw,
-  Settings,
   Star,
   User,
   X
 } from "lucide-react";
 import { useAuth, useTheme } from "context";
-import { apiFetch, apiErrorMessage } from "services/api";
+import { apiFetch, apiErrorMessage, apiUploadProfileImage } from "services/api";
 import { DeliveryLive } from "components/features/DeliveryLive";
-import { ThemeToggleButton } from "components/ui";
+import { ThemeToggleButton, Button, TextInput, Field } from "components/ui";
+import { containsContactSharing, CONTACT_SHARING_BLOCKED_MESSAGE } from "utils/contactSharingGuard";
 import { h } from "utils/h";
 
 /**
- * Backend contract (unchanged):
+ * Backend contract:
  * GET  /api/deliveries/rider/assignments
  * GET  /api/deliveries/rider/assignments?includeCompleted=1
- * PATCH /api/deliveries/order/:orderId/stage
- * POST /api/deliveries/order/:orderId/confirm-delivery (via DeliveryLive)
+ * PATCH /api/deliveries/order/:orderId/stage  (via DeliveryLive)
  * POST /api/deliveries/order/:orderId/rider-location
+ * GET/POST /api/conversations (help & delivery chats)
+ * PATCH /api/auth/profile + POST /api/uploads/profile-image
  */
 
 const NAV = [
@@ -38,9 +41,7 @@ const NAV = [
   { id: "assigned", label: "Assigned Orders", icon: Package },
   { id: "history", label: "Delivery History", icon: History },
   { id: "profile", label: "Profile", icon: User },
-  { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "help", label: "Help & Support", icon: CircleHelp },
-  { id: "settings", label: "Settings", icon: Settings }
+  { id: "help", label: "Help & Support", icon: CircleHelp }
 ];
 
 const STAGE_LABELS = {
@@ -110,7 +111,7 @@ function readOnlinePref() {
 }
 
 export default function RiderDashboard() {
-  const { accessToken, user, logout } = useAuth();
+  const { accessToken, user, logout, setUser } = useAuth();
   const { dark, toggle } = useTheme();
 
   const [tab, setTab] = useState("active");
@@ -121,6 +122,7 @@ export default function RiderDashboard() {
   const [selOrderId, setSelOrderId] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [online, setOnline] = useState(() => readOnlinePref());
+  const [helpPeerId, setHelpPeerId] = useState(null);
 
   const display =
     String(user?.displayName || "").trim() || (user?.email && user.email.split("@")[0]) || "Rider";
@@ -261,12 +263,7 @@ export default function RiderDashboard() {
         { key: "nav", className: "mt-4 flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-4" },
         NAV.map((item) => {
           const active = tab === item.id;
-          const badge =
-            item.id === "assigned"
-              ? assignments.length
-              : item.id === "notifications"
-                ? 0
-                : null;
+          const badge = item.id === "assigned" ? assignments.length : null;
           return h(
             "button",
             {
@@ -511,6 +508,11 @@ export default function RiderDashboard() {
               onDeliveryUpdate: () => {
                 void loadAssignments({ silent: true });
                 void loadHistory();
+              },
+              onMessagePeer: (peerId) => {
+                if (!peerId) return;
+                setHelpPeerId(String(peerId));
+                goTab("help");
               }
             });
   } else if (tab === "assigned") {
@@ -533,113 +535,26 @@ export default function RiderDashboard() {
       selectedId: ""
     });
   } else if (tab === "profile") {
-    mainBody = h(
-      "div",
-      {
-        className:
-          "rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-night-900/60"
-      },
-      [
-        h("h2", { className: "text-lg font-bold text-slate-900 dark:text-white" }, "Profile"),
-        h("div", { className: "mt-4 flex items-center gap-4" }, [
-          photo
-            ? h("img", { src: photo, alt: "", className: "h-16 w-16 rounded-full object-cover ring-2 ring-orange-500/40" })
-            : h(
-                "div",
-                {
-                  className:
-                    "flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-orange-600 text-xl font-bold text-white"
-                },
-                String(display).slice(0, 1).toUpperCase()
-              ),
-          h("div", {}, [
-            h("p", { className: "text-base font-bold text-slate-900 dark:text-white" }, display),
-            h("p", { className: "text-sm text-slate-500" }, riderId),
-            user?.email ? h("p", { className: "text-sm text-slate-500" }, user.email) : null,
-            h(
-              "p",
-              { className: "mt-1 inline-flex items-center gap-1 text-sm font-semibold text-orange-500" },
-              [h(Star, { className: "h-4 w-4 fill-orange-500" }), `${rating} rating`]
-            )
-          ].filter(Boolean))
-        ])
-      ]
-    );
-  } else if (tab === "notifications") {
-    mainBody = h(EmptyState, {
-      title: "Notifications",
-      body: "Delivery updates and assignments will appear here as they come in."
+    mainBody = h(RiderProfilePanel, {
+      user,
+      accessToken,
+      setUser,
+      display,
+      riderId,
+      rating,
+      photo,
+      online,
+      setOnline,
+      dark,
+      toggle,
+      onLogout
     });
   } else if (tab === "help") {
-    mainBody = h(
-      "div",
-      {
-        className:
-          "rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-night-900/60"
-      },
-      [
-        h("h2", { className: "text-lg font-bold text-slate-900 dark:text-white" }, "Help & Support"),
-        h(
-          "p",
-          { className: "mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300" },
-          "Need help with a delivery? Contact SHOPIQGH support from your account email, or use the in-app chat if available for your market."
-        ),
-        h(
-          "a",
-          {
-            href: "mailto:support@shopiqgh.com",
-            className:
-              "mt-4 inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-900/20 hover:brightness-105"
-          },
-          "Email support"
-        )
-      ]
-    );
-  } else if (tab === "settings") {
-    mainBody = h(
-      "div",
-      {
-        className:
-          "space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-night-900/60"
-      },
-      [
-        h("h2", { className: "text-lg font-bold text-slate-900 dark:text-white" }, "Settings"),
-        h("div", { className: "flex items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 dark:border-white/10" }, [
-          h("div", {}, [
-            h("p", { className: "text-sm font-semibold text-slate-800 dark:text-slate-100" }, "Appearance"),
-            h("p", { className: "text-xs text-slate-500" }, "Light / dark follows system until you toggle")
-          ]),
-          h(ThemeToggleButton, { dark, onToggle: toggle })
-        ]),
-        h("div", { className: "flex items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 dark:border-white/10" }, [
-          h("div", {}, [
-            h("p", { className: "text-sm font-semibold text-slate-800 dark:text-slate-100" }, "Availability"),
-            h("p", { className: "text-xs text-slate-500" }, online ? "Shown as online in the app" : "Shown as offline")
-          ]),
-          h(
-            "button",
-            {
-              type: "button",
-              onClick: () => setOnline((v) => !v),
-              className: `relative h-7 w-12 rounded-full transition ${online ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`
-            },
-            h("span", {
-              className: `absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${online ? "left-5" : "left-0.5"}`
-            })
-          )
-        ]),
-        h(
-          "button",
-          {
-            type: "button",
-            onClick: () => onLogout(),
-            className:
-              "inline-flex items-center gap-2 rounded-xl border border-rose-200 px-4 py-2.5 text-sm font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-950/40"
-          },
-          [h(LogOut, { className: "h-4 w-4" }), "Sign out"]
-        )
-      ]
-    );
+    mainBody = h(RiderMessagesInbox, {
+      accessToken,
+      initialPeerId: helpPeerId,
+      onPeerConsumed: () => setHelpPeerId(null)
+    });
   }
 
   return h(
@@ -748,7 +663,15 @@ function OrdersList({ title, items, empty, onSelect, selectedId }) {
   );
 }
 
-function ActiveDeliveryView({ assignment: a, assignments, selOrderId, setSelOrderId, accessToken, onDeliveryUpdate }) {
+function ActiveDeliveryView({
+  assignment: a,
+  assignments,
+  selOrderId,
+  setSelOrderId,
+  accessToken,
+  onDeliveryUpdate,
+  onMessagePeer
+}) {
   const address = getAddress(a);
   const stage = getStage(a);
   const dropNav = navigateUrl(a, false);
@@ -761,6 +684,39 @@ function ActiveDeliveryView({ assignment: a, assignments, selOrderId, setSelOrde
     { key: "on_the_way", label: "Out for Delivery", done: ["on_the_way", "delivered"].includes(stage) },
     { key: "delivered", label: "Delivered", done: stage === "delivered" }
   ];
+
+  const msgBtns = h(
+    "div",
+    { key: "msg", className: "flex flex-wrap gap-2" },
+    [
+      a.buyerId
+        ? h(
+            "button",
+            {
+              key: "mb",
+              type: "button",
+              onClick: () => onMessagePeer?.(a.buyerId),
+              className:
+                "inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-white/10 dark:bg-night-900 dark:text-slate-200"
+            },
+            [h(MessageSquare, { className: "h-3.5 w-3.5 text-orange-500" }), "Message customer"]
+          )
+        : null,
+      a.vendorId
+        ? h(
+            "button",
+            {
+              key: "mv",
+              type: "button",
+              onClick: () => onMessagePeer?.(a.vendorId),
+              className:
+                "inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-white/10 dark:bg-night-900 dark:text-slate-200"
+            },
+            [h(MessageSquare, { className: "h-3.5 w-3.5 text-sky-500" }), "Message vendor"]
+          )
+        : null
+    ].filter(Boolean)
+  );
 
   const orderPanel = h(
     "div",
@@ -831,6 +787,8 @@ function ActiveDeliveryView({ assignment: a, assignments, selOrderId, setSelOrde
         value: a.vendorApproxLabel || a.vendorName || "Vendor pickup",
         navHref: pickNav
       }),
+
+      msgBtns,
 
       Array.isArray(a.items) && a.items.length
         ? h(
@@ -934,9 +892,24 @@ function ActiveDeliveryView({ assignment: a, assignments, selOrderId, setSelOrde
       ),
 
       h(
-        "p",
-        { key: "hint", className: "text-[11px] leading-relaxed text-slate-500 dark:text-slate-400" },
-        "Use Confirm Delivery below the map when the customer has their order. Make sure you have delivered the order to the customer."
+        "div",
+        {
+          key: "howto",
+          className: "rounded-xl border border-orange-200/70 bg-orange-50/80 p-3 text-[11px] leading-relaxed text-orange-950 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-100"
+        },
+        [
+          h("p", { className: "font-bold" }, "How to confirm pickup & delivery"),
+          h("ol", { className: "mt-1.5 list-decimal space-y-1 pl-4" }, [
+            h("li", null, "At the vendor: tap Mark picked up under the map."),
+            h("li", null, "When leaving for the customer: tap On the way (sends them a 6-digit code)."),
+            h("li", null, "After handoff: tap Confirm Delivery, then enter the customer’s code.")
+          ]),
+          h(
+            "p",
+            { className: "mt-2 text-orange-800/90 dark:text-orange-200/90" },
+            "Customers do not confirm in the app — you confirm delivery with their code."
+          )
+        ]
       )
     ].filter(Boolean)
   );
@@ -1033,4 +1006,487 @@ function StatCell({ label, value }) {
     h("p", { className: "text-[9px] font-bold uppercase tracking-wider text-slate-400" }, label),
     h("p", { className: "mt-0.5 truncate text-xs font-bold text-slate-800 dark:text-slate-100" }, value)
   ]);
+}
+
+function RiderProfilePanel({
+  user,
+  accessToken,
+  setUser,
+  display,
+  riderId,
+  rating,
+  photo,
+  online,
+  setOnline,
+  dark,
+  toggle,
+  onLogout
+}) {
+  const [displayName, setDisplayName] = useState(String(user?.displayName || display || ""));
+  const [phone, setPhone] = useState(String(user?.phone || ""));
+  const [saving, setSaving] = useState(false);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    setDisplayName(String(user?.displayName || display || ""));
+    setPhone(String(user?.phone || ""));
+  }, [user?.displayName, user?.phone, display]);
+
+  const onPickPhoto = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f || !accessToken) return;
+    if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.type) || f.size > 5 * 1024 * 1024) {
+      setErr("Use a JPEG, PNG, WebP, or GIF under 5 MB.");
+      return;
+    }
+    setErr("");
+    setOk("");
+    setPhotoLoading(true);
+    try {
+      const data = await apiUploadProfileImage(f, accessToken);
+      if (data.user) setUser(data.user);
+      setOk("Profile photo updated.");
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "Upload failed"));
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
+
+  const clearPhoto = async () => {
+    if (!accessToken) return;
+    setErr("");
+    setOk("");
+    setPhotoLoading(true);
+    try {
+      const data = await apiFetch("/api/auth/profile", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { clearProfileImage: true }
+      });
+      if (data.user) setUser(data.user);
+      setOk("Profile photo removed.");
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "Could not remove photo"));
+    } finally {
+      setPhotoLoading(false);
+    }
+  };
+
+  const save = async () => {
+    if (!accessToken) return;
+    setErr("");
+    setOk("");
+    setSaving(true);
+    try {
+      const data = await apiFetch("/api/auth/profile", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { displayName: displayName.trim(), phone: phone.trim() }
+      });
+      if (data.user) setUser(data.user);
+      setOk("Profile saved.");
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "Save failed"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return h(
+    "div",
+    {
+      className:
+        "space-y-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-night-900/60 sm:p-6"
+    },
+    [
+      h("div", { key: "hd", className: "flex flex-wrap items-start justify-between gap-3" }, [
+        h("div", {}, [
+          h("h2", { className: "text-lg font-bold text-slate-900 dark:text-white" }, "Profile"),
+          h("p", { className: "mt-1 text-xs text-slate-500" }, `${riderId} · ${rating} rating`)
+        ]),
+        h(
+          "span",
+          {
+            className: `inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
+              online
+                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                : "bg-slate-200 text-slate-600 dark:bg-white/10 dark:text-slate-400"
+            }`
+          },
+          online ? "Online" : "Offline"
+        )
+      ]),
+
+      h("div", { key: "photo", className: "flex flex-wrap items-center gap-4" }, [
+        photo
+          ? h("img", {
+              src: photo,
+              alt: "",
+              className: "h-20 w-20 rounded-full object-cover ring-2 ring-orange-500/40"
+            })
+          : h(
+              "div",
+              {
+                className:
+                  "flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-orange-600 text-2xl font-bold text-white"
+              },
+              String(displayName || display || "R").slice(0, 1).toUpperCase()
+            ),
+        h("div", { className: "flex flex-wrap gap-2" }, [
+          h("input", {
+            ref: fileRef,
+            type: "file",
+            accept: "image/jpeg,image/png,image/webp,image/gif",
+            className: "hidden",
+            onChange: onPickPhoto
+          }),
+          h(
+            Button,
+            {
+              type: "button",
+              className: "!rounded-xl",
+              loading: photoLoading,
+              onClick: () => fileRef.current?.click()
+            },
+            [h(Camera, { className: "mr-1.5 h-4 w-4" }), "Change photo"]
+          ),
+          photo
+            ? h(
+                Button,
+                { type: "button", variant: "ghost", className: "!rounded-xl", loading: photoLoading, onClick: clearPhoto },
+                "Remove"
+              )
+            : null
+        ].filter(Boolean))
+      ]),
+
+      h(Field, { key: "dn", label: "Display name" }, h(TextInput, { value: displayName, onChange: (e) => setDisplayName(e.target.value), maxLength: 80 })),
+      h(Field, { key: "ph", label: "Phone number" }, h(TextInput, { value: phone, onChange: (e) => setPhone(e.target.value), placeholder: "e.g. 024XXXXXXX", maxLength: 30 })),
+      user?.email
+        ? h("p", { key: "em", className: "text-xs text-slate-500" }, `Signed in as ${user.email}`)
+        : null,
+
+      err ? h("p", { key: "err", className: "text-sm font-medium text-rose-600 dark:text-rose-300" }, err) : null,
+      ok ? h("p", { key: "ok", className: "text-sm font-medium text-emerald-600 dark:text-emerald-300" }, ok) : null,
+
+      h(
+        Button,
+        { key: "save", type: "button", className: "!rounded-xl !bg-orange-500 hover:!bg-orange-600", loading: saving, onClick: save },
+        "Save profile"
+      ),
+
+      h("div", { key: "prefs", className: "grid gap-3 border-t border-slate-100 pt-4 dark:border-white/10 sm:grid-cols-2" }, [
+        h("div", { className: "flex items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 dark:border-white/10" }, [
+          h("div", {}, [
+            h("p", { className: "text-sm font-semibold text-slate-800 dark:text-slate-100" }, "Appearance"),
+            h("p", { className: "text-xs text-slate-500" }, "Light / dark")
+          ]),
+          h(ThemeToggleButton, { dark, onToggle: toggle })
+        ]),
+        h("div", { className: "flex items-center justify-between gap-3 rounded-xl border border-slate-100 p-3 dark:border-white/10" }, [
+          h("div", {}, [
+            h("p", { className: "text-sm font-semibold text-slate-800 dark:text-slate-100" }, "Availability"),
+            h("p", { className: "text-xs text-slate-500" }, online ? "You are online" : "You are offline")
+          ]),
+          h(
+            "button",
+            {
+              type: "button",
+              onClick: () => setOnline((v) => !v),
+              className: `relative h-7 w-12 rounded-full transition ${online ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`
+            },
+            h("span", {
+              className: `absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${online ? "left-5" : "left-0.5"}`
+            })
+          )
+        ])
+      ]),
+
+      h(
+        "button",
+        {
+          key: "out",
+          type: "button",
+          onClick: () => onLogout(),
+          className:
+            "inline-flex items-center gap-2 rounded-xl border border-rose-200 px-4 py-2.5 text-sm font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+        },
+        [h(LogOut, { className: "h-4 w-4" }), "Sign out"]
+      )
+    ].filter(Boolean)
+  );
+}
+
+function RiderMessagesInbox({ accessToken, initialPeerId, onPeerConsumed }) {
+  const [threads, setThreads] = useState([]);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [replyByPeer, setReplyByPeer] = useState({});
+  const [sending, setSending] = useState(null);
+  const [activeId, setActiveId] = useState(null);
+  const [mobileShowChat, setMobileShowChat] = useState(false);
+  const selectPeerOnLoadRef = useRef(true);
+
+  useEffect(() => {
+    selectPeerOnLoadRef.current = true;
+  }, [initialPeerId]);
+
+  const loadThreads = useCallback(() => {
+    if (!accessToken) return Promise.resolve();
+    return apiFetch("/api/conversations", {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    }).then((d) => setThreads(Array.isArray(d?.threads) ? d.threads : []));
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setErr("");
+    loadThreads()
+      .catch((ex) => {
+        if (!cancelled) setErr(apiErrorMessage(ex, "Could not load messages"));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, loadThreads]);
+
+  useEffect(() => {
+    if (!threads.length) {
+      setActiveId(null);
+      return;
+    }
+    const ids = threads.map((t) => String(t.peerUserId));
+    if (selectPeerOnLoadRef.current && initialPeerId && ids.includes(String(initialPeerId))) {
+      setActiveId(String(initialPeerId));
+      setMobileShowChat(true);
+      selectPeerOnLoadRef.current = false;
+      onPeerConsumed?.();
+      return;
+    }
+    selectPeerOnLoadRef.current = false;
+    setActiveId((cur) => (cur && ids.includes(String(cur)) ? cur : String(threads[0].peerUserId)));
+  }, [threads, initialPeerId, onPeerConsumed]);
+
+  const activeThread = useMemo(
+    () => threads.find((t) => String(t.peerUserId) === String(activeId)) || null,
+    [threads, activeId]
+  );
+
+  const threadPreview = useCallback((t) => {
+    const msgs = t.messages || [];
+    if (!msgs.length) return "No messages yet — say hello.";
+    const last = msgs[msgs.length - 1];
+    const s = String(last.text || "").replace(/\s+/g, " ").trim();
+    return s.length > 80 ? `${s.slice(0, 80)}…` : s || "…";
+  }, []);
+
+  const sendReply = async (peerUserId) => {
+    const pid = String(peerUserId || "");
+    const text = String(replyByPeer[pid] || "").trim();
+    if (!text || !accessToken) return;
+    if (containsContactSharing(text)) {
+      setErr(CONTACT_SHARING_BLOCKED_MESSAGE);
+      return;
+    }
+    setErr("");
+    setSending(pid);
+    try {
+      await apiFetch(`/api/conversations/by-peer/${encodeURIComponent(pid)}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        json: { text }
+      });
+      setReplyByPeer((prev) => ({ ...prev, [pid]: "" }));
+      await loadThreads();
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "Could not send reply"));
+    } finally {
+      setSending(null);
+    }
+  };
+
+  const peerBadge = (t) => {
+    if (t?.isSupport) return "Support";
+    if (t?.peerRole === "buyer") return "Customer";
+    if (t?.peerRole === "seller") return "Vendor";
+    return "Chat";
+  };
+
+  if (loading) {
+    return h("p", { className: "text-sm text-slate-500" }, "Loading messages…");
+  }
+
+  return h("div", { className: "space-y-3" }, [
+    h("div", { key: "intro" }, [
+      h("h2", { className: "text-lg font-bold text-slate-900 dark:text-white" }, "Help & Support"),
+      h(
+        "p",
+        { className: "mt-1 text-sm text-slate-500 dark:text-slate-400" },
+        "Message SHOPIQGH Support, your delivery customer, or the vendor — same in-app chat as buyers use."
+      )
+    ]),
+    err
+      ? h(
+          "p",
+          {
+            key: "err",
+            className:
+              "rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-400/35 dark:bg-rose-950/40 dark:text-rose-200"
+          },
+          err
+        )
+      : null,
+    !threads.length
+      ? h(EmptyState, {
+          key: "empty",
+          title: "No conversations yet",
+          body: "SHOPIQGH Support appears when an admin is configured. Customer and vendor chats show for your assigned deliveries."
+        })
+      : h(
+          "div",
+          {
+            key: "shell",
+            className:
+              "flex min-h-[min(28rem,calc(100dvh-14rem))] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-white/10 dark:bg-night-900/50 md:flex-row"
+          },
+          [
+            h(
+              "aside",
+              {
+                key: "list",
+                className: `flex max-h-[40vh] shrink-0 flex-col border-slate-100 dark:border-white/10 md:max-h-none md:w-[min(100%,17rem)] md:border-r ${
+                  mobileShowChat ? "max-md:hidden" : "max-md:flex"
+                }`
+              },
+              [
+                h("div", { className: "border-b border-slate-100 px-4 py-3 dark:border-white/10" }, [
+                  h("p", { className: "text-sm font-semibold text-slate-900 dark:text-white" }, "Chats")
+                ]),
+                h(
+                  "div",
+                  { className: "min-h-0 flex-1 overflow-y-auto" },
+                  threads.map((t) => {
+                    const selected = String(t.peerUserId) === String(activeId);
+                    return h(
+                      "button",
+                      {
+                        key: t.peerUserId,
+                        type: "button",
+                        onClick: () => {
+                          setActiveId(String(t.peerUserId));
+                          setMobileShowChat(true);
+                        },
+                        className: `flex w-full flex-col gap-1 border-b border-slate-50 px-4 py-3 text-left transition dark:border-white/5 ${
+                          selected ? "bg-orange-500/10" : "hover:bg-slate-50 dark:hover:bg-white/5"
+                        }`
+                      },
+                      [
+                        h("div", { className: "flex items-center justify-between gap-2" }, [
+                          h("span", { className: "truncate text-sm font-semibold text-slate-800 dark:text-slate-100" }, t.peerDisplayName || "Chat"),
+                          h(
+                            "span",
+                            {
+                              className:
+                                "shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:bg-white/10 dark:text-slate-300"
+                            },
+                            peerBadge(t)
+                          )
+                        ]),
+                        h("p", { className: "line-clamp-2 text-xs text-slate-500" }, threadPreview(t))
+                      ]
+                    );
+                  })
+                )
+              ]
+            ),
+            activeThread
+              ? h(
+                  "section",
+                  {
+                    key: "chat",
+                    className: `flex min-w-0 flex-1 flex-col ${mobileShowChat ? "max-md:flex" : "max-md:hidden"}`
+                  },
+                  [
+                    h("div", { className: "flex items-center gap-2 border-b border-slate-100 px-4 py-3 dark:border-white/10" }, [
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          className: "rounded-lg p-1.5 text-slate-500 md:hidden",
+                          onClick: () => setMobileShowChat(false)
+                        },
+                        h(X, { className: "h-4 w-4" })
+                      ),
+                      h("div", { className: "min-w-0" }, [
+                        h("p", { className: "truncate font-semibold text-slate-900 dark:text-white" }, activeThread.peerDisplayName),
+                        h("p", { className: "text-[11px] text-slate-500" }, activeThread.itemSummary || peerBadge(activeThread))
+                      ])
+                    ]),
+                    h(
+                      "div",
+                      { className: "min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3" },
+                      (activeThread.messages || []).length
+                        ? activeThread.messages.map((m, idx) => {
+                            const mine = m.senderLabel === "You";
+                            return h(
+                              "div",
+                              { key: `m-${idx}`, className: `flex ${mine ? "justify-end" : "justify-start"}` },
+                              h(
+                                "div",
+                                {
+                                  className: `max-w-[min(100%,22rem)] rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${
+                                    mine
+                                      ? "rounded-br-md bg-orange-500 text-white"
+                                      : "rounded-bl-md border border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-night-950 dark:text-slate-100"
+                                  }`
+                                },
+                                [
+                                  h("p", { className: "text-[10px] font-bold uppercase opacity-80" }, m.senderLabel),
+                                  h("p", { className: "mt-1 whitespace-pre-wrap" }, m.text)
+                                ]
+                              )
+                            );
+                          })
+                        : h("p", { className: "text-sm text-slate-500" }, "No messages yet. Write the first one.")
+                    ),
+                    h("div", { className: "border-t border-slate-100 p-3 dark:border-white/10" }, [
+                      h("textarea", {
+                        rows: 2,
+                        value: replyByPeer[String(activeThread.peerUserId)] || "",
+                        onChange: (e) =>
+                          setReplyByPeer((prev) => ({ ...prev, [String(activeThread.peerUserId)]: e.target.value })),
+                        placeholder: "Type a message…",
+                        className:
+                          "w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-night-950 dark:text-white"
+                      }),
+                      h(
+                        Button,
+                        {
+                          type: "button",
+                          className: "mt-2 !rounded-xl !bg-orange-500 hover:!bg-orange-600",
+                          loading: sending === String(activeThread.peerUserId),
+                          onClick: () => void sendReply(activeThread.peerUserId)
+                        },
+                        "Send"
+                      )
+                    ])
+                  ]
+                )
+              : h("div", { key: "ph", className: "hidden flex-1 items-center justify-center p-8 text-sm text-slate-500 md:flex" }, "Select a conversation")
+          ]
+        )
+  ].filter(Boolean));
 }
