@@ -77,7 +77,6 @@ export function StoreLocationSection({ business, storeSlug, onSave, saving }) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolve once per pin
   }, [business?.id, geo?.lat, geo?.lng]);
 
   const saveLivePosition = (lat, lng) => {
