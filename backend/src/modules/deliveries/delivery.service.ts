@@ -403,7 +403,7 @@ export async function advanceDeliveryStage(params: {
     }
     if (params.actorRole !== "admin") {
       const st = d.currentStage;
-      const beforePickup = STAGE_INDEX[st] < STAGE_INDEX.picked_up && st !== "cancelled";
+      const beforePickup = STAGE_INDEX[st] < STAGE_INDEX.picked_up;
       if (params.nextStage === "picked_up") {
         if (!beforePickup) {
           throw new HttpError(400, "Order is already past pickup.");
