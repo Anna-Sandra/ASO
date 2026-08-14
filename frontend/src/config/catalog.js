@@ -28,7 +28,7 @@ export function withAllCategoryFirst(rows) {
 
 export const FILTERS = [
   { id: "all", label: "All" },
-  { id: "sales", label: "Sales" },
+  { id: "sales", label: "Deals" },
   { id: "new", label: "New" },
   { id: "popular", label: "Popular" }
 ];
@@ -240,7 +240,7 @@ export function sortProductsByBrowseFilter(products, filId) {
 export function browseFilterLabel(filId) {
   switch (String(filId || "all")) {
     case "sales":
-      return "Sales";
+      return "Deals";
     case "new":
       return "New";
     case "popular":
@@ -349,7 +349,7 @@ export function productStorefrontBadges(p) {
   if (Number.isFinite(cmpRaw) && Number.isFinite(list) && cmpRaw > list && list > 0) {
     const pct = Math.round(((cmpRaw - list) / cmpRaw) * 100);
     if (pct > 0 && pct < 100) {
-      out.push({ key: "off", label: `${pct}% OFF`, className: "bg-fuchsia-500 text-white" });
+      out.push({ key: "off", label: `${pct}% OFF`, className: "bg-amber-300 text-rose-950 ring-amber-700/30" });
     }
   }
 

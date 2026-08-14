@@ -252,3 +252,33 @@ body,
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
 }
+
+@keyframes deal-hero-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+.deal-hero-wash {
+  background-size: 220% 220%;
+  animation: deal-hero-shift 10s ease-in-out infinite;
+}
+
+@keyframes sale-off-bob {
+  0%,
+  100% {
+    transform: rotate(-3deg) scale(1);
+  }
+  50% {
+    transform: rotate(-6deg) scale(1.05);
+  }
+}
+.sale-off-badge {
+  animation: sale-off-bob 2.6s ease-in-out infinite;
+  transform-origin: center;
+}

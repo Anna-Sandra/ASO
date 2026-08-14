@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  AlarmClock,
   ArrowRight,
   BadgePercent,
   BellRing,
@@ -10,7 +9,6 @@ import {
   Gift,
   Percent,
   ShoppingBag,
-  Sparkles,
   Store,
   Zap,
   TrendingUp,
@@ -22,16 +20,16 @@ import { BuyerLayout, CartDrawer } from "pages/buyer/screensBuyer";
 import { Button, GlassPanel, InlineNotice } from "components/ui";
 import { formatGhc } from "utils/money";
 import { useNotice } from "context";
-import { usePromoCountdown, isPerpetualPromoEnd } from "utils/promoCountdown";
+import { usePromoCountdown, isPerpetualPromoEnd, PromoTimerPills } from "utils/promoCountdown";
 
-/** Hero gradients — violet + sky/ice to match buyer shell (`screensBuyer`) */
+/** Deal heroes — warm sale energy, still readable on the buyer shell. */
 const GRADIENTS = {
-  violet: "from-violet-600 via-indigo-600 to-sky-800",
-  sunset: "from-violet-500 via-fuchsia-600 to-indigo-800",
-  ocean: "from-sky-500 via-cyan-600 to-violet-800",
-  ember: "from-indigo-500 via-violet-600 to-fuchsia-700",
-  moss: "from-sky-500 via-violet-600 to-indigo-800",
-  berry: "from-fuchsia-600 via-violet-600 to-indigo-900"
+  violet: "from-orange-500 via-rose-500 to-violet-700",
+  sunset: "from-amber-400 via-orange-500 to-rose-600",
+  ocean: "from-sky-500 via-cyan-600 to-indigo-800",
+  ember: "from-orange-500 via-rose-600 to-fuchsia-800",
+  moss: "from-sky-500 via-teal-600 to-indigo-800",
+  berry: "from-rose-600 via-orange-500 to-amber-500"
 };
 
 function gradientClass(key) {
@@ -68,12 +66,24 @@ function DealHeroCarousel({ banners }) {
       "div",
       {
         className:
-          "relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-600/25 to-sky-600/20 p-8 ring-1 ring-white/10"
+          "relative overflow-hidden rounded-3xl bg-gradient-to-br from-orange-500 via-rose-500 to-amber-500 p-8 shadow-lg shadow-orange-900/20"
       },
       [
-        h(Flame, { className: "h-10 w-10 text-violet-400" }),
-        h("p", { className: "mt-3 font-display text-xl font-bold text-white" }, "Flash savings land here"),
-        h("p", { className: "mt-2 text-sm text-white/75" }, "Approved vendor & campus campaigns show up automatically.")
+        h("div", { className: "deal-hero-wash pointer-events-none absolute inset-0 bg-gradient-to-br from-orange-400/40 via-transparent to-rose-700/40", "aria-hidden": true }),
+        h("span", { className: "relative inline-flex items-center gap-1.5 rounded-full bg-black/30 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-100" }, [
+          h(Flame, { className: "h-3.5 w-3.5 text-amber-300" }),
+          "Hot deals"
+        ]),
+        h("p", { className: "relative mt-3 font-display text-2xl font-black text-white sm:text-3xl" }, "Save big on flash sales"),
+        h("p", { className: "relative mt-2 max-w-lg text-sm text-white/90" }, "Timed drops, extra off, and bundles from stores you already shop."),
+        h(
+          Link,
+          {
+            to: "/",
+            className: "relative mt-5 inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-black text-orange-700 shadow-md"
+          },
+          ["Browse the shop", h(ArrowRight, { className: "h-4 w-4" })]
+        )
       ]
     );
 
@@ -84,10 +94,11 @@ function DealHeroCarousel({ banners }) {
 /** Sub-component so hooks follow rules */
 
 function HeroSlideInner({ b, idx, setIdx, banners }) {
-  const t = usePromoCountdown(b.endsAt);
-  return h("div", { className: "relative overflow-hidden rounded-3xl ring-1 ring-white/10" }, [
+  const timed = !!(b.endsAt && !isPerpetualPromoEnd(b.endsAt));
+  const t = usePromoCountdown(timed ? b.endsAt : undefined);
+  return h("div", { className: "relative overflow-hidden rounded-3xl shadow-lg shadow-orange-900/20 ring-1 ring-orange-400/20" }, [
     h("div", {
-      className: `absolute inset-0 bg-gradient-to-br opacity-95 ${gradientClass(b.gradientKey)}`,
+      className: `deal-hero-wash absolute inset-0 bg-gradient-to-br opacity-95 ${gradientClass(b.gradientKey)}`,
       "aria-hidden": true
     }),
     b.imageUrl
@@ -99,39 +110,30 @@ function HeroSlideInner({ b, idx, setIdx, banners }) {
       : null,
     h(
       "div",
-      { className: "relative z-[1] flex min-h-[200px] flex-col justify-end p-6 sm:min-h-[220px] sm:p-8" },
+      { className: "relative z-[1] flex min-h-[220px] flex-col justify-end p-6 sm:min-h-[260px] sm:p-8" },
       [
         b.tagBadge &&
           h(
             "span",
             {
               className:
-                "mb-2 inline-flex w-fit rounded-full bg-black/30 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-sky-100 ring-1 ring-sky-400/40"
+                "mb-2 inline-flex w-fit items-center gap-1 rounded-full bg-black/35 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-100 ring-1 ring-white/25"
             },
-            b.tagBadge
+            [h(Flame, { className: "h-3 w-3 text-amber-300" }), b.tagBadge]
           ),
-        h("h2", { className: "font-display text-2xl font-black leading-tight text-white sm:text-3xl" }, b.title),
-        b.subtitle && h("p", { className: "mt-2 max-w-xl text-sm text-white/85" }, b.subtitle),
-        h("div", { className: "mt-4 flex flex-wrap items-center gap-3" }, [
-          h(
-            "span",
-            {
-              className: t.urgent
-                ? "inline-flex items-center gap-1.5 rounded-xl bg-rose-950/55 px-3 py-2 font-mono text-sm font-bold text-rose-100 ring-1 ring-rose-400/65"
-                : "inline-flex items-center gap-1.5 rounded-xl bg-black/35 px-3 py-2 font-mono text-sm font-bold text-sky-100 ring-1 ring-white/15"
-            },
-            [
-              h(Timer, { className: "h-4 w-4 shrink-0", "aria-hidden": true }),
-              t.ended ? "Ended" : `Ends in ${t.text}`
-            ]
-          ),
+        h("h2", { className: "font-display text-2xl font-black leading-tight text-white sm:text-4xl" }, b.title),
+        b.subtitle && h("p", { className: "mt-2 max-w-xl text-sm text-white/90 sm:text-base" }, b.subtitle),
+        h("div", { className: "mt-5 flex flex-wrap items-center gap-3" }, [
+          timed
+            ? h(PromoTimerPills, { secondsLeft: t.secondsLeft, ended: t.ended, urgent: t.urgent })
+            : null,
           b.linkPath &&
             h(
               Link,
               {
                 to: b.linkPath.startsWith("/") ? b.linkPath : `/${b.linkPath}`,
                 className:
-                  "inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-sky-900 shadow-lg shadow-black/20"
+                  "inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-black text-orange-700 shadow-lg shadow-black/20"
               },
               ["Shop now", h(ArrowRight, { className: "h-4 w-4" })]
             )
@@ -179,18 +181,18 @@ function FlashSaleCard({ promo }) {
     {
       key: promo.id,
       className:
-        "!border-sky-500/25 !bg-gradient-to-br from-violet-500/10 via-sky-500/10 to-transparent dark:!from-violet-500/15 dark:!via-sky-500/5 !p-0 overflow-hidden"
+        "!border-orange-300/50 !bg-white !p-0 overflow-hidden shadow-md dark:!border-orange-500/25 dark:!bg-night-900/70"
     },
     [
       h("div", { className: "relative" }, [
         img
-          ? h("img", { src: img, alt: "", className: "h-36 w-full object-cover sm:h-40" })
-          : h("div", { className: "flex h-36 items-center justify-center bg-night-950/50 sm:h-40" }, h(ShoppingBag, { className: "h-12 w-12 text-slate-600" })),
+          ? h("img", { src: img, alt: "", className: "h-44 w-full object-cover sm:h-52" })
+          : h("div", { className: "flex h-44 items-center justify-center bg-orange-50 dark:bg-night-950/50 sm:h-52" }, h(ShoppingBag, { className: "h-12 w-12 text-orange-300" })),
         h(
           "div",
           {
             className:
-              "absolute left-2 top-2 z-[2] max-w-[calc(100%-6rem)] rounded-lg bg-rose-600 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-white shadow-lg shadow-rose-900/35 ring-1 ring-rose-950/30"
+              "absolute left-2 top-2 z-[2] max-w-[calc(100%-6.5rem)] rounded-lg bg-rose-600 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-white shadow-lg"
           },
           badgeLabel.slice(0, 22)
         ),
@@ -199,7 +201,7 @@ function FlashSaleCard({ promo }) {
             "div",
             {
               className:
-                "absolute right-2 top-2 z-[2] rounded-lg bg-emerald-600 px-2 py-1 text-[11px] font-black text-white shadow-lg shadow-emerald-900/30"
+                "absolute right-2 top-2 z-[2] rounded-lg bg-amber-300 px-2 py-1 text-sm font-black text-rose-950 shadow-lg"
             },
             `${pct}% OFF`
           )
@@ -207,45 +209,42 @@ function FlashSaleCard({ promo }) {
       h("div", { className: "p-4" }, [
         p?.sellerPayment?.displayName &&
           h("p", { className: "text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400" }, String(p.sellerPayment.displayName)),
-        h("p", { className: "line-clamp-2 font-semibold text-slate-900 dark:text-white" }, p?.name || promo.title),
+        h("p", { className: "line-clamp-2 font-display text-base font-bold text-slate-900 dark:text-white" }, p?.name || promo.title),
         h("div", { className: "mt-2 flex flex-wrap items-baseline gap-2" }, [
           promo.compareAtGhs != null &&
-            h("span", { className: "text-sm text-slate-400 line-through" }, formatGhc(promo.compareAtGhs)),
+            h("span", { className: "text-sm font-semibold text-slate-400 line-through" }, formatGhc(promo.compareAtGhs)),
           h(
             "span",
-            { className: "text-xl font-black text-violet-700 dark:text-violet-300" },
+            { className: "text-2xl font-black text-orange-600 dark:text-amber-300" },
             formatGhc(promo.salePriceGhs ?? p?.price ?? 0)
-          ),
-          pct != null &&
-            pct > 0 &&
-            h(
-              "span",
-              { className: "rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-black text-emerald-700 dark:text-emerald-300" },
-              `${pct}% OFF`
-            )
+          )
         ]),
-        timed &&
+        pct != null &&
+          pct > 0 &&
+          promo.compareAtGhs != null &&
           h(
-            "div",
-            {
-              className: `mt-2 flex items-center gap-2 font-mono text-sm font-bold ${t.urgent ? "text-rose-600 dark:text-rose-400" : "text-slate-600 dark:text-slate-400"}`
-            },
-            [h(AlarmClock, { className: "h-4 w-4 shrink-0" }), t.ended ? "Ended" : t.text]
+            "p",
+            { className: "mt-1 text-xs font-bold text-emerald-700 dark:text-emerald-300" },
+            `You save ${formatGhc(Math.max(0, promo.compareAtGhs - (promo.salePriceGhs ?? 0)))}`
           ),
+        timed &&
+          h("div", { className: "mt-3" }, [
+            h(PromoTimerPills, { secondsLeft: t.secondsLeft, ended: t.ended, urgent: t.urgent, compact: true })
+          ]),
         !timed && promo.kind === "deal_discount" &&
-          h("p", { className: "mt-2 text-xs font-semibold text-slate-500 dark:text-slate-400" }, "Runs until seller or admin ends · no countdown"),
+          h("p", { className: "mt-2 text-xs font-bold uppercase tracking-wide text-orange-600 dark:text-amber-400" }, "On now — no rush timer"),
         promo.kind === "flash_sale" &&
           sold > 0 &&
           h("div", { className: "mt-3" }, [
-            h("div", { className: "h-2 overflow-hidden rounded-full bg-white/10" }, [
+            h("div", { className: "h-2 overflow-hidden rounded-full bg-orange-100 dark:bg-white/10" }, [
               h("div", {
-                className: "h-full rounded-full bg-gradient-to-r from-sky-500 to-violet-600 transition-all",
+                className: "h-full rounded-full bg-gradient-to-r from-orange-500 to-rose-500 transition-all",
                 style: { width: `${sold}%` }
               })
             ]),
             h(
               "p",
-              { className: "mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500" },
+              { className: "mt-1 text-[10px] font-bold uppercase tracking-wide text-orange-700 dark:text-amber-300" },
               `${sold}% claimed — don’t sleep on it`
             )
           ]),
@@ -255,7 +254,7 @@ function FlashSaleCard({ promo }) {
             {
               to: `/products/${promo.productId}`,
               className:
-                "mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-2.5 text-sm font-bold text-white shadow-md shadow-violet-900/30 hover:bg-violet-500"
+                "mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-orange-500 py-2.5 text-sm font-black text-white shadow-md shadow-orange-900/25 hover:bg-orange-600"
             },
             addToCartLinkLabel(canBuyRailProduct(p))
           )
@@ -332,7 +331,7 @@ function VendorPromoCard({ promo }) {
     GlassPanel,
     {
       className:
-        "!p-0 overflow-hidden !border-violet-500/30 !bg-gradient-to-br from-violet-600/15 to-fuchsia-600/10"
+        "!p-0 overflow-hidden !border-orange-300/50 !bg-white dark:!border-orange-500/25 dark:!bg-night-900/70"
     },
     [
       h("div", { className: "relative h-28 bg-night-950/40" }, [
@@ -356,7 +355,7 @@ function VendorPromoCard({ promo }) {
             Link,
             {
               to: promo.linkPath.startsWith("/") ? promo.linkPath : `/${promo.linkPath}`,
-              className: "mt-3 block text-center text-xs font-bold text-violet-600 hover:underline dark:text-violet-300"
+              className: "mt-3 inline-flex w-full items-center justify-center rounded-full bg-orange-500 py-2 text-xs font-black text-white hover:bg-orange-600"
             },
             "Open store →"
           )
@@ -407,7 +406,7 @@ export function BuyerDealsPage() {
         h("div", {
           key: "burst",
           className:
-            "pointer-events-none fixed inset-x-0 top-0 -z-10 h-72 bg-gradient-to-b from-violet-500/12 via-sky-500/8 to-transparent dark:from-violet-600/10 dark:via-sky-500/5"
+            "pointer-events-none fixed inset-x-0 top-0 -z-10 h-72 bg-gradient-to-b from-orange-400/20 via-rose-400/10 to-transparent dark:from-orange-600/15 dark:via-rose-600/8"
         }),
         err &&
           h(InlineNotice, { key: "e", variant: "error", className: "mb-4", onDismiss: () => setErr("") }, err),
@@ -424,15 +423,15 @@ export function BuyerDealsPage() {
                     className:
                       "flex items-center gap-2 font-display text-xl font-black text-slate-900 dark:text-white sm:text-2xl"
                   },
-                  [h(Flame, { className: "h-6 w-6 text-violet-500 dark:text-violet-400" }), "Hot deals & flash sales"]
+                  [h(Flame, { className: "h-6 w-6 text-orange-500" }), "Grab these before they’re gone"]
                 ),
                 h(
                   "p",
                   { className: "mt-1 text-sm text-slate-500 dark:text-slate-400" },
-                  "Filter by deal type — flash timers, evergreen discounts, and bundles from approved sellers."
+                  "Flash timers, extra-off prices, and bundles — tap a card to shop."
                 )
               ]),
-              h(Link, { to: "/", className: "text-xs font-bold text-violet-600 hover:underline dark:text-violet-300" }, "Browse full shop →")
+              h(Link, { to: "/", className: "text-xs font-black text-orange-600 hover:underline dark:text-amber-300" }, "Browse full shop →")
             ]
           ),
           h(
@@ -445,10 +444,10 @@ export function BuyerDealsPage() {
                   key: tb.id,
                   type: "button",
                   onClick: () => setTab(tb.id),
-                  className: `flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-xs font-bold transition sm:text-sm ${
+                  className: `flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-xs font-black transition sm:text-sm ${
                     tab === tb.id
-                      ? "bg-violet-600 text-white shadow-md shadow-violet-900/30"
-                      : "border border-slate-200/80 bg-white/80 text-slate-700 dark:border-white/10 dark:bg-night-900/60 dark:text-slate-200"
+                      ? "bg-orange-500 text-white shadow-md shadow-orange-900/25"
+                      : "border border-orange-200/80 bg-white text-orange-800 dark:border-white/10 dark:bg-night-900/60 dark:text-amber-100"
                   }`
                 },
                 [h(tb.icon, { className: "h-3.5 w-3.5 sm:h-4 sm:w-4" }), tb.label]
@@ -505,38 +504,37 @@ export function BuyerDealsPage() {
 
 function CouponTicket({ c, onCopy, toastFn }) {
   const scope = c.scope === "vendor";
-  const accent =
-    scope ? "from-violet-600/90 to-indigo-900" : "from-sky-600/90 to-violet-900";
+  const accent = scope ? "from-orange-500 to-rose-600" : "from-amber-400 to-orange-600";
   return h(
     "div",
     {
       key: c.id,
       className:
-        "relative flex flex-col overflow-hidden rounded-2xl border border-dashed border-white/25 bg-night-900/40 shadow-xl sm:flex-row"
+        "relative flex flex-col overflow-hidden rounded-2xl border-2 border-dashed border-orange-300 bg-white shadow-lg dark:border-orange-500/40 dark:bg-night-900 sm:flex-row"
     },
     [
       h(
         "div",
         {
-          className: `relative flex shrink-0 flex-col justify-center bg-gradient-to-br px-5 py-6 text-white sm:w-44 ${accent}`
+          className: `relative flex shrink-0 flex-col justify-center bg-gradient-to-br px-5 py-6 text-white sm:w-48 ${accent}`
         },
         [
           h("div", {
-            className: "absolute left-0 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-night-950 sm:left-full"
+            className: "absolute left-0 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-100 dark:bg-night-950 sm:left-full"
           }),
-          c.freeDelivery ? h(Truck, { className: "h-8 w-8 opacity-90" }) : h(BadgePercent, { className: "h-8 w-8 opacity-90" }),
-          h("p", { className: "mt-3 font-mono text-lg font-black tracking-wide" }, c.code || "DEAL"),
-          h("p", { className: "text-[10px] font-bold uppercase tracking-widest text-white/70" }, scope ? "Vendor" : "Global")
+          c.freeDelivery ? h(Truck, { className: "h-8 w-8 opacity-95" }) : h(BadgePercent, { className: "h-8 w-8 opacity-95" }),
+          h("p", { className: "mt-3 font-mono text-xl font-black tracking-wide" }, c.code || "DEAL"),
+          h("p", { className: "text-[10px] font-black uppercase tracking-widest text-white/80" }, scope ? "Store code" : "Sitewide")
         ]
       ),
-      h("div", { className: "flex flex-1 flex-col justify-center border-l border-dashed border-white/10 px-5 py-5" }, [
-        h("p", { className: "font-semibold text-slate-900 dark:text-white" }, c.title),
+      h("div", { className: "flex flex-1 flex-col justify-center border-l border-dashed border-orange-200 px-5 py-5 dark:border-orange-500/20" }, [
+        h("p", { className: "font-display text-base font-bold text-slate-900 dark:text-white" }, c.title),
         c.subtitle && h("p", { className: "mt-1 text-sm text-slate-600 dark:text-slate-400" }, c.subtitle),
-        h("div", { className: "mt-3 flex flex-wrap gap-2 text-[11px] text-slate-500" }, [
+        h("div", { className: "mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-orange-800 dark:text-amber-200" }, [
           c.minOrderGhs != null && c.minOrderGhs > 0
-            ? h("span", { className: "rounded-md bg-white/10 px-2 py-0.5" }, `Min ${formatGhc(c.minOrderGhs)}`)
+            ? h("span", { className: "rounded-md bg-orange-100 px-2 py-0.5 dark:bg-orange-500/20" }, `Min ${formatGhc(c.minOrderGhs)}`)
             : null,
-          h("span", { className: "rounded-md bg-white/10 px-2 py-0.5" }, `Until ${new Date(c.endsAt).toLocaleDateString()}`)
+          h("span", { className: "rounded-md bg-orange-100 px-2 py-0.5 dark:bg-orange-500/20" }, `Until ${new Date(c.endsAt).toLocaleDateString()}`)
         ]),
         h(
           "div",
@@ -547,7 +545,7 @@ function CouponTicket({ c, onCopy, toastFn }) {
               {
                 type: "button",
                 variant: "primary",
-                className: "!rounded-xl text-sm",
+                className: "!rounded-full !bg-orange-500 text-sm hover:!bg-orange-600",
                 onClick: () =>
                   onCopy(c.code).then(() => toastFn("Code copied — paste at checkout", { variant: "success" }))
               },
@@ -557,9 +555,9 @@ function CouponTicket({ c, onCopy, toastFn }) {
               Link,
               {
                 to: "/checkout",
-                className: "self-center text-xs font-bold text-violet-600 hover:underline dark:text-violet-300"
+                className: "self-center text-xs font-black text-orange-600 hover:underline dark:text-amber-300"
               },
-              "Go to checkout →"
+              "Use at checkout →"
             )
           ]
         )
@@ -614,52 +612,53 @@ export function BuyerCouponsPage() {
         h("div", {
           key: "wash",
           className:
-            "pointer-events-none fixed inset-x-0 top-0 -z-10 h-64 bg-gradient-to-b from-violet-500/10 via-sky-500/8 to-transparent dark:from-violet-600/10 dark:via-sky-500/5"
+            "pointer-events-none fixed inset-x-0 top-0 -z-10 h-64 bg-gradient-to-b from-orange-400/18 via-amber-300/10 to-transparent dark:from-orange-600/15 dark:via-amber-500/8"
         }),
         err && h(InlineNotice, { key: "e", variant: "error", className: "mb-4", onDismiss: () => setErr("") }, err),
-        h("div", { key: "stats", className: "grid gap-3 sm:grid-cols-3" }, [
+        h(
+          "div",
+          {
+            key: "hero",
+            className:
+              "mb-6 overflow-hidden rounded-3xl bg-gradient-to-r from-orange-500 via-amber-500 to-rose-500 p-6 text-white shadow-lg sm:p-8"
+          },
+          [
+            h("p", { className: "text-[10px] font-black uppercase tracking-[0.2em] text-amber-100" }, "Save at checkout"),
+            h("h1", { className: "mt-1 font-display text-2xl font-black sm:text-3xl" }, "Coupon codes"),
+            h("p", { className: "mt-2 max-w-lg text-sm text-white/90" }, "Copy a code, then paste it when you pay. Store codes work on that vendor’s items.")
+          ]
+        ),
+        h("div", { key: "stats", className: "grid gap-3 sm:grid-cols-2" }, [
           h(
             GlassPanel,
-            { className: "!border-sky-500/25 !bg-sky-500/5 !p-4 dark:!bg-sky-950/20" },
+            { className: "!border-orange-300/50 !bg-orange-50 !p-4 dark:!border-orange-500/25 dark:!bg-orange-950/25" },
             [
-              h("p", { className: "text-[10px] font-bold uppercase tracking-wider text-sky-600 dark:text-sky-300" }, "Est. saved"),
+              h("p", { className: "text-[10px] font-black uppercase tracking-wider text-orange-700 dark:text-amber-300" }, "Est. saved"),
               h(
                 "p",
                 { className: "mt-1 font-display text-2xl font-black text-slate-900 dark:text-white" },
                 stats?.savedThisMonthGhs != null ? formatGhc(stats.savedThisMonthGhs) : "—"
               ),
-              h("p", { className: "text-[10px] text-slate-500" }, "When checkout tracks codes")
+              h("p", { className: "text-[10px] text-slate-500" }, "From codes used at checkout")
             ]
           ),
           h(
             GlassPanel,
-            { className: "!border-violet-500/25 !p-4" },
+            { className: "!border-orange-200 !p-4 dark:!border-orange-500/20" },
             [
-              h("p", { className: "text-[10px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-300" }, "Active"),
+              h("p", { className: "text-[10px] font-black uppercase tracking-wider text-orange-700 dark:text-amber-300" }, "Live now"),
               h(
                 "p",
                 { className: "mt-1 font-display text-2xl font-black text-slate-900 dark:text-white" },
                 String(stats?.activeCount ?? coupons.length)
               ),
-              h("p", { className: "text-[10px] text-slate-500" }, "Live codes below")
-            ]
-          ),
-          h(
-            GlassPanel,
-            {
-              className:
-                "!border-slate-200/90 !bg-white/70 !p-4 dark:!border-white/10 dark:!bg-night-900/40"
-            },
-            [
-              h("p", { className: "text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400" }, "Your wallet"),
-              h("p", { className: "mt-1 font-display text-2xl font-black text-slate-900 dark:text-white" }, "Promos"),
-              h("p", { className: "text-[10px] text-slate-500" }, "Copy before you pay")
+              h("p", { className: "text-[10px] text-slate-500" }, "Tap copy, then checkout")
             ]
           )
         ]),
         h("div", { key: "tabs", className: "mt-6 flex flex-wrap gap-2" }, [
           { id: "all", label: "All" },
-          { id: "global", label: "Global" },
+          { id: "global", label: "Sitewide" },
           { id: "vendor", label: "Stores" }
         ].map((t) =>
           h(
@@ -668,10 +667,10 @@ export function BuyerCouponsPage() {
               key: t.id,
               type: "button",
               onClick: () => setFilter(t.id),
-              className: `rounded-full px-4 py-2 text-xs font-bold transition sm:text-sm ${
+              className: `rounded-full px-4 py-2 text-xs font-black transition sm:text-sm ${
                 filter === t.id
-                  ? "bg-violet-600 text-white shadow-md"
-                  : "border border-slate-200 bg-white/80 text-slate-700 dark:border-white/10 dark:bg-night-900/70 dark:text-slate-200"
+                  ? "bg-orange-500 text-white shadow-md"
+                  : "border border-orange-200 bg-white text-orange-800 dark:border-white/10 dark:bg-night-900/70 dark:text-amber-100"
               }`
             },
             t.label
@@ -682,47 +681,10 @@ export function BuyerCouponsPage() {
             h(
               GlassPanel,
               { className: "text-center text-sm text-slate-500" },
-              "No coupons in this tab yet. Approved vendor & platform codes appear here."
+              "No coupons in this tab yet. Check back soon — new codes drop here."
             ),
           filtered.map((c) => h(CouponTicket, { key: c.id, c, onCopy, toastFn: toast }))
-        ]),
-        h(
-          GlassPanel,
-          {
-            key: "auto",
-            className: "mt-8 !border-sky-500/30 !bg-sky-500/10 dark:!bg-sky-950/25"
-          },
-          [
-            h("div", { className: "flex items-start gap-3" }, [
-              h(Sparkles, { className: "h-5 w-5 shrink-0 text-sky-500 dark:text-sky-400" }),
-              h("div", {}, [
-                h("p", { className: "font-semibold text-slate-900 dark:text-white" }, "Best coupon auto-applied"),
-                h(
-                  "p",
-                  { className: "mt-1 text-sm text-slate-600 dark:text-slate-400" },
-                  "Ships on the roadmap: we’ll maximize savings at Paystack checkout automatically."
-                )
-              ])
-            ])
-          ]
-        ),
-        h(
-          GlassPanel,
-          {
-            key: "daily",
-            className: "mt-6 flex flex-wrap items-center justify-between gap-4 !border-white/15 !bg-night-900/30 dark:!border-white/10"
-          },
-          [
-            h("div", { className: "flex items-center gap-3" }, [
-              h(Gift, { className: "h-10 w-10 text-violet-400" }),
-              h("div", {}, [
-                h("p", { className: "font-bold text-slate-900 dark:text-white" }, "Daily check-in & spins"),
-                h("p", { className: "text-sm text-slate-600 dark:text-slate-400" }, "Extra addictive rewards — planned as a follow-up.")
-              ])
-            ]),
-            h(Button, { type: "button", variant: "outline", className: "!rounded-2xl", disabled: true }, "Soon")
-          ]
-        )
+        ])
       ])
     ),
     h(CartDrawer, { key: "cart", open: cartOpen, onClose: () => setCartOpen(false) })

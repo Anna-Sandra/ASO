@@ -11,6 +11,7 @@ import {
   Cpu,
   Gift,
   Flag,
+  Flame,
   Heart,
   LayoutGrid,
   Mail,
@@ -22,6 +23,7 @@ import {
   Navigation,
   Package,
   Plus,
+  Percent,
   ReceiptText,
   BadgeCheck,
   Building2,
@@ -88,7 +90,7 @@ import { formatGhc } from "utils/money";
 import { TrackOrderModal } from "components/features/TrackOrderModal";
 import { LocationMapPreview } from "components/features/LocationMapPreview";
 import { ShoppingAssistantFAB } from "components/features/ShoppingAssistantFAB";
-import { ShopHomePromoCarousel } from "pages/buyer/shopFlashDealsRail";
+import { ShopHomePromoCarousel, ShopHomeFlashDealsRail } from "pages/buyer/shopFlashDealsRail";
 import { MenuItemFeedCard } from "components/marketplace/MenuItemFeedCard";
 import { ProductCardRotatingImage } from "components/marketplace/ProductCardRotatingImage";
 import { RestaurantContextPanel } from "components/marketplace/RestaurantContextPanel";
@@ -724,6 +726,10 @@ export function ProductDetailPage() {
   const customizedListPx =
     mealCustomization || showsCustomizeUi ? effectiveListUnitPrice(product, selectedAddonLabels) : listPx;
   const unitPayTotal = !offlineListing ? buyerDisplayPrice(customizedListPx, pricingOpts, 1) : null;
+  const cmpAtPx = Number(product.compareAtPrice);
+  const strikeDetail =
+    !offlineListing && Number.isFinite(cmpAtPx) && cmpAtPx > listPx && listPx > 0;
+  const dealPctDetail = strikeDetail ? Math.round(((cmpAtPx - listPx) / cmpAtPx) * 100) : null;
 
   const pricingPanel =
     foodC2O
@@ -731,7 +737,29 @@ export function ProductDetailPage() {
       : showsCustomizeUi
         ? null
         : !offlineListing
-          ? h("span", { key: "pr", className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx))
+          ? strikeDetail
+            ? h("div", { key: "pr-deal", className: "space-y-2" }, [
+                dealPctDetail != null && dealPctDetail > 0
+                  ? h(
+                      "span",
+                      {
+                        className:
+                          "sale-off-badge inline-flex rounded-lg bg-amber-300 px-2.5 py-1 text-sm font-black text-rose-950 shadow-sm"
+                      },
+                      `${dealPctDetail}% OFF`
+                    )
+                  : null,
+                h("div", { className: "flex flex-wrap items-baseline gap-3" }, [
+                  h("span", { className: "text-lg font-semibold text-slate-400 line-through" }, formatGhc(cmpAtPx)),
+                  h("span", { className: "text-3xl font-black text-orange-600 dark:text-amber-300" }, formatGhc(unitPayTotal ?? listPx))
+                ]),
+                h(
+                  "p",
+                  { className: "text-sm font-bold text-emerald-700 dark:text-emerald-300" },
+                  `You save ${formatGhc(cmpAtPx - listPx)}`
+                )
+              ])
+            : h("span", { key: "pr", className: "text-3xl font-bold text-sky-600 dark:text-sky-300" }, formatGhc(unitPayTotal ?? listPx))
           : null;
 
   return h(f, null, [
@@ -751,15 +779,17 @@ export function ProductDetailPage() {
       h("div", { key: "grid", className: "grid gap-8 lg:grid-cols-2 lg:items-start" }, [
         h("div", { key: "gal-media", className: "space-y-3 lg:col-start-1 lg:row-start-1" }, [
           h("div", { className: "relative overflow-hidden rounded-3xl border border-white/10 bg-white/5" }, [
-            badge
+            badge || dealPctDetail
               ? h(
                   "span",
                   {
                     key: "bdg",
                     className:
-                      "absolute left-3 top-3 z-10 rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-900"
+                      dealPctDetail != null && dealPctDetail > 0
+                        ? "sale-off-badge absolute left-3 top-3 z-10 rounded-lg bg-amber-300 px-2.5 py-1 text-xs font-black uppercase text-rose-950 shadow-md"
+                        : "absolute left-3 top-3 z-10 rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-900"
                   },
-                  badge
+                  dealPctDetail != null && dealPctDetail > 0 ? `${dealPctDetail}% OFF` : badge
                 )
               : null,
             h(RefImage, {
@@ -1086,6 +1116,8 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
   const displayP = quoteCard || foodCard ? listP : buyerDisplayPrice(listP, pricingOpts, 1);
   const cmpAt = Number(p.compareAtPrice);
   const strikeCmp = Number.isFinite(cmpAt) && cmpAt > listP && listP >= 0;
+  const dealPct =
+    strikeCmp && cmpAt > 0 ? Math.round(((cmpAt - listP) / cmpAt) * 100) : null;
   const storeCtx = productStoreContext(p);
   const socialLines = productSocialProofLines(p);
 
@@ -1201,9 +1233,20 @@ function BrowseMenuItemCard({ product, isSaved, toggleSaved, onAddToCart, onNavi
                 : null,
               h(
                 "span",
-                { key: "list", className: "text-sm font-extrabold text-sky-700 sm:text-lg dark:text-sky-200" },
+                { key: "list", className: `text-sm font-extrabold sm:text-lg ${strikeCmp ? "text-orange-600 dark:text-amber-300" : "text-sky-700 dark:text-sky-200"}` },
                 formatGhc(displayP)
               ),
+              dealPct != null && dealPct > 0
+                ? h(
+                    "span",
+                    {
+                      key: "off",
+                      className:
+                        "rounded-md bg-amber-300 px-1.5 py-0.5 text-[10px] font-black text-rose-950 sm:text-[11px]"
+                    },
+                    `${dealPct}% OFF`
+                  )
+                : null
             ])
       ]),
       h(
@@ -1715,6 +1758,8 @@ function BuyerStorefrontAside({
         )
       ),
       h("p", { key: "u-h", className: "mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400" }, "Discover"),
+      linkRow("deals", Flame, "Deals & flash sales", "/deals"),
+      linkRow("coupons", Percent, "Coupons", "/coupons"),
       linkRow("browse-stores", Building2, "Browse stores", "/browse-stores"),
       row("saved", Bookmark, "Saved items", {
         onClick: () => navigate("/saved")
@@ -1900,6 +1945,7 @@ export function BuyerLayout({
       label: "Stores",
       activeWhen: ({ loc }) => loc.pathname === "/browse-stores"
     }),
+    h(BuyerNavbarNavLink, { key: "deals", to: "/deals", icon: Flame, label: "Deals" }),
     h(BuyerNavbarNavLink, { key: "ord", to: "/orders", icon: Package, label: "Orders" }),
     accessToken && h(BuyerNavbarNavLink, { key: "msg", to: "/messages", icon: MessageSquare, label: "Messages" }),
     accessToken && h(BuyerNavbarNavLink, { key: "rep", to: "/reports", icon: AlertTriangle, label: "Reports" }),
@@ -2024,6 +2070,7 @@ export function BuyerLayout({
         label: "Stores",
         activeWhen: ({ loc }) => loc.pathname === "/browse-stores"
       }),
+      h(BuyerNavbarNavLink, { key: "sfdeals", labelOnMobile: true, to: "/deals", icon: Flame, label: "Deals" }),
       h(BuyerNavbarNavLink, { key: "sfo", labelOnMobile: true, to: "/orders", icon: Package, label: "Orders" }),
       accessToken && h(BuyerNavbarNavLink, { key: "sfm", labelOnMobile: true, to: "/messages", icon: MessageSquare, label: "Messages" }),
       accessToken && h(BuyerNavbarNavLink, { key: "sfr", labelOnMobile: true, to: "/reports", icon: AlertTriangle, label: "Reports" }),
@@ -2384,7 +2431,7 @@ function storefrontBadgeStack(p) {
         "span",
         {
           key: b.key,
-          className: `rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase leading-tight tracking-wide shadow-sm ring-1 ring-black/10 ${b.className}`
+          className: `rounded-md px-2 py-1 text-[10px] font-black uppercase leading-tight tracking-wide shadow-md ring-1 ring-black/10 sm:text-[11px] ${b.className}`
         },
         b.label
       )
@@ -2460,6 +2507,8 @@ function MarketplaceFooter() {
           linkCol("co", "Company", companyLinks),
           linkCol("cs", "Customer Support", [
             { to: "/support", label: "Help Center" },
+            { to: "/deals", label: "Deals & flash sales" },
+            { to: "/coupons", label: "Coupons" },
             { to: "/support#faq", label: "FAQs" },
             { to: "/terms", label: "Returns & Refunds" },
             { to: "/support#report", label: "Report a Problem" }
@@ -3757,7 +3806,8 @@ export function ShopPage() {
             )
           ])
         ]),
-        h(ShopHomePromoCarousel, { key: "shop-promo" })
+        h(ShopHomePromoCarousel, { key: "shop-promo" }),
+        h(ShopHomeFlashDealsRail, { key: "shop-flash" })
       ]),
       accessToken && (recentLoading || recentFiltered.length > 0)
         ? h(

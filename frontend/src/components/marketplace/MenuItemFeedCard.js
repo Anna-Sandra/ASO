@@ -138,6 +138,16 @@ export function MenuItemFeedCard({
         )
         : null,
 
+      dealPct != null && dealPct > 0
+        ? h("span", {
+            key: "off-ribbon",
+            className:
+              `pointer-events-none absolute z-[3] rounded-md bg-amber-300 px-1.5 py-0.5 text-[9px] font-black text-rose-950 shadow-md sm:text-[10px] ${
+                showSave ? "right-1.5 top-9" : "right-1.5 top-1.5"
+              }`
+          }, `${dealPct}% OFF`)
+        : null,
+
       showSave
         ? h("button", {
             key: "save",
@@ -278,15 +288,15 @@ export function MenuItemFeedCard({
               h("span", {
                 key: "now",
                 className: compact
-                  ? "inline text-[10px] font-bold text-violet-200 drop-shadow-sm sm:text-[11px]"
-                  : "inline text-[11px] font-bold text-violet-200 drop-shadow-sm sm:text-xs"
+                  ? `inline text-[10px] font-bold drop-shadow-sm sm:text-[11px] ${strikeDisplay ? "text-amber-200" : "text-violet-200"}`
+                  : `inline text-[11px] font-bold drop-shadow-sm sm:text-xs ${strikeDisplay ? "text-amber-200" : "text-violet-200"}`
               }, formatGhc(buyerP)),
               dealPct != null && dealPct > 0 &&
                 h("span", {
                   key: "pct",
                   className: compact
-                    ? "ml-1 inline text-[10px] font-black text-emerald-300 drop-shadow-sm"
-                    : "ml-1.5 inline text-[11px] font-black text-emerald-300 drop-shadow-sm sm:text-xs"
+                    ? "ml-1 inline rounded bg-amber-300 px-1 text-[9px] font-black text-rose-950"
+                    : "ml-1.5 inline rounded bg-amber-300 px-1 text-[10px] font-black text-rose-950 sm:text-[11px]"
                 }, `${dealPct}% OFF`),
               strikeDisplay && Boolean(activeDeal?.endsAt) &&
                 h(FeedDealCountdownLine, { key: "dc", endsAt: activeDeal.endsAt })
