@@ -2460,20 +2460,6 @@ export function VendorOrdersPage() {
                             },
                             "Sent for delivery"
                           )),
-                    !onsite &&
-                      status === "sent_for_delivery" &&
-                      h(
-                        Button,
-                        {
-                          key: "del",
-                          variant: "ghost",
-                          className:
-                            "!min-h-[32px] !px-2.5 !py-1 !text-xs border border-slate-200/90 bg-white/80 text-slate-800 hover:bg-slate-50 dark:border-transparent dark:bg-transparent dark:text-slate-100 dark:hover:bg-white/10",
-                          type: "button",
-                          onClick: () => updateStatus(o.id, "delivered")
-                        },
-                        "Delivered"
-                      ),
                     onsite &&
                       status === "sent_for_delivery" &&
                       h(
