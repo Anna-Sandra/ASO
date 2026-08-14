@@ -97,7 +97,7 @@ function isPublicMarketplacePath(pathname) {
   const p = String(pathname || "").split("?")[0];
   if (p.startsWith("/store/")) return true;
   if (p.startsWith("/products/")) return true;
-  if (p.startsWith("/track/")) return true;
+  if (p === "/track" || p.startsWith("/track/")) return true;
   return ["/food", "/fashion", "/electronics", "/beauty", "/babies", "/groceries", "/books", "/services", "/browse-stores", "/deals", "/coupons"].includes(p);
 }
 
@@ -306,6 +306,11 @@ function AppRoutes() {
       path: "/payment/cancel",
       element: h(BuyerGate, null, h(PaymentCancelPage)),
       key: "r-pay-cancel"
+    }),
+    h(Route, {
+      path: "/track",
+      element: h(BuyerGate, null, h(GuestTrackOrderPage)),
+      key: "r-track-lookup"
     }),
     h(Route, {
       path: "/track/:orderId",

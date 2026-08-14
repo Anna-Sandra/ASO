@@ -21,7 +21,8 @@ import {
   newGuestOrderSecret,
   canActAsOrderBuyer,
   readGuestSecretFromRequest,
-  GUEST_ORDER_MESSAGE_SENDER_ID
+  GUEST_ORDER_MESSAGE_SENDER_ID,
+  emailsEqualInsensitive
 } from "./orderAccess";
 import { notifyOrderCancelledForCounterparties, notifyOrderMessageRecipients, notifySellersNewOrder, notifySellersPaymentSubmitted, fireNotification } from "../notifications/notification.service";
 import { checkoutListingUnitBeforeAddons } from "../promotions/promotionDeal.service";
@@ -344,6 +345,59 @@ export const listSellerBuyerInbox = asyncHandler(async (req: Request, res: Respo
 
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.json({ threads });
+});
+
+const GUEST_TRACK_FAIL = "We couldn’t find a guest order with that ID and email. Check your payment email, or sign in if you ordered with an account.";
+
+function normalizeGuestOrderRef(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .replace(/^#/, "")
+    .replace(/\s+/g, "");
+}
+
+/**
+ * Guest track lookup: order id (full or last 8 chars from the receipt) + checkout email.
+ * Returns the guest access secret so the shopper can open live tracking without an account.
+ */
+export const lookupGuestTrack = asyncHandler(async (req: Request, res: Response) => {
+  const body = req.body as { orderId?: string; email?: string };
+  const email = String(body.email || "").trim().toLowerCase();
+  const ref = normalizeGuestOrderRef(String(body.orderId || ""));
+  if (!email || !ref) throw new HttpError(400, GUEST_TRACK_FAIL);
+
+  const select = "+guestAccessSecret guestContact buyerId";
+  type GuestOrderLean = {
+    _id: mongoose.Types.ObjectId;
+    buyerId?: mongoose.Types.ObjectId | null;
+    guestContact?: { email?: string } | null;
+    guestAccessSecret?: string | null;
+  };
+
+  let order: GuestOrderLean | null = null;
+  if (mongoose.isValidObjectId(ref) && ref.length === 24) {
+    order = (await Order.findById(ref).select(select).lean()) as GuestOrderLean | null;
+  } else if (/^[a-f\d]{6,23}$/i.test(ref)) {
+    const suffix = ref.toLowerCase();
+    const candidates = (await Order.find({
+      buyerId: null,
+      "guestContact.email": email
+    })
+      .select(select)
+      .limit(40)
+      .lean()) as GuestOrderLean[];
+    const matches = candidates.filter((o) => o._id.toString().toLowerCase().endsWith(suffix));
+    if (matches.length === 1) order = matches[0];
+  }
+
+  const secret = String(order?.guestAccessSecret || "").trim();
+  const guestEmail = String(order?.guestContact?.email || "").trim();
+  if (!order || order.buyerId || !secret || !emailsEqualInsensitive(guestEmail, email)) {
+    throw new HttpError(404, GUEST_TRACK_FAIL);
+  }
+
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.json({ orderId: order._id.toString(), guestAccessSecret: secret });
 });
 
 export const getOrder = asyncHandler(async (req: Request, res: Response) => {

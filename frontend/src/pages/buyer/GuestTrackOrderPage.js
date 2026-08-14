@@ -3,14 +3,15 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, Navigation } from "lucide-react";
 import { useAuth } from "context";
 import { TrackOrderModal } from "components/features/TrackOrderModal";
-import { Button, GlassPanel, InlineNotice } from "components/ui";
+import { Button, Field, GlassPanel, InlineNotice, TextInput } from "components/ui";
 import { setGuestOrderSecret, getGuestOrderSecret } from "utils/guestOrderSecret";
+import { apiFetch, apiErrorMessage } from "services/api";
 import { h, f } from "utils/h";
 
 /**
- * Magic track link from post-payment email:
- *   /track/:orderId?t=<guestAccessSecret>  (guest)
- *   /track/:orderId                         (signed-in buyer)
+ * /track — guest lookup (order id + email)
+ * /track/:orderId?t=<guestAccessSecret> — magic link from payment email
+ * /track/:orderId — signed-in buyer
  */
 export function GuestTrackOrderPage() {
   const { orderId: orderIdParam } = useParams();
@@ -18,44 +19,83 @@ export function GuestTrackOrderPage() {
   const nav = useNavigate();
   const { accessToken, loading } = useAuth();
 
-  const orderId = String(orderIdParam || "").trim();
+  const orderIdFromRoute = String(orderIdParam || "").trim();
   const tokenFromUrl = String(searchParams.get("t") || searchParams.get("secret") || "").trim();
 
+  const [orderId, setOrderId] = useState(orderIdFromRoute);
+  const [email, setEmail] = useState("");
   const [guestSecret, setGuestSecret] = useState(() =>
-    tokenFromUrl || (orderId ? getGuestOrderSecret(orderId) : "")
+    tokenFromUrl || (orderIdFromRoute ? getGuestOrderSecret(orderIdFromRoute) : "")
   );
   const [trackOpen, setTrackOpen] = useState(false);
   const [err, setErr] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!orderId) {
-      setErr("Missing order reference in this link.");
-      return;
-    }
+    if (orderIdFromRoute) setOrderId(orderIdFromRoute);
+  }, [orderIdFromRoute]);
+
+  useEffect(() => {
+    if (!orderIdFromRoute) return;
     if (tokenFromUrl) {
-      setGuestOrderSecret(orderId, tokenFromUrl);
+      setGuestOrderSecret(orderIdFromRoute, tokenFromUrl);
       setGuestSecret(tokenFromUrl);
     }
-  }, [orderId, tokenFromUrl]);
+  }, [orderIdFromRoute, tokenFromUrl]);
 
   useEffect(() => {
-    if (loading || !orderId) return;
-    const secret = tokenFromUrl || guestSecret || getGuestOrderSecret(orderId);
+    if (loading) return;
+    const id = orderIdFromRoute;
+    if (!id) return;
+    const secret = tokenFromUrl || guestSecret || getGuestOrderSecret(id);
     if (accessToken || secret) {
       setErr("");
       setTrackOpen(true);
+    }
+  }, [loading, orderIdFromRoute, accessToken, guestSecret, tokenFromUrl]);
+
+  const short = useMemo(() => {
+    const id = orderIdFromRoute || orderId;
+    return id && id.length >= 8 ? `#${id.slice(-8).toUpperCase()}` : "";
+  }, [orderIdFromRoute, orderId]);
+
+  const onLookup = async (e) => {
+    e.preventDefault();
+    setErr("");
+    const id = String(orderId || "").trim();
+    const em = String(email || "").trim();
+    if (!id || !em) {
+      setErr("Enter the order ID from your receipt and the email you used at checkout.");
       return;
     }
-    setErr(
-      "This track link needs a sign-in or the private code from your payment email. Open the Track button in that email, or sign in with the account on the order."
-    );
-  }, [loading, orderId, accessToken, guestSecret, tokenFromUrl]);
-
-  const short = useMemo(() => (orderId ? `#${orderId.slice(-8).toUpperCase()}` : ""), [orderId]);
+    setSubmitting(true);
+    try {
+      const data = await apiFetch("/api/orders/guest-track", {
+        method: "POST",
+        json: { orderId: id, email: em }
+      });
+      const oid = String(data?.orderId || "").trim();
+      const secret = String(data?.guestAccessSecret || "").trim();
+      if (!oid || !secret) {
+        setErr("We couldn’t open tracking for that order. Check the ID and email, then try again.");
+        return;
+      }
+      setGuestOrderSecret(oid, secret);
+      setGuestSecret(secret);
+      nav(`/track/${encodeURIComponent(oid)}?t=${encodeURIComponent(secret)}`, { replace: true });
+    } catch (ex) {
+      setErr(apiErrorMessage(ex, "We couldn’t find a guest order with that ID and email."));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) {
     return h("div", { className: "flex min-h-[50vh] items-center justify-center text-sm text-slate-500" }, "Loading…");
   }
+
+  const hasAccess = Boolean(accessToken || guestSecret || (orderIdFromRoute && getGuestOrderSecret(orderIdFromRoute)));
+  const showLookup = !hasAccess;
 
   return h(f, null, [
     h(
@@ -76,39 +116,63 @@ export function GuestTrackOrderPage() {
             h(Navigation, { className: "mt-0.5 h-5 w-5 shrink-0 text-orange-500" }),
             h("div", { className: "min-w-0 flex-1" }, [
               h("h1", { className: "font-display text-xl font-bold text-slate-900 dark:text-white" }, "Track your order"),
-              short
+              short && hasAccess
                 ? h("p", { className: "mt-1 font-mono text-xs text-slate-500" }, `Order ${short}`)
                 : null,
               h(
                 "p",
                 { className: "mt-2 text-sm text-slate-600 dark:text-slate-300" },
-                "Live map and delivery status open here when your payment email link is valid."
+                showLookup
+                  ? "Enter the order ID from your receipt or payment email, plus the email you used at checkout."
+                  : "Live map and delivery status open here when your payment email link is valid."
               ),
               err
                 ? h(InlineNotice, { key: "e", variant: "warning", className: "mt-4", onDismiss: () => setErr("") }, err)
                 : null,
-              !accessToken && !guestSecret
-                ? h("div", { key: "act", className: "mt-4 flex flex-wrap gap-2" }, [
-                    h(
-                      Button,
-                      {
-                        type: "button",
-                        className: "!rounded-xl",
-                        onClick: () => nav("/login", { state: { from: `/track/${orderId}` } })
-                      },
-                      "Sign in to track"
-                    ),
-                    h(
-                      Button,
-                      {
-                        type: "button",
-                        variant: "ghost",
-                        className: "!rounded-xl",
-                        onClick: () => setTrackOpen(true)
-                      },
-                      "Try open tracker"
-                    )
-                  ])
+              showLookup
+                ? h(
+                    "form",
+                    { key: "lookup", className: "mt-5 space-y-4", onSubmit: onLookup },
+                    [
+                      h(Field, { key: "oid", label: "Order ID" },
+                        h(TextInput, {
+                          value: orderId,
+                          onChange: (ev) => setOrderId(ev.target.value),
+                          placeholder: "Full ID or last 8 characters, e.g. A1B2C3D4",
+                          autoComplete: "off",
+                          "aria-label": "Order ID"
+                        })
+                      ),
+                      h(Field, { key: "em", label: "Email" },
+                        h(TextInput, {
+                          type: "email",
+                          value: email,
+                          onChange: (ev) => setEmail(ev.target.value),
+                          placeholder: "The email used at checkout",
+                          autoComplete: "email",
+                          "aria-label": "Email"
+                        })
+                      ),
+                      h(
+                        Button,
+                        {
+                          key: "go",
+                          type: "submit",
+                          loading: submitting,
+                          className: "w-full !rounded-xl"
+                        },
+                        "Track order"
+                      ),
+                      h(
+                        "p",
+                        { className: "text-center text-xs text-slate-500" },
+                        [
+                          "Ordered with an account? ",
+                          h(Link, { to: "/login", state: { from: "/track" }, className: "font-semibold text-sky-600 hover:underline dark:text-sky-300" }, "Sign in")
+                        ]
+                      )
+                    ]
+                  )
                 : h(
                     Button,
                     {
@@ -124,14 +188,14 @@ export function GuestTrackOrderPage() {
         ])
       ]
     ),
-    trackOpen && orderId
+    trackOpen && (orderIdFromRoute || orderId)
       ? h(TrackOrderModal, {
           key: "modal",
           open: trackOpen,
           onClose: () => setTrackOpen(false),
-          orders: [{ id: orderId }],
-          initialOrderId: orderId,
-          guestSecret: !accessToken ? guestSecret || getGuestOrderSecret(orderId) || null : null
+          orders: [{ id: orderIdFromRoute || orderId }],
+          initialOrderId: orderIdFromRoute || orderId,
+          guestSecret: !accessToken ? guestSecret || getGuestOrderSecret(orderIdFromRoute || orderId) || null : null
         })
       : null
   ]);

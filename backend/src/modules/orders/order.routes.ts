@@ -16,9 +16,11 @@ import {
   listBuyerVendorInbox,
   listMyOrders,
   listSellerBuyerInbox,
+  lookupGuestTrack,
   markManualPayment
 } from "./order.controller";
-import { cancelOrderSchema, checkoutSchema, orderManualPaymentSchema, orderMessageSchema } from "./order.schemas";
+import { cancelOrderSchema, checkoutSchema, guestTrackLookupSchema, orderManualPaymentSchema, orderMessageSchema } from "./order.schemas";
+import { createRateLimiter } from "../../utils/createRateLimiter";
 
 const router = Router();
 
@@ -26,6 +28,12 @@ const router = Router();
 const shopRoles = ["buyer", "seller", "admin"] as const;
 
 router.post("/checkout", optionalProtect, requireActiveAccount, validateBody(checkoutSchema), checkout);
+const guestTrackLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: 12,
+  message: { error: "Too many track lookups. Try again in a few minutes." }
+});
+router.post("/guest-track", guestTrackLimiter, validateBody(guestTrackLookupSchema), lookupGuestTrack);
 /** Same handler as POST /api/admin/orders/:id/mark-paid — duplicated here so deployments always pick it up with the orders router. */
 router.post(
   "/:id/admin/mark-paid",

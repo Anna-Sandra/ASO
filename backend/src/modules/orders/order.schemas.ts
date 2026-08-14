@@ -49,6 +49,11 @@ export const cancelOrderSchema = z.object({
   guestSecret: z.string().min(8).max(256).optional()
 });
 
+export const guestTrackLookupSchema = z.object({
+  orderId: z.string().trim().min(6).max(64),
+  email: z.string().trim().email().max(320)
+});
+
 const phoneLike = z
   .string()
   .trim()

@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, ChevronLeft, ChevronRight, Flame, ShoppingBag } from "lucide-react";
 import { apiFetch } from "services/api";
 import { h } from "utils/h";
 import { SITE_NAME, SITE_AUDIENCE_TAGLINE, SITE_TAGLINE } from "config/brand";
 import { formatGhc } from "utils/money";
+import { buyerDisplayPrice } from "utils/checkoutPricing";
+import { useCheckoutPricingOptions } from "hooks/useCheckoutPricing";
 import { usePromoCountdown, isPerpetualPromoEnd, PromoTimerPills } from "utils/promoCountdown";
 
 const PROMO_GRADIENTS = {
@@ -112,7 +114,7 @@ function slideFromProduct(p) {
     gradientKey: strike ? "sunset" : "moss",
     tagBadge: strike && pct ? `${pct}% OFF` : "POPULAR",
     title: p.name,
-    subtitle: Number.isFinite(price) && price > 0 ? `From ${formatGhc(price)}` : "Trending on the marketplace",
+    subtitle: "",
     imageUrl: img,
     linkTo: `/products/${p.id}`,
     cta: "View item",
@@ -122,12 +124,25 @@ function slideFromProduct(p) {
   };
 }
 
-function ShopHeroSlide({ slide, idx, setIdx, slides }) {
+function buyerGhs(vendorGhs, pricingOpts) {
+  const n = Number(vendorGhs);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return buyerDisplayPrice(n, pricingOpts, 1);
+}
+
+function badgeAlreadyShowsOff(label) {
+  return /%\s*off/i.test(String(label || ""));
+}
+
+function ShopHeroSlide({ slide, idx, setIdx, slides, pricingOpts }) {
   const timed = !!(slide.endsAt && !isPerpetualPromoEnd(slide.endsAt));
   const t = usePromoCountdown(timed ? slide.endsAt : undefined);
   const to = slide.linkTo?.startsWith("/") ? slide.linkTo : slide.linkTo ? `/${slide.linkTo}` : "/";
   const pct = slide.discountPercent != null ? Math.round(slide.discountPercent) : null;
-  const hasPrice = slide.salePriceGhs != null && Number.isFinite(Number(slide.salePriceGhs));
+  const showOffChip = pct != null && pct > 0 && !badgeAlreadyShowsOff(slide.tagBadge);
+  const saleBuyer = buyerGhs(slide.salePriceGhs, pricingOpts);
+  const compareBuyer = buyerGhs(slide.compareAtGhs, pricingOpts);
+  const hasPrice = saleBuyer != null;
 
   const go = (dir, e) => {
     e.preventDefault();
@@ -172,7 +187,7 @@ function ShopHeroSlide({ slide, idx, setIdx, slides }) {
                       [h(Flame, { className: "h-3 w-3 text-amber-300", "aria-hidden": true }), slide.tagBadge]
                     )
                   : null,
-                pct != null && pct > 0
+                showOffChip
                   ? h(
                       "span",
                       {
@@ -196,13 +211,13 @@ function ShopHeroSlide({ slide, idx, setIdx, slides }) {
                 : null,
               hasPrice
                 ? h("div", { className: "mt-3 flex flex-wrap items-baseline gap-2" }, [
-                    slide.compareAtGhs != null
-                      ? h("span", { className: "text-sm font-semibold text-white/60 line-through" }, formatGhc(slide.compareAtGhs))
+                    compareBuyer != null && compareBuyer > saleBuyer
+                      ? h("span", { className: "text-sm font-semibold text-white/60 line-through" }, formatGhc(compareBuyer))
                       : null,
                     h(
                       "span",
                       { className: "font-display text-2xl font-black text-amber-200 drop-shadow sm:text-3xl" },
-                      formatGhc(slide.salePriceGhs)
+                      formatGhc(saleBuyer)
                     )
                   ])
                 : null,
@@ -308,6 +323,7 @@ function mergeHighlightSlides(dynamic) {
 
 /** Rotating shop hero — live deals first, then always-on shop tips. */
 export function ShopHomePromoCarousel() {
+  const pricingOpts = useCheckoutPricingOptions();
   const [slides, setSlides] = useState(() => STATIC_SHOP_SLIDES);
   const [idx, setIdx] = useState(0);
 
@@ -364,13 +380,11 @@ export function ShopHomePromoCarousel() {
   return h(
     "section",
     { key: "shop-highlight-carousel", className: "mb-2 w-full", "aria-label": "Shop highlights" },
-    h(ShopHeroSlide, { slide: slides[safeIdx], idx: safeIdx, setIdx, slides })
+    h(ShopHeroSlide, { slide: slides[safeIdx], idx: safeIdx, setIdx, slides, pricingOpts })
   );
 }
 
-function HomeFlashCard({ promo }) {
-  const timed = !!(promo.endsAt && !isPerpetualPromoEnd(promo.endsAt));
-  const t = usePromoCountdown(timed ? promo.endsAt : undefined);
+function HomeFlashCard({ promo, pricingOpts }) {
   const p = promo.product;
   const img = p?.imageUrl;
   const pct =
@@ -386,6 +400,10 @@ function HomeFlashCard({ promo }) {
       : promo.kind === "deal_bundle"
         ? String(promo.tagBadge || "BUNDLE").trim() || "BUNDLE"
         : String(promo.tagBadge || "FLASH SALE").trim() || "FLASH SALE";
+  const showKindBadge = !badgeAlreadyShowsOff(badgeLabel);
+  const showOffChip = pct != null && pct > 0 && !badgeAlreadyShowsOff(badgeLabel);
+  const saleBuyer = buyerGhs(promo.salePriceGhs ?? p?.price, pricingOpts);
+  const compareBuyer = buyerGhs(promo.compareAtGhs, pricingOpts);
 
   return h(
     Link,
@@ -403,15 +421,17 @@ function HomeFlashCard({ promo }) {
               { className: "flex h-32 w-full items-center justify-center bg-orange-50 dark:bg-night-950/50 sm:h-36" },
               h(ShoppingBag, { className: "h-8 w-8 text-orange-300" })
             ),
-        h(
-          "div",
-          {
-            className:
-              "pointer-events-none absolute left-2 top-2 z-[2] max-w-[calc(100%-5.5rem)] rounded-md bg-rose-600 px-1.5 py-1 text-[10px] font-black uppercase leading-tight tracking-wide text-white shadow-md"
-          },
-          badgeLabel.slice(0, 18)
-        ),
-        pct != null && pct > 0
+        showKindBadge
+          ? h(
+              "div",
+              {
+                className:
+                  "pointer-events-none absolute left-2 top-2 z-[2] max-w-[calc(100%-5.5rem)] rounded-md bg-rose-600 px-1.5 py-1 text-[10px] font-black uppercase leading-tight tracking-wide text-white shadow-md"
+              },
+              badgeLabel.slice(0, 18)
+            )
+          : null,
+        showOffChip || (!showKindBadge && pct != null && pct > 0)
           ? h(
               "div",
               {
@@ -429,25 +449,15 @@ function HomeFlashCard({ promo }) {
           p?.name || promo.title
         ),
         h("div", { className: "mt-1.5 flex flex-wrap items-baseline gap-1.5" }, [
-          promo.compareAtGhs != null
-            ? h("span", { className: "text-[11px] font-semibold text-slate-400 line-through" }, formatGhc(promo.compareAtGhs))
+          compareBuyer != null && saleBuyer != null && compareBuyer > saleBuyer
+            ? h("span", { className: "text-[11px] font-semibold text-slate-400 line-through" }, formatGhc(compareBuyer))
             : null,
           h(
             "span",
             { className: "text-base font-black text-orange-600 dark:text-amber-300" },
-            formatGhc(promo.salePriceGhs ?? p?.price ?? 0)
+            formatGhc(saleBuyer ?? 0)
           )
-        ]),
-        timed
-          ? h("div", { className: "mt-2" }, [
-              h(PromoTimerPills, {
-                secondsLeft: t.secondsLeft,
-                ended: t.ended,
-                urgent: t.urgent,
-                compact: true
-              })
-            ])
-          : h("p", { className: "mt-1.5 text-[10px] font-bold uppercase tracking-wide text-orange-600/80 dark:text-amber-400/80" }, "On now")
+        ])
       ])
     ]
   );
@@ -455,18 +465,9 @@ function HomeFlashCard({ promo }) {
 
 /** Homepage horizontal rail — uses public deals catalog (no auth). */
 export function ShopHomeFlashDealsRail() {
+  const pricingOpts = useCheckoutPricingOptions();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  const headerCountdownIso = useMemo(() => {
-    const timed = rows
-      .map((r) => r.endsAt)
-      .filter((iso) => iso && !isPerpetualPromoEnd(iso))
-      .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-    return timed[0] || null;
-  }, [rows]);
-
-  const headerT = usePromoCountdown(headerCountdownIso || undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -515,22 +516,7 @@ export function ShopHomeFlashDealsRail() {
               { className: "truncate font-display text-lg font-black text-slate-900 dark:text-white sm:text-xl" },
               "Hot deals"
             )
-          ]),
-          headerCountdownIso
-            ? h(PromoTimerPills, {
-                secondsLeft: headerT.secondsLeft,
-                ended: headerT.ended,
-                urgent: headerT.urgent,
-                compact: true
-              })
-            : h(
-                "span",
-                {
-                  className:
-                    "rounded-full bg-orange-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-orange-700 dark:bg-orange-500/20 dark:text-amber-200"
-                },
-                "Live now"
-              )
+          ])
         ]),
         h(
           Link,
@@ -547,7 +533,7 @@ export function ShopHomeFlashDealsRail() {
         {
           className: "no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]"
         },
-        rows.map((promo) => h(HomeFlashCard, { key: promo.id, promo }))
+        rows.map((promo) => h(HomeFlashCard, { key: promo.id, promo, pricingOpts }))
       )
     ])
   );

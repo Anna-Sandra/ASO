@@ -3807,7 +3807,23 @@ export function ShopPage() {
           ])
         ]),
         h(ShopHomePromoCarousel, { key: "shop-promo" }),
-        h(ShopHomeFlashDealsRail, { key: "shop-flash" })
+        h(ShopHomeFlashDealsRail, { key: "shop-flash" }),
+        !accessToken
+          ? h(
+              "p",
+              { key: "guest-track", className: "mb-6 text-sm text-slate-600 dark:text-slate-400" },
+              [
+                h(
+                  Link,
+                  {
+                    to: "/track",
+                    className: "font-bold text-sky-600 underline-offset-2 hover:underline dark:text-sky-300"
+                  },
+                  "Track order"
+                )
+              ]
+            )
+          : null,
       ]),
       accessToken && (recentLoading || recentFiltered.length > 0)
         ? h(

@@ -52,3 +52,10 @@ export function canActAsOrderBuyer(
 
 /** Sender id for synthetic "buyer" timeline entries on guest orders (not a real user). */
 export const GUEST_ORDER_MESSAGE_SENDER_ID = new mongoose.Types.ObjectId("000000000000000000000001");
+
+export function emailsEqualInsensitive(a: string, b: string): boolean {
+  const x = Buffer.from(String(a || "").trim().toLowerCase(), "utf8");
+  const y = Buffer.from(String(b || "").trim().toLowerCase(), "utf8");
+  if (x.length !== y.length || x.length === 0) return false;
+  return crypto.timingSafeEqual(x, y);
+}
